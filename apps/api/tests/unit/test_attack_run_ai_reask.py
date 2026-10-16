@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pytest
@@ -76,7 +75,6 @@ class World:
         refuse_reask: bool = False,
         reask_stray: str | None = None,
         reask_status: str = "gap",
-        during_first_pass: Callable[[], None] | None = None,
     ) -> None:
         """Answer every code asked, except:
 
@@ -88,10 +86,7 @@ class World:
         `reask_stray`: a re-ask also answers for this code, which it was not
         asked about, with the rationale "Stray answer.".
         `reask_status`: the status every re-ask entry gives.
-        `during_first_pass`: called once, inside the first first-pass call,
-        before it answers: a change that lands while the first pass runs.
         """
-        hook = [during_first_pass] if during_first_pass is not None else []
         asked_before: Counter[str] = Counter()
 
         def _answer(payload: dict) -> LLMResponse:
@@ -99,8 +94,6 @@ class World:
             self.sent.append(asked)
             reask = any(asked_before[c] for c in asked)
             asked_before.update(asked)
-            if not reask and hook:
-                hook.pop()()
             if reask and fail_reask:
                 raise RuntimeError("provider closed the connection")
             if reask and refuse_reask:
@@ -360,23 +353,36 @@ def test_the_first_pass_asks_each_technique_exactly_once(app_client) -> None:  #
 
 def test_a_technique_locked_while_the_first_pass_ran_is_not_asked_again(
     app_client,  # noqa: F811
+    monkeypatch,
 ) -> None:
     """The lock is read again after the first pass: a row a consultant locked
-    while it ran is left alone, so it is not paid for a second time."""
+    while it ran is left alone, so it is not paid for a second time.
+
+    The lock lands as the first pass returns, from its own session: written
+    from inside a batch, it races the batches' own SQLite writes."""
     import uuid
 
     from app.models.attack_assessment import AttackCoverage
+    from app.routes import attack as attack_routes
 
     w = _world(app_client, 2)
     locked, open_ = w.code(0), w.code(1)
+    real = attack_routes._mitre_map_batches
+    passes: list[int] = []
 
-    def _lock() -> None:
-        with w.sessions() as db:
-            db.get(AttackCoverage, uuid.UUID(w.rows[0]["id"])).locked = True
-            db.commit()
+    def _first_pass_then_lock(*args, **kwargs):
+        out = real(*args, **kwargs)
+        if not passes:
+            with w.sessions() as db:
+                db.get(AttackCoverage, uuid.UUID(w.rows[0]["id"])).locked = True
+                db.commit()
+        passes.append(1)
+        return out
 
-    w.respond(omit_first=frozenset({locked, open_}), during_first_pass=_lock)
+    monkeypatch.setattr(attack_routes, "_mitre_map_batches", _first_pass_then_lock)
+    w.respond(omit_first=frozenset({locked, open_}))
     result = w.run()
+    assert len(passes) == 2, "setup: expected a first pass and one re-ask"
     assert w.reasks() == [[open_]]
     assert result["reasked_count"] == 1
     assert _row(result, locked)["locked"] is True
