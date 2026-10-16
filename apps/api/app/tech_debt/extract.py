@@ -882,8 +882,10 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     # blank still never reaches the column.
     #
     # The arm stays, with the reason it actually has: rows written BEFORE D-080
-    # can hold `""` or `"   "`, because `ClientProfilePatch` carried no
-    # validator then and migration 0049 does not NULL whitespace. Blank is not a
+    # could hold `""` or `"   "`, because `ClientProfilePatch` carried no
+    # validator then and migration 0049 does not NULL whitespace. Migration
+    # 0050 has since NULLed them, so the arm is now a RATCHET against a future
+    # writer or restore that brings a blank back. Blank is not a
     # name to hint with, and handing one to the redactor would ask it to
     # redact nothing while reporting that it had a name.
     name = row.legal_name

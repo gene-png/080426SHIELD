@@ -692,7 +692,10 @@ def create_engagement(
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
     # sentinel. The branch introduces a write-time invariant and ships nothing
-    # that establishes it for existing data.
+    # that establishes it for existing data. Migration 0050 has since NULLed
+    # every blank `legal_name` (with Python's `.strip()`), so no stored row
+    # holds one today: the strip stays as a RATCHET against a future writer or
+    # restore that brings a blank back.
     #
     # What that cost, before the strip: `"   "` is truthy, so this guard passed
     # and `provision_self_assessment_service` raised `ValueError` on the very
