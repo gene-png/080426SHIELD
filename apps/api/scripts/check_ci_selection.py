@@ -40,9 +40,10 @@ WHY IT RUNS PYTEST RATHER THAN READING MARKS. The question is what CI's
 selector selects, and only the selector can answer it: a mark can come from a
 module `pytestmark`, a class, a decorator, a conftest hook or a plugin. Reading
 source would be a second implementation of pytest's selection, free to drift.
-`CI_SELECTOR` is pinned to ci.yml's exact `run:` line by a test that parses
-the workflow and requires equality, not a substring -- a `-k` or `--deselect`
-appended in CI would otherwise narrow CI while this certified the wider set.
+`CI_SELECTOR`, plus the non-selecting CI_RUN_OPTIONS, is pinned to ci.yml's
+exact `run:` line by a test that parses the workflow and requires equality,
+not a substring -- a `-k` or `--deselect` appended in CI would otherwise
+narrow CI while this certified the wider set.
 
 THE SELECTED SET IS PYTEST'S OWN ANSWER, NOT A RECONSTRUCTION OF IT. The
 selected collection runs CI's exact argv with the configuration LEFT ALONE, so
@@ -76,26 +77,16 @@ removes the file from BOTH collections, so it shrinks the denominator rather
 than producing a finding -- and that is now caught by the file check above,
 at the granularity of a FILE: a module that removes only some of its tests at
 collection time is not seen. A conftest hook that deselects individual items
-applies to BOTH collections, so it is invisible too. CI runs this selection in
-SHARDS (`scripts/pytest_shard.py`), and the shard plugin narrows each run by
-ENVIRONMENT (`PYTEST_SHARD`) -- exactly what this gate cannot see. What closes
-that is the Python aggregate job: each shard records the node ids it RAN and,
-apart, the ones it SKIPPED at runtime (#689), and
-`scripts/shard_partition.py verify` fails unless their union is exactly the
-set THIS RUN CERTIFIED, each test once. `--selected-out FILE` writes that set,
-and only on a clean verdict, so the file the aggregate compares against is
-the gate's own output rather than a second collection a later step could
-narrow. An environment that narrows only the shards appears as a test that
-ran nowhere; one that narrows only this gate appears as a test that ran but
-was not selected. What the union CANNOT see is an environment reaching BOTH
-identically, because both sides then shrink together. So
-`test_ci_selection_gate.py` pins every route that could do that: no
-workflow-level `env`, no job-level `env` on the shard job, the shard step's
-env to exactly the two shard keys, its argv to `python -m pytest -p
-scripts.pytest_shard` + CI_SELECTOR, this step's exact `run`, and the
-selection upload IMMEDIATELY after this step. This replaced #544's pin of
-this step to the step IMMEDIATELY before pytest, which cannot hold across
-jobs.
+applies to BOTH collections, so it is invisible too. CI runs this selection
+over four xdist workers on one runner (`-n 4`, in CI_RUN_OPTIONS, which select
+nothing), in the step IMMEDIATELY after this one, with the same env,
+working-directory and shell (#544), so anything reaching one reaches the
+other. `--selected-out FILE` writes the set this run certified, and only on a
+clean verdict; `check_junit_counts.py` then holds the run to it, test by test,
+from the junit XML: every selected test reported exactly once, nothing else
+reported, and passed + skipped + xfailed equal to the selection. A worker that
+lost a test, or a test run twice, is a finding there rather than a count that
+merely looks right.
 
 The file scan calls `_pytest.pathlib.fnmatch_ex`, a PRIVATE pytest API, and
 mirrors pytest's directory walk (following symlinked directories, pruning
@@ -115,6 +106,12 @@ import tempfile
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
+#: What CI's pytest step adds to CI_SELECTOR. None of it SELECTS: `-n 4` spreads
+#: the selected set over four workers (pytest-xdist), and `--junitxml` records
+#: each test's outcome for `check_junit_counts.py`. The step's `run` is pinned
+#: to exactly CI_RUN by test_ci_selection_gate.py.
+CI_RUN_OPTIONS = ("-n", "4", '--junitxml="$RUNNER_TEMP/pytest-unit.xml"')
+CI_RUN = f"pytest {' '.join(CI_SELECTOR + CI_RUN_OPTIONS)}"
 _ALL = ("tests/unit",)
 
 _PROBE_NAME = "_ci_selection_probe"
@@ -376,8 +373,8 @@ def main(argv: list[str]) -> int:
     print(f"check-ci-selection: clean -- {summary}.")
     if selected_out is not None:
         # Written ONLY on a clean verdict, so the file exists only for a set
-        # this run certified. The shard aggregate checks the shards against
-        # THIS file: the certified set and the checked set are one object.
+        # this run certified. `check_junit_counts.py` holds CI's run to THIS
+        # file: the certified set and the checked set are one object.
         selected_out.write_text("".join(f"{t}\n" for t in sorted(selected)), encoding="utf-8")
         print(f"check-ci-selection: wrote the {len(selected)} certified node ids to {selected_out}")
     return 0

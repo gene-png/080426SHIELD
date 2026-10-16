@@ -1,10 +1,9 @@
 """The required aggregate checks go red unless every job they wait on succeeded.
 
-`Python (ruff + black + pytest + bandit)` and `E2E (Playwright smoke suite)` are
-the required checks by name, and since sharding each is an aggregate job with
-`if: always()`, so it runs when a dependency failed or was skipped (a skipped
-required job reports success). That makes its first step the ONLY thing turning
-a failed shard into a red check: delete it, and the aggregate goes green over a
+`E2E (Playwright smoke suite)` is a required check by name, and since sharding
+it is an aggregate job with `if: always()`, so it runs when a dependency failed
+or was skipped (a skipped required job reports success). That makes its first
+step the ONLY thing turning a failed shard into a red check: delete it, and the aggregate goes green over a
 failed shard, with every other pin still satisfied (#680, review finding).
 
 So this EXECUTES the step, as `test_e2e_spec_listing_gate.py`'s
@@ -31,7 +30,9 @@ from tests._paths import find_workflows_dir
 pytestmark = pytest.mark.unit
 
 # The two required checks, by the exact names branch protection lists.
-AGGREGATES = ("Python (ruff + black + pytest + bandit)", "E2E (Playwright smoke suite)")
+# The Python check is one job again (pytest under xdist on one runner), so it
+# aggregates nothing; only the E2E check waits on shard legs.
+AGGREGATES = ("E2E (Playwright smoke suite)",)
 RESULTS = ("success", "failure", "cancelled", "skipped")
 
 
@@ -111,8 +112,8 @@ def test_the_result_step_passes_only_when_every_dependency_succeeded(name: str) 
         )
         outcomes[combo] = proc.returncode
 
-    # Vacuity guard: every combination ran. Both aggregates wait on two jobs
-    # today, so this is 16 each; it follows the needs count if that changes.
+    # Vacuity guard: every combination ran. The aggregate waits on two jobs
+    # today, so this is 16; it follows the needs count if that changes.
     assert len(outcomes) == len(RESULTS) ** len(deps), len(outcomes)
     wrong = {
         repr(dict(zip(deps, combo, strict=True))): rc

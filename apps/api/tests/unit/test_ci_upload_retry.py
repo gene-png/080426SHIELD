@@ -34,7 +34,9 @@ from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
-AGGREGATES = ("Python (ruff + black + pytest + bandit)", "E2E (Playwright smoke suite)")
+# The required checks that download artifacts. The Python check is one job
+# (xdist on one runner) and reads no artifact, so only E2E is here.
+AGGREGATES = ("E2E (Playwright smoke suite)",)
 _RETRY_IF = re.compile(r"(always\(\) && )?steps\.([A-Za-z0-9_-]+)\.outcome == 'failure'")
 
 
@@ -121,11 +123,11 @@ def simulate(attempts: list[dict], results: tuple[str, ...]) -> tuple[bool, list
 
 
 def test_every_gate_input_is_found() -> None:
-    """Vacuity guard: the derivation finds the inputs both aggregates read."""
+    """Vacuity guard: the derivation finds the shard lists and the full list."""
     found = gate_input_uploads(_jobs())
     names = {name for _, name in found}
-    assert any(n.startswith("pytest-") for n in names), names
-    assert any(n.startswith("e2e-list-") for n in names), names
+    assert "e2e-list-full" in names, names
+    assert any(n.startswith("e2e-list-shard-") for n in names), names
 
 
 def test_each_gate_input_is_uploaded_by_contiguous_identical_attempts() -> None:

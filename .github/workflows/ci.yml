@@ -14,13 +14,14 @@ permissions:
   contents: read
 
 jobs:
-  python-checks:
-    # Every lint and gate step of the required Python check, minus pytest,
-    # which runs in `pytest-shard` below. NOT itself required: the job
-    # named "Python (ruff + black + pytest + bandit)" is the aggregate,
-    # which needs this job and every shard.
-    name: Python lint and gates
+  python:
+    name: Python (ruff + black + pytest + bandit)
     runs-on: ubuntu-latest
+    # #739: without one, GitHub's 6-hour default lets a hung test hold this
+    # required check that long. The unit suite under `-n 4` measured 11-16 min
+    # on run 38802579958 (2026-10-15), and the steps around it about 2; 45 is
+    # well over twice that.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -289,7 +290,7 @@ jobs:
           #   python - <<'PY'
           #   import yaml
           #   d = yaml.safe_load(open(".github/workflows/ci.yml"))
-          #   s = [x for x in d["jobs"]["python-checks"]["steps"]
+          #   s = [x for x in d["jobs"]["python"]["steps"]
           #        if x.get("name") == "image optimizer stays unmounted"]
           #   open("gate-step.sh", "w", newline="\n").write(s[0]["run"])
           #   PY
@@ -532,51 +533,31 @@ jobs:
       - name: every e2e env gate is set or exempted (#540)
         run: python apps/api/scripts/check_e2e_env_gates.py
 
-      # The gate WRITES the set it certified, and only on a clean verdict. The
-      # step after it uploads exactly that file, and the `python` aggregate
-      # checks the shards against it, so the certified set and the checked set
-      # are one object. pytest no longer runs in this job, so #544's pin to the
-      # step IMMEDIATELY before pytest is gone. What replaces it, in
-      # `shard_pin_violations` (test_ci_selection_gate.py): this `run` is exact;
-      # the upload is the IMMEDIATELY following step, so nothing can narrow the
-      # environment between certifying and shipping; and neither the workflow
-      # nor the shard job carries an `env` that could narrow both sides alike.
+      # The gate WRITES the set it certified, and only on a clean verdict, and
+      # pytest runs IMMEDIATELY after it in the same job, with the same env,
+      # working-directory and shell (#544, pinned by test_ci_selection_gate.py),
+      # so nothing can narrow one and not the other. Its run is exactly
+      # CI_SELECTOR plus CI_RUN_OPTIONS, neither of which selects: `-n 4` spreads
+      # the selection over four workers on this one runner (pytest-xdist), and
+      # `--junitxml` records one outcome per test.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
         run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
 
-      - name: Upload the unit selection
-        id: upload-selection
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-selection
-          path: ${{ runner.temp }}/pytest-selection.txt
-          retention-days: 7
-          if-no-files-found: error
-          overwrite: true
+      - name: pytest -m unit
+        working-directory: apps/api
+        run: pytest -m unit tests/unit -n 4 --junitxml="$RUNNER_TEMP/pytest-unit.xml"
 
-      - name: Upload the unit selection (retry 1, #734)
-        id: upload-selection-retry-1
-        if: steps.upload-selection.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-selection
-          path: ${{ runner.temp }}/pytest-selection.txt
-          retention-days: 7
-          if-no-files-found: error
-          overwrite: true
-
-      - name: Upload the unit selection (retry 2, #734)
-        if: steps.upload-selection-retry-1.outcome == 'failure'
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-selection
-          path: ${{ runner.temp }}/pytest-selection.txt
-          retention-days: 7
-          if-no-files-found: error
-          overwrite: true
+      # Workers can lose a test without pytest noticing the way a serial run
+      # would, and xdist re-runs a crashed worker's test elsewhere. So the run
+      # is checked against the certified set, test by test, from the junit XML
+      # rather than the summary line: every selected test reported exactly once,
+      # nothing reported that was not selected, and passed + skipped + xfailed
+      # equal to the selection. `always()` so the counts print on a red run too.
+      - name: every selected test ran exactly once
+        if: always()
+        working-directory: apps/api
+        run: python -m scripts.check_junit_counts --junit "$RUNNER_TEMP/pytest-unit.xml" --selected "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: bandit
         run: bandit -q -c pyproject.toml -r apps/api/app
@@ -587,140 +568,6 @@ jobs:
         working-directory: apps/api
         continue-on-error: true
         run: pip-audit
-
-  pytest-shard:
-    # `pytest -m unit tests/unit` was about 22 of the Python job's 24 minutes.
-    # Split 4 ways by `scripts/pytest_shard.py`: after `-m unit` deselects, each
-    # file's tests are dealt round-robin across the shards, derived from
-    # collection alone. Each shard records the node ids it RAN and, apart, the
-    # ones it SKIPPED at runtime (#689); the aggregate checks their union is the
-    # full selection, each test exactly once, and names the skipped ones.
-    name: Python unit tests (shard ${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
-    # #739: without one, GitHub's 6-hour default lets a hung test hold the
-    # required check that long. Measured per shard: 14-20 min on #680's own
-    # run 38176987278 (2026-10-11), 22-29 min on run 38802579958 (2026-10-15).
-    # 60 is twice the slowest, and a timed-out shard fails the aggregate.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install API + dev tools
-        working-directory: apps/api
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      # The ONE pytest step over tests/unit. Its argv is pinned EQUAL to
-      # `python -m pytest -p scripts.pytest_shard` + check_ci_selection's
-      # CI_SELECTOR, and its env may carry only these two keys, by
-      # test_ci_selection_gate.py. The plugin narrows by environment, which that
-      # gate cannot see; the aggregate's union check is what closes it.
-      - name: pytest -m unit (shard)
-        working-directory: apps/api
-        env:
-          PYTEST_SHARD: ${{ matrix.shard }}/4
-          PYTEST_SHARD_RECORD: ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
-        run: python -m pytest -p scripts.pytest_shard -m unit tests/unit
-
-      # #734: an upload is retried, twice, because a transient upload error
-      # (ETIMEDOUT) turned a required check red on a green suite. Still fail
-      # closed: the first two attempts may fail (`continue-on-error`), each
-      # retry runs only if the attempt before it FAILED, and the last attempt
-      # has no `continue-on-error`, so three failures fail the job. `overwrite`
-      # replaces whatever a failed attempt left half-written. Pinned by
-      # test_ci_upload_retry.py, which walks every outcome of the attempts.
-      - name: Upload what this shard ran
-        id: upload-record
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-shard-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
-          retention-days: 7
-          if-no-files-found: ignore
-          overwrite: true
-
-      - name: Upload what this shard ran (retry 1, #734)
-        id: upload-record-retry-1
-        if: always() && steps.upload-record.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-shard-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
-          retention-days: 7
-          if-no-files-found: ignore
-          overwrite: true
-
-      - name: Upload what this shard ran (retry 2, #734)
-        if: always() && steps.upload-record-retry-1.outcome == 'failure'
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-shard-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt
-            ${{ runner.temp }}/pytest-shard-${{ matrix.shard }}.txt.skipped
-          retention-days: 7
-          if-no-files-found: ignore
-          overwrite: true
-
-  python:
-    # THE REQUIRED CHECK, by its exact name: branch protection lists it, and it
-    # must not change. `if: always()` so it RUNS when a dependency failed or was
-    # skipped -- a skipped required job reports success. It then fails unless
-    # every dependency succeeded, and unless the shards partitioned the
-    # selection.
-    name: Python (ruff + black + pytest + bandit)
-    needs: [python-checks, pytest-shard]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Every Python job succeeded
-        env:
-          CHECKS: ${{ needs.python-checks.result }}
-          SHARDS: ${{ needs.pytest-shard.result }}
-        run: |
-          echo "python-checks: $CHECKS; pytest shards: $SHARDS"
-          if [ "$CHECKS" != "success" ] || [ "$SHARDS" != "success" ]; then
-            echo "::error::a Python job did not succeed (failed, cancelled or skipped), so this required check is red"
-            exit 1
-          fi
-
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: pytest-*
-          path: ${{ runner.temp }}/pytest
-          merge-multiple: true
-
-      - name: The shards ran every selected test exactly once
-        working-directory: apps/api
-        run: >-
-          python -m scripts.shard_partition verify
-          --full "$RUNNER_TEMP/pytest/pytest-selection.txt"
-          --of 4
-          --ran "$RUNNER_TEMP"/pytest/pytest-shard-*.txt
-          --skipped "$RUNNER_TEMP"/pytest/pytest-shard-*.txt.skipped
 
   web:
     name: Web (prettier + eslint + typecheck + build)

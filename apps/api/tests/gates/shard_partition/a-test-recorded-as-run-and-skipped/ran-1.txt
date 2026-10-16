@@ -1,2 +1,0 @@
-tests/unit/test_a.py::test_1
-tests/unit/test_b.py::test_1

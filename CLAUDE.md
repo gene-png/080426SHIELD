@@ -140,9 +140,9 @@ happened.
    `Web (prettier + eslint + typecheck + build)`, `Secret scan (gitleaks)`,
    `E2E (Playwright smoke suite)` and `Demo (hosted-demo reset + journey spec)`.
    From `audit-gate.yml`: `Adversarial audit recorded` and
-   `No accidental issue closes`. The Python and E2E names are aggregate jobs
-   that fail unless every shard succeeded; the shard jobs themselves are not
-   required. `mutation-sweep.yml` is schedule-only and excluded. **Re-derive
+   `No accidental issue closes`. The E2E name is an aggregate job that fails
+   unless every shard succeeded; the shard jobs themselves are not required.
+   `mutation-sweep.yml` is schedule-only and excluded. **Re-derive
    this list when a required check is added**, from branch protection
    (`gh api repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks`),
    not from this paragraph.

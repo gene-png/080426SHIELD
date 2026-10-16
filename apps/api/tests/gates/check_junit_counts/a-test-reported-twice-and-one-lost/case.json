@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL: #680 moved the unit suite onto four xdist workers, and a worker that dies has its test run again elsewhere. One test reported twice and another never reported leaves the TOTAL equal to the selection, so a count of the summary line passes it. It must be red and name both.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "selected but never reported: tests/unit/sub/test_c.py::test_three"
+}
