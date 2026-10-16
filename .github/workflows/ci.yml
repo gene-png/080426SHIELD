@@ -7,11 +7,12 @@ on:
     branches: [main]
 
 # One group per ref, and only a pull request cancels (#736 6217076147). A PR's
-# superseded run is cancelled. Main has ONE group and never cancels: a running
-# main run finishes, and GitHub keeps at most one pending run behind it,
-# replacing an older pending one with the newest. A per-commit group (the
-# version before this) never cancelled either, but let every merge start a run,
-# so main's runs piled up. Pinned by test_ci_concurrency.py.
+# superseded run is cancelled. Main has ONE group and never cancels a RUNNING
+# run: it finishes. GitHub keeps at most one pending run behind it, and a newer
+# pending run replaces an older one, which then ends as `cancelled` without
+# having started (review of 9d077784). A per-commit group (the version before
+# this) cancelled nothing, but let every merge start a run, so main's runs
+# piled up. Pinned by test_ci_concurrency.py.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
