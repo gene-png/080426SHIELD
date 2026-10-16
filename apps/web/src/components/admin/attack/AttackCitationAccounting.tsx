@@ -105,7 +105,11 @@ function OmittedItems<T extends AttackOmittedTechnique>({
  * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
  *
  * Not a refusal: an entry that names a technique and is refused is an answer,
- * not an omission. Only the N/A and forbidden-reason refusals are counted in
+ * not an omission. One exception since #1047: a technique the first pass left
+ * out whose RE-ASK answer is refused stays here (nothing applied it), so it
+ * can be counted both here and on the N/A or forbidden-reason line below; each
+ * line is true of it, and they are not to be added up. Only the N/A and
+ * forbidden-reason refusals are counted in
  * this panel, on their own lines further down (`not_applicable_refused`,
  * `forbidden_reason_refused`); the rest are only in the audit row's `details`
  * and reach no screen (#859). A failed batch's techniques are the failed-batch

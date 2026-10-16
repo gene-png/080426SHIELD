@@ -413,3 +413,42 @@ def test_a_reask_answer_the_run_refuses_leaves_the_technique_on_the_omitted_list
     audit = w.audit()
     assert {e["technique_code"] for e in audit["statuses_rejected"]} == {kept, unscored}
     assert audit["omitted_count"] == 2
+
+
+def test_a_technique_edited_while_the_run_ran_and_answered_on_the_reask_is_not_omitted(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """A re-ask answer for a row a consultant edited during the run is not
+    applied: the edit is kept and counted (#645). The re-ask DID answer it, so
+    it does not stay on the omitted list, which would put the consultant's own
+    new status under "Check these before approving"."""
+    import uuid
+
+    from app.models.attack_assessment import AttackCoverage
+    from app.routes import attack as attack_routes
+
+    w = _world(app_client, 2)
+    answered, edited = w.code(0), w.code(1)
+    real = attack_routes._mitre_map_batches
+    passes: list[int] = []
+
+    def _first_pass_then_edit(*args, **kwargs):
+        out = real(*args, **kwargs)
+        if not passes:
+            with w.sessions() as db:
+                db.get(AttackCoverage, uuid.UUID(w.rows[1]["id"])).status = "covered"
+                db.commit()
+        passes.append(1)
+        return out
+
+    monkeypatch.setattr(attack_routes, "_mitre_map_batches", _first_pass_then_edit)
+    w.respond(omit_first=frozenset({edited}))
+    result = w.run()
+    assert len(passes) == 2, "setup: expected a first pass and one re-ask"
+    assert w.reasks() == [[edited]]
+    assert _row(result, answered)["status"] == "gap"
+    # The edit is kept: the re-ask's "gap" is not written over it.
+    assert _row(result, edited)["status"] == "covered"
+    assert result["rows_skipped_edited"] == 1
+    assert (result["omitted_count"], result["omitted_techniques"]) == (0, [])
