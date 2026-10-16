@@ -612,7 +612,11 @@ def _not_citable(scored: int, total: int, pending: int | None) -> int:
     Reachable only for a register drawn from an ATT&CK assessment approved
     before R3: under R3 nothing is pending, and the cell is unchanged. A count
     that was not recorded (None, a register from before #415) adds nothing,
-    and the "Pending review" cell says "not recorded" beside it."""
+    and that is exact, not an understatement: the code that withholds pending
+    techniques from the allow-list (`routes/risk.py`, `attack_scope.citable`)
+    is the code that records the count (both landed in #974, f01d2665), so a
+    register with no count withheld nothing and its pending techniques were
+    citable. The "Pending review" cell says "not recorded" beside it."""
     return total - scored + (pending or 0)
 
 
