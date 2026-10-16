@@ -21,8 +21,11 @@ import { renderedAgainstNote } from "@/lib/dashboards/frozenTarget";
 
 import type { JSX } from "react";
 
+/** #1183: the API floors a maturity percentage to one decimal, and it is
+ *  shown as sent. `Math.round` here turned the API's 66.6 into "67". The value
+ *  already has one decimal, so `toFixed(1)` only formats it. */
 function pctText(n: number | null): string {
-  return n === null ? "—" : `${Math.round(n)}`;
+  return n === null ? "—" : n.toFixed(1);
 }
 
 /** One function's current→target bar. Mirrors ZT's per-pillar bar. */
@@ -49,7 +52,7 @@ function MaturityBar({ fn }: { fn: CsfFunction }): JSX.Element {
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {fn.current_pct === null
             ? `Not assessed · 0 of ${fn.subcategory_count} scored`
-            : `${fn.gap_count} gap${fn.gap_count === 1 ? "" : "s"} · +${Math.round(fn.gap_pct)} pt move · ${fn.answered_count}/${fn.subcategory_count} scored`}
+            : `${fn.gap_count} gap${fn.gap_count === 1 ? "" : "s"} · +${pctText(fn.gap_pct)} pt move · ${fn.answered_count}/${fn.subcategory_count} scored`}
         </span>
       </div>
       <div
@@ -160,7 +163,7 @@ export function CsfDashboard({
         <KpiCard
           label="Largest gap"
           value={data.largest_gap_function ?? "—"}
-          sub={`+${Math.round(data.largest_gap_pct)} points to target`}
+          sub={`+${pctText(data.largest_gap_pct)} points to target`}
           accent={C.amber}
         />
       </KpiRow>
