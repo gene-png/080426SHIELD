@@ -13,7 +13,8 @@ Both need to know what the transaction did, which SQLAlchemy does not record,
 so the listeners below mark it in `session.info` and clear the marks when the
 outermost transaction ends (commit, rollback or close):
 
-* `_WROTE`: a flush, or an ORM-enabled INSERT / UPDATE / DELETE statement;
+* `_WROTE`: a flush with a net change to write (#1362), or an ORM-enabled
+  INSERT / UPDATE / DELETE statement;
 * `_FOR_UPDATE`: an ORM SELECT carrying `with_for_update()`.
 
 RESIDUAL: a raw `text("... FOR UPDATE")` or a Core statement run on the
@@ -34,9 +35,13 @@ _WROTE = "shield_ai_txn_wrote"
 _FOR_UPDATE = "shield_ai_txn_for_update"
 
 
-@event.listens_for(Session, "after_flush")
-def _mark_flush(session: Session, _flush_context) -> None:
-    session.info[_WROTE] = True
+@event.listens_for(Session, "before_flush")
+def _mark_flush(session: Session, _flush_context, _instances) -> None:
+    # #1362: only a flush with something to write. An attribute set to the
+    # value it already holds leaves its object in `dirty` and runs a flush
+    # that emits nothing; `is_modified` compares against the loaded value.
+    if session.new or session.deleted or any(session.is_modified(o) for o in session.dirty):
+        session.info[_WROTE] = True
 
 
 @event.listens_for(Session, "do_orm_execute")
