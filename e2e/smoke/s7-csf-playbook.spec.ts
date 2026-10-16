@@ -375,7 +375,7 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   test.slow();
   test.setTimeout(300_000);
   // Its own private service and fresh draft; the seed step below fills it.
-  await openWorkspaceOnDraft(page, request);
+  const csfServiceId = await openWorkspaceOnDraft(page, request);
 
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
   const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
@@ -391,7 +391,6 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   await page.waitForLoadState("networkidle").catch(() => undefined);
 
   // --- Force a deterministic gap: target L5 on the second subcategory ------
-  // (the first one may carry the previous test's all-2s + evidence = L5 row).
   const subcatSelect = page.getByRole("combobox", { name: "Subcategory" });
   await expect(subcatSelect).toBeVisible({ timeout: 30000 });
   await expect
@@ -410,7 +409,6 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   // target and no gap, and only the noted subcategory was sent to Run AI. So
   // score this one on every tier (governance 1: total 1, level L1), through
   // the API the editor saves to, for the roll-up below to have three tiers.
-  const csfServiceId = await atlasServiceId(page, "nist_csf");
   for (const tier of ["high", "moderate", "low"]) {
     const profileRes = await page.request.get(
       `/api/proxy/csf/services/${csfServiceId}/profile/${tier}`,
