@@ -135,6 +135,7 @@ def _fields(**over: object) -> dict:
         "tech_debt_savings_usd": None,
         "tech_debt_savings_cost_known": True,
         "tech_debt_savings_unresolved": False,
+        "tech_debt_savings_ai_estimate_count": 0,
         "zt_gap_count": None,
         "zt_gap_unresolved": False,
         "zt_services": 0,
