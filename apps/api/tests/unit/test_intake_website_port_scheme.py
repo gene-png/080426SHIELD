@@ -53,6 +53,7 @@ def _patch_website(client, bearer: str, website: str):
         "8080/0.0.31.144",
         "8080?0.0.31.144",
         "https:/8080#0.0.31.144",
+        "8080\\0.0.31.144",  # a backslash cuts the authority too
         "https:\uff18\uff10\uff18\uff10",  # full-width "8080"
     ],
 )
@@ -82,6 +83,7 @@ def test_a_bare_scheme_and_a_port_is_refused(app_client, typed) -> None:  # noqa
         # A dotted quad in the PATH after a real host is not the host at all.
         ("example.com/1.2.3.4", "https://example.com/1.2.3.4"),
         ("https://1.2.3.4/0.0.0.1", "https://1.2.3.4/0.0.0.1"),
+        ("//1.2.3.4", "https://1.2.3.4/"),  # leading slashes, no scheme
     ],
 )
 def test_a_host_with_a_port_is_still_accepted(app_client, typed, stored) -> None:  # noqa: F811
