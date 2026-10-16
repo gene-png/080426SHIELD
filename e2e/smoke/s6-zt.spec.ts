@@ -1,7 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { atlasServiceId } from "../helpers/ids";
+import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
@@ -21,10 +26,24 @@ import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
  */
 
 /** Sign in, open the DoD workspace, and layer a fresh draft assessment on top. */
-async function openFreshDraft(page: Page): Promise<void> {
+async function openFreshDraft(
+  page: Page,
+  request: APIRequestContext,
+): Promise<string> {
+  // #1123 item 1: a plain create over released work is refused, and the
+  // seeded Atlas DoD service's only version is RELEASED. So this spec mints a
+  // PRIVATE DoD service under Atlas, as s11 does for ATT&CK, and opens a
+  // genuinely fresh draft on it (the changed>0 assertion needs a clean grid).
+  const token = await adminApiToken(request);
+  const clientId = await atlasClientIdViaApi(request, token);
+  const svc = await (
+    await request.post(`${API_BASE}/zt/services`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Client-Id": clientId },
+      data: { kind: "zero_trust_dod", title: "E2E Zero Trust DoD" },
+    })
+  ).json();
+  const ztDodServiceId = svc.id as string;
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-  // Seeded Atlas Defense "Zero Trust (DoD ZTRA)" service (scripts/seed_demo.py).
-  const ztDodServiceId = await atlasServiceId(page, "zero_trust_dod");
   await page.goto(`/admin/services/${ztDodServiceId}/zero-trust-dod`);
   await expect(
     page.getByRole("heading", {
@@ -34,21 +53,6 @@ async function openFreshDraft(page: Page): Promise<void> {
     }),
   ).toBeVisible({ timeout: 30000 });
 
-  // Close any open draft first, then mint. SPRINT_3 T1 added a draft-exists
-  // guard: POST now REUSES an open draft instead of minting a new version, so a
-  // plain POST would hand back a previous run's already-AI-drafted draft and
-  // Run AI would diff to zero changes (the changed>0 assertion below needs a
-  // clean grid). Approving moves any open DRAFT out of DRAFT (ignored when
-  // nothing is open), so the following POST cuts a genuinely fresh v+1.
-  const prior = await page.request.get(
-    `/api/proxy/zt/services/${ztDodServiceId}/assessments/latest`,
-  );
-  if (prior.ok()) {
-    const p = (await prior.json()) as { id: string; status: string };
-    if (p.status === "draft") {
-      await page.request.post(`/api/proxy/zt/assessments/${p.id}/approve`);
-    }
-  }
   const created = await page.request.post(
     `/api/proxy/zt/services/${ztDodServiceId}/assessments`,
   );
@@ -59,16 +63,18 @@ async function openFreshDraft(page: Page): Promise<void> {
   // Let the (StrictMode-duplicated) initial loads finish so none of their
   // stale responses land mid-test and clobber fresher state.
   await page.waitForLoadState("networkidle").catch(() => undefined);
+  return ztDodServiceId;
 }
 
 test("DoD questionnaire renders by pillar and current/target stages are settable", async ({
   page,
+  request,
 }) => {
   // Long flow (sign-in + create + reload + two auto-save PATCHes) against a
   // next-dev server that is also serving the other smoke specs; a queued PATCH
   // can take tens of seconds under load, so triple the budget.
   test.slow();
-  await openFreshDraft(page);
+  await openFreshDraft(page, request);
 
   // The questionnaire renders, grouped into pillar tabs.
   await expect(
@@ -160,18 +166,18 @@ test("DoD questionnaire renders by pillar and current/target stages are settable
 
 test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month", async ({
   page,
+  request,
 }) => {
   // Long flow (sign-in + create + reload + Run AI, all against a next-dev server
   // that cold-compiles routes and queues requests under whole-suite load); the
   // sibling test above uses the same budget, so triple the default timeout.
   test.slow();
-  await openFreshDraft(page);
+  const ztDodServiceId = await openFreshDraft(page, request);
 
   // #806: the approved prompt gives no result for a capability with blank
   // notes (A5), and the fixture follows it, so a BLANK draft would change
   // nothing. Record notes on three capabilities first, through the same API
   // the questionnaire's notes field saves to; the run under test is the AI's.
-  const ztDodServiceId = await atlasServiceId(page, "zero_trust_dod");
   // Three capabilities of the FIRST pillar, which is the tab the questionnaire
   // opens on, so the notes can be checked on screen below.
   const catalogRes = await page.request.get(

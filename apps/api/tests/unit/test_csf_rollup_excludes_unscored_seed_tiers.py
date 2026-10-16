@@ -120,7 +120,8 @@ def test_the_risk_finding_states_the_scored_level(risk_app_client) -> None:  # n
     csf = {sid: f for sid, f in payload["findings"].items() if f["kind"] == "csf"}
     assert list(csf) == [A], csf  # positive first
     finding = csf[A]
-    assert finding["label"] == f"CSF {A}: level 2 of target 4", finding
+    # Levels by name since #736 6216024281 item 3c (2 Developing, 4 Managed).
+    assert finding["label"] == f"CSF {A}: Developing, below target Managed", finding
     evidence = finding["evidence"]
     assert evidence["enterprise_level"] == 2, evidence
     assert evidence["tier_levels"] == {"high": 2}, evidence

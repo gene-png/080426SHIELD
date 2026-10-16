@@ -98,8 +98,16 @@ def test_a_newer_version_after_generate_blocks(app_client) -> None:  # noqa: F81
     s = seed_released(c, bearer, cid)
     _gen(c, provider, bearer, cid)
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
-    v2 = c.post(f"/attack/services/{s.attack_service}/assessments", headers=h)
-    assert v2.status_code in (200, 201), v2.text
+    # #1123 item 1: a plain create over released work is refused; a revision
+    # is the way to open the next version, and it opens as a draft.
+    v1 = c.get(f"/attack/services/{s.attack_service}/assessments/latest", headers=h)
+    assert v1.status_code == 200, v1.text
+    v2 = c.post(
+        f"/attack/services/{s.attack_service}/assessments/{v1.json()['id']}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
+    assert v2.status_code == 201, v2.text
     assert _blockers(_publish(c, bearer, cid)) == [
         {"input": "attack", "reason": "changed", "status": "draft"}
     ]
@@ -239,10 +247,19 @@ def _edit_recorded(kind: str, **changes) -> None:
 
 
 def _new_version_released(c, bearer: str, cid: str, prefix: str, service_id: str) -> str:
-    """Open the next assessment version of `service_id`, approve it, release it."""
+    """Open the next assessment version of `service_id`, approve it, release it.
+
+    #1123 item 1: a plain create over released work is refused, so the next
+    version is opened as a revision of the released one."""
     h = _h(bearer, cid)
-    v = c.post(f"/{prefix}/services/{service_id}/assessments", headers=h)
-    assert v.status_code in (200, 201), v.text
+    v1 = c.get(f"/{prefix}/services/{service_id}/assessments/latest", headers=h)
+    assert v1.status_code == 200, v1.text
+    v = c.post(
+        f"/{prefix}/services/{service_id}/assessments/{v1.json()['id']}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
+    assert v.status_code == 201, v.text
     assert v.json()["version"] == 2, v.json()
     ap = c.post(f"/{prefix}/assessments/{v.json()['id']}/approve", headers=h)
     assert ap.status_code == 200, ap.text

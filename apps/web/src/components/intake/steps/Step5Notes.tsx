@@ -63,15 +63,17 @@ export function Step5Notes({
   const [artifacts, setArtifacts] = React.useState<ArtifactSummary[]>([]);
   const [listError, setListError] = React.useState<string | null>(null);
 
+  // #1262: the client the wizard loaded, never the shared cookie.
+  const clientId = state.client?.id;
   const refreshArtifacts = React.useCallback(async () => {
     try {
-      const res = await listArtifacts();
+      const res = await listArtifacts(clientId);
       setArtifacts(res.items);
       setListError(null);
     } catch (err) {
       setListError(clientFacingError(err, "Failed to load uploads."));
     }
-  }, []);
+  }, [clientId]);
 
   React.useEffect(() => {
     void (async () => {
@@ -143,6 +145,7 @@ export function Step5Notes({
         </h3>
         <RedactionDisclosure />
         <Dropzone
+          clientId={clientId}
           onUploaded={(a) => {
             setArtifacts((prev) => [a, ...prev]);
           }}

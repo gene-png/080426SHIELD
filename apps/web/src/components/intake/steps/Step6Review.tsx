@@ -88,9 +88,11 @@ export function Step6Review({
   const [artifacts, setArtifacts] = React.useState<ArtifactSummary[] | null>(
     null,
   );
+  // #1262: the client the wizard loaded, never the shared cookie.
+  const clientId = c?.id;
   React.useEffect(() => {
     let cancelled = false;
-    listArtifacts()
+    listArtifacts(clientId)
       .then((res) => {
         if (!cancelled) setArtifacts(res.items ?? []);
       })
@@ -101,7 +103,7 @@ export function Step6Review({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [clientId]);
   const picks = (c?.service_interests ?? []) as ServiceType[];
   const legalName = isNamedOrg(c?.legal_name) ? c!.legal_name : null;
 

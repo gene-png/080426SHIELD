@@ -630,10 +630,17 @@ def redact_payload_isolated(
     mode: RedactionMode,
     client_org_name: str | None,
     name_hints: Iterable[str],
+    egress: bool = True,
 ) -> tuple[Any, dict[str, int]]:
     """`redact_payload`, computed in a child process under the budget, inside
     this run's place and one child slot. Same inputs, same output (pinned by
-    `test_child_output_equals_in_process_output`)."""
+    `test_child_output_equals_in_process_output`).
+
+    `egress=False` (#1080, review F2) is for a redaction whose output is never
+    sent -- the ATT&CK tool names a resolver indexes (`attack/shown_forms.py`).
+    It is placed, slotted, budgeted and refused exactly as any other call, but
+    it does not count as a payload CLEARED for sending, so a refusal later in
+    the same run still says, truly, that nothing was sent."""
     s = get_settings()
     budget = float(s.shield_redaction_budget_seconds)
     slots = _slots_for(int(s.shield_redaction_max_children))
@@ -653,6 +660,7 @@ def redact_payload_isolated(
             mode,
             client_org_name,
             tuple(name_hints),
+            egress,
         )
     finally:
         if one_call:
@@ -669,6 +677,7 @@ def _redact_in_place(
     mode: RedactionMode,
     client_org_name: str | None,
     name_hints: tuple[str, ...],
+    egress: bool = True,
 ) -> tuple[Any, dict[str, int]]:
     busy = status.HTTP_503_SERVICE_UNAVAILABLE
     if not slots.wait(slot_wait):
@@ -722,5 +731,6 @@ def _redact_in_place(
             # A sibling call was refused while this one ran: this payload is
             # not cleared, so the refusal's "sent before" stays true.
             raise place.refused.again()
-        place.cleared += 1
+        if egress:
+            place.cleared += 1
     return value

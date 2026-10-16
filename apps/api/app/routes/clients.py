@@ -12,6 +12,7 @@ sees nothing until a consultant explicitly releases the finalized deliverable.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, NamedTuple
 
@@ -103,6 +104,7 @@ from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sent
 from app.routes.attack import client_retirement_index
 from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
+    AttackDashboardContent,
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
@@ -1201,97 +1203,26 @@ def _dashboard_stamp(deliv: Deliverable, is_released: bool) -> datetime:
     return deliv.released_at if is_released and deliv.released_at else deliv.finalized_at
 
 
-@router.get(
-    "/{client_id}/attack/{service_id}/dashboard",
-    response_model=AttackDashboardResponse,
-    summary="Released ATT&CK coverage dashboard for the client (client + admin)",
-)
-def attack_dashboard(
-    client_id: uuid.UUID,
-    service_id: uuid.UUID,
-    user: Annotated[User, Depends(current_user)],
-    client: Annotated[Client, Depends(current_client)],
-    db: Annotated[Session, Depends(get_db)],
-) -> AttackDashboardResponse:
-    """Coverage rollup + per-technique matrix for a released ATT&CK service.
+def attack_dashboard_content(
+    db: Session,
+    *,
+    client: Client,
+    svc: Service,
+    assessment: AttackAssessment,
+    coverage: Sequence[AttackCoverage],
+) -> AttackDashboardContent:
+    """The ATT&CK dashboard over `coverage`, the assessment's rows.
 
-    Tenant-enforced (404, never 403). Release-gated on the deliverable (NOT the
-    assessment status), so it is visible exactly when the downloadable report is.
+    #1178: extracted unchanged from `attack_dashboard`, which passes the rows
+    stored for the released assessment. The admin-only draft dashboard
+    (`routes/attack.py`) passes the rows as an AI run left them, rebuilt in
+    memory from the run's stored result, so the two cannot compute the same
+    rows differently. The release gate and the record the numbers come from
+    are the caller's.
     """
-    if client_id != client.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
-
-    released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
-        ServiceKind.ATTACK_COVERAGE, []
-    )
-    resolved = _dashboard_deliverable(
-        db, service_id=service_id, user=user, released_service_ids=released_attack_ids
-    )
-    if resolved is None:
-        # Typed 404 (D-016): the dashboard exists only once a deliverable is
-        # released (or, for an admin, finalized). 404 (not 403) keeps parity
-        # with the tenant-not-found path.
-        #
-        # THE STRING `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE,
-        # in `apps/web/src/lib/describe-save-error.ts` as the sole member of
-        # `GENERIC_COPY_IS_BETTER`. There is no build step between these two
-        # trees, so nothing derives one from the other.
-        #
-        # The pointer lives HERE, at the side that closes the window, rather
-        # than only there -- whoever renames this code is the person who would
-        # otherwise have no way to know the copy exists. Same placement, and
-        # the same reason, as `SCHEMA_REASON_PREFIX` in `app/exceptions.py`.
-        #
-        # THE WIDTH OF THE GAP, stated so it is not rediscovered: rename this
-        # code without editing that Set and the Set stops matching. The web
-        # layer then takes its unknown-code branch, prefers the server's
-        # sentence, and renders "No released X report for this service yet."
-        # over the client copy again -- which is #318, in the page's most
-        # common state, with nothing red. The five `test_*_dashboard.py`
-        # suites assert this literal over HTTP and would go red, but a rename
-        # refactor edits those in the same pass and nothing in that pass
-        # mentions a web-layer Set.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "dashboard_not_released",
-                "message": "No released ATT&CK coverage report for this service yet.",
-            },
-        )
-    deliv, is_released = resolved
-
-    svc = db.get(Service, service_id)
-    if svc is None:
-        # A finalized deliverable implies a service; if that invariant is
-        # broken, fail loudly rather than serve an empty dashboard.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "dashboard_not_released",
-                "message": "No released ATT&CK coverage report for this service yet.",
-            },
-        )
-    # #114: the numbers below and `deliverable_version` in the response must
-    # name the same record, so the assessment is resolved FROM `deliv`.
-    assessment = _deliverable_parent(
-        db,
-        AttackAssessment,
-        deliv,
-        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
-    )
-    if assessment is None:
-        raise _unresolved_parent(deliv, surface="attack_dashboard")
-    # #556: refuse, in client words, rather than drop unknown codes below.
-    require_current_catalog_for_client(assessment)
-
     valid = attack_all_codes()
     # #554 R3: computed statuses where they apply; the stored rows otherwise.
-    rows = attack_effective_coverage(
-        assessment,
-        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
-        .scalars()
-        .all(),
-    )
+    rows = attack_effective_coverage(assessment, coverage)
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
@@ -1408,21 +1339,7 @@ def attack_dashboard(
         for reason, n in attack_partial_reason_counts(deliverable_ctx)
     ] or None
 
-    _log.info(
-        "client.attack_dashboard.built",
-        client_id=str(client.id),
-        service_id=str(service_id),
-        actor_user_id=str(user.id),
-        evaluated=len(techniques),
-        coverage_pct=rollup.coverage_pct,
-    )
-
-    return AttackDashboardResponse(
-        service_id=service_id,
-        service_title=svc.title,
-        released_at=_dashboard_stamp(deliv, is_released),
-        released=is_released,
-        deliverable_version=deliv.version,
+    return AttackDashboardContent(
         parents_computed=True if rule else None,
         # #554 R3 (Q4): the deliverable's own sentence, from the same context.
         awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
@@ -1481,6 +1398,119 @@ def attack_dashboard(
         # document's own sentence, so the two surfaces stay the same claim.
         subset_notes=attack_subset_sentences(deliverable_ctx),
         tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
+    )
+
+
+@router.get(
+    "/{client_id}/attack/{service_id}/dashboard",
+    response_model=AttackDashboardResponse,
+    summary="Released ATT&CK coverage dashboard for the client (client + admin)",
+)
+def attack_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackDashboardResponse:
+    """Coverage rollup + per-technique matrix for a released ATT&CK service.
+
+    Tenant-enforced (404, never 403). Release-gated on the deliverable (NOT the
+    assessment status), so it is visible exactly when the downloadable report is.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
+        ServiceKind.ATTACK_COVERAGE, []
+    )
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_attack_ids
+    )
+    if resolved is None:
+        # Typed 404 (D-016): the dashboard exists only once a deliverable is
+        # released (or, for an admin, finalized). 404 (not 403) keeps parity
+        # with the tenant-not-found path.
+        #
+        # THE STRING `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE,
+        # in `apps/web/src/lib/describe-save-error.ts` as the sole member of
+        # `GENERIC_COPY_IS_BETTER`. There is no build step between these two
+        # trees, so nothing derives one from the other.
+        #
+        # The pointer lives HERE, at the side that closes the window, rather
+        # than only there -- whoever renames this code is the person who would
+        # otherwise have no way to know the copy exists. Same placement, and
+        # the same reason, as `SCHEMA_REASON_PREFIX` in `app/exceptions.py`.
+        #
+        # THE WIDTH OF THE GAP, stated so it is not rediscovered: rename this
+        # code without editing that Set and the Set stops matching. The web
+        # layer then takes its unknown-code branch, prefers the server's
+        # sentence, and renders "No released X report for this service yet."
+        # over the client copy again -- which is #318, in the page's most
+        # common state, with nothing red. The five `test_*_dashboard.py`
+        # suites assert this literal over HTTP and would go red, but a rename
+        # refactor edits those in the same pass and nothing in that pass
+        # mentions a web-layer Set.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+    deliv, is_released = resolved
+
+    svc = db.get(Service, service_id)
+    if svc is None:
+        # A finalized deliverable implies a service; if that invariant is
+        # broken, fail loudly rather than serve an empty dashboard.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+    # #114: the numbers below and `deliverable_version` in the response must
+    # name the same record, so the assessment is resolved FROM `deliv`.
+    assessment = _deliverable_parent(
+        db,
+        AttackAssessment,
+        deliv,
+        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
+    )
+    if assessment is None:
+        raise _unresolved_parent(deliv, surface="attack_dashboard")
+    # #556: refuse, in client words, rather than drop unknown codes below.
+    require_current_catalog_for_client(assessment)
+
+    body = attack_dashboard_content(
+        db,
+        client=client,
+        svc=svc,
+        assessment=assessment,
+        coverage=db.execute(
+            select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id)
+        )
+        .scalars()
+        .all(),
+    )
+    _log.info(
+        "client.attack_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(service_id),
+        actor_user_id=str(user.id),
+        evaluated=len(body.techniques),
+        coverage_pct=body.rollup.coverage_pct,
+    )
+
+    return AttackDashboardResponse(
+        **dict(body),
+        service_id=service_id,
+        service_title=svc.title,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
+        deliverable_version=deliv.version,
     )
 
 

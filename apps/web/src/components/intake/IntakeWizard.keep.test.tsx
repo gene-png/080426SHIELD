@@ -119,9 +119,11 @@ describe("IntakeWizard: which fields the kept-value sentence may name (#1115)", 
       );
     });
     await typeAndBlur("primary_contact_email", "pat@atlas.example");
-    expect(vi.mocked(intakeClient.patchIntake)).toHaveBeenLastCalledWith({
-      client: { primary_contact_email: "pat@atlas.example" },
-    });
+    // #1262: every save now names the client the wizard loaded.
+    expect(vi.mocked(intakeClient.patchIntake)).toHaveBeenLastCalledWith(
+      { client: { primary_contact_email: "pat@atlas.example" } },
+      "client-1115",
+    );
     expect(screen.getByText(RETYPE, { exact: false })).toBeVisible();
     expect(screen.queryByText(KEPT, { exact: false })).toBeNull();
   });
