@@ -912,7 +912,8 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         data = result.data
     else:
         # #1084: every capability is blank, so there is nothing to ask and no
-        # call is made (CSF's P1 does the same). Not an error: the run
+        # call is made. This mirrors CSF's approved P1 (#736 6205956728), which
+        # is not yet built on main; CSF still calls. Not an error: the run
         # completes with no entries, lists every row as omitted with
         # `notes_blank`, and says `capabilities_sent=0`.
         _log.info(

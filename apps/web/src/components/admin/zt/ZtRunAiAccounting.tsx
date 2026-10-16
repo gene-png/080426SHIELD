@@ -338,8 +338,15 @@ export function ZtRunAiAccounting({
   // #1084: every capability was blank, so nothing was sent and no call was
   // made. Receiving nothing is then the design: show the disclosure, never
   // the drift alert. `=== 0`, not falsy: a run stored before the count
-  // existed (undefined/null) keeps the alert, as it did.
-  if (result.suggestions_received === 0 && result.capabilities_sent === 0) {
+  // existed (undefined/null) keeps the alert, as it did. And only when the
+  // disclosure has something to list: with nothing omitted either (every row
+  // blank AND locked, or no rows) the block renders nothing, and a completed
+  // run must never show an empty panel, so that case keeps the alert.
+  if (
+    result.suggestions_received === 0 &&
+    result.capabilities_sent === 0 &&
+    (result.omitted_count ?? 0) > 0
+  ) {
     return <ZtOmittedBlock result={result} otherAlert={false} />;
   }
   if (result.suggestions_received === 0) {

@@ -52,3 +52,18 @@ describe("ZtRunAiAccounting, a run that sent nothing (#1084)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(DRIFT);
   });
 });
+
+describe("ZtRunAiAccounting, nothing sent and nothing omitted (#1084)", () => {
+  it("never renders an empty panel: with nothing to list, the alert stays", () => {
+    render(
+      <ZtRunAiAccounting
+        result={result({
+          capabilities_sent: 0,
+          omitted_capabilities: [],
+          omitted_count: 0,
+        })}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(DRIFT);
+  });
+});

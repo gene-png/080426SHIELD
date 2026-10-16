@@ -258,7 +258,8 @@ def test_a_row_given_notes_during_the_run_is_named_by_its_edit(world, monkeypatc
 @pytest.mark.unit
 def test_a_wholly_blank_assessment_makes_no_model_call(world) -> None:
     """Every row blank, as on a fresh assessment: nothing would be sent, so no
-    call is made and no `llm_calls` row is written (CSF's P1 does the same).
+    call is made and no `llm_calls` row is written (mirrors CSF's approved P1,
+    not yet built on main).
     The run still lists every capability as omitted with `notes_blank`, and
     says it sent none, so the panel does not read it as a broken response.
 
