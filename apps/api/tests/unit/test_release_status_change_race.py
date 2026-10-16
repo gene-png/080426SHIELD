@@ -287,6 +287,46 @@ def test_a_zt_repair_re_release_keeps_guard_a_and_refuses_with_the_repair_messag
         assert s.get(ZtAssessment, parent).status == ZtAssessmentStatus.APPROVED
 
 
+def test_a_zt_repair_over_a_parent_that_left_approved_before_the_request_is_refused(
+    app_client,  # noqa: F811
+) -> None:
+    """The same state as the moved-parent repair, reached BEFORE the request
+    rather than inside the flip window (#1123 review of f85eadab, F1; the
+    ruling at #736 6221187740 item 5: a repair whose parent moved is refused
+    with the same 409, never log-only). The deliverable is with the client, and
+    its parent is no longer APPROVED when the re-release reads it.
+
+    Red-on-revert: restore the log-and-return in `_release_parent`'s
+    not-APPROVED pre-read branch and this answers 200, silently."""
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    deliv_id = _zt_finalize_release(c, bearer, svc_id)  # released
+    parent = _parent_id(ZtAssessment, svc_id)
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        s.get(ZtAssessment, parent).status = ZtAssessmentStatus.DRAFT  # left APPROVED
+        s.commit()
+    released_at = _released_at(deliv_id)
+
+    r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
+
+    assert_repair_refused(r)
+    assert _released_at(deliv_id) == released_at, "the earlier release did not stand"
+    with sessionmaker(bind=engine, future=True)() as s:
+        assert s.get(ZtAssessment, parent).status == ZtAssessmentStatus.DRAFT
+
+
 # --- ATT&CK -------------------------------------------------------------------
 
 
