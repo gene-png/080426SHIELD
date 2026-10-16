@@ -687,7 +687,8 @@ def create_engagement(
     # this comment argued the opposite. It said a stored name is always NULL or
     # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
     # every row written from this branch onward and FALSE of rows already in the
-    # database: `ClientProfilePatch` carries no validator, so any pre-branch
+    # database: `ClientProfilePatch` carried no validator then (it has had a
+    # blank normaliser since #1093), so any pre-branch
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
     # sentinel. The branch introduces a write-time invariant and ships nothing
