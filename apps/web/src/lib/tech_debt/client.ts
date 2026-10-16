@@ -115,6 +115,21 @@ export async function extractCapabilities(
   );
 }
 
+/**
+ * TD-5 (for #1060): "Let AI estimate". Starts a run over the list's uncosted,
+ * unlocked source rows; the server decides which (`estimate_targets`).
+ * `serves` is the AI status the consultant acknowledged (#504).
+ */
+export async function startCostEstimate(
+  listId: string,
+  serves: AiServes,
+): Promise<AiRunStarted> {
+  return jsonRequest<AiRunStarted>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/cost-estimate`,
+    { method: "POST", body: { serves } },
+  );
+}
+
 /** What an extraction run did, as stored on the run. */
 export interface TechDebtExtractResult {
   capability_list_id: string;

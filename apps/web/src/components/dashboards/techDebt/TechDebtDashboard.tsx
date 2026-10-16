@@ -21,6 +21,7 @@ import {
   type TechDebtItem,
 } from "@/lib/dashboards/techDebt";
 import { noCostSentence } from "@/lib/tech_debt/components";
+import { aiEstimateSentence } from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 
 import type { JSX } from "react";
@@ -77,8 +78,13 @@ export function spendSub(data: TechDebtDashboardData): string {
     // TD-10 (for #1048): the count of tools the total leaves out follows any
     // exclusion text, so an excluded row can no longer hide it.
     const noCost = noCostSentence(data.no_cost_count);
+    // TD-5 (for #1060), copy E6: estimated costs the total INCLUDES, after any
+    // other text with " · ". E7 makes any estimate "partial" on its own.
+    const estimates = aiEstimateSentence(data.ai_estimate_count);
+    const withEstimates = (text: string) =>
+      estimates === null ? text : `${text} · ${estimates}`;
     const withNoCost = (exclusion: string) =>
-      noCost === null ? exclusion : `${exclusion} · ${noCost}`;
+      withEstimates(noCost === null ? exclusion : `${exclusion} · ${noCost}`);
     // #193: an exclusion count the extraction could not attribute is a FLOOR,
     // and 0 when items were as many as rows -- never stated as the count.
     if (!data.excluded_count_exact && data.source_rows_total !== null) {
@@ -99,18 +105,19 @@ export function spendSub(data: TechDebtDashboardData): string {
     // means attribution failed, so the API reports `excluded_count_exact`
     // false and the branch above takes it. Pinned at the API by
     // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
-    // cause left: an included tool with no cost, which the API counts with the
-    // same predicate that made the figure partial.
-    //
+    // causes left: an included tool with no cost, which the API counts with the
+    // same predicate that made the figure partial, and (TD-5) an AI-estimated
+    // cost, which the total includes. Estimates alone are not a floor.
+    if (noCost !== null) return withEstimates(`Floor - ${noCost}`);
+    if (estimates !== null) return estimates;
     // RATCHET, deliberately kept: the count-free sentence below is UNREACHABLE
     // from the current API, which reaches this line only with
-    // no_cost_count > 0 (`no_cost_items` sets both the count and "partial").
-    // It would become reachable if "partial" gained a cause other than an
-    // uncosted tool or an exclusion, or if an API older than `no_cost_count`
-    // served this page. Either way it stays a floor, never "Across all tools".
-    return noCost === null
-      ? "Floor - some tools lacked a cost"
-      : `Floor - ${noCost}`;
+    // no_cost_count > 0 or ai_estimate_count > 0 (`no_cost_items` and
+    // `is_ai_estimate` set both the counts and "partial"). It would become
+    // reachable if "partial" gained a cause other than an uncosted tool, an
+    // estimate or an exclusion, or if an API older than these counts served
+    // this page. Either way it stays a floor, never "Across all tools".
+    return "Floor - some tools lacked a cost";
   }
   return "Across all tools";
 }

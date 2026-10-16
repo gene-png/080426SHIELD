@@ -58,6 +58,14 @@ export interface CapabilityItem {
    * the row is not awaiting sign-off.
    */
   signoff_kind?: "not_in_use" | "not_security" | null;
+  /**
+   * TD-5 (for #1060), migration 0074: where `annual_cost_usd` came from.
+   * "ai_estimate" is labelled "AI estimate" wherever the cost appears; null is
+   * "not recorded" (an uploaded cost), never an estimate.
+   */
+  cost_source?: "ai_estimate" | "consultant" | null;
+  /** The model's one-sentence basis for an estimate; consultant-only. */
+  cost_estimate_basis?: string | null;
   source_artifact_id: string | null;
   disposition: CapabilityDisposition | null;
   disposition_rationale: string | null;

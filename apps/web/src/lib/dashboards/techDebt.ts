@@ -78,6 +78,11 @@ export interface TechDebtDashboardData {
    * cost and is not counted.
    */
   no_cost_count: number;
+  /**
+   * TD-5 (for #1060): source items whose cost is an AI estimate, which
+   * `annual_spend_usd` INCLUDES. Any one makes spend "partial" (E7).
+   */
+  ai_estimate_count: number;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];
