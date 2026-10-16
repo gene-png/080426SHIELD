@@ -12,7 +12,7 @@ import {
 } from "@shield/design-system";
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
-import { readFailureReason } from "@/lib/describe-save-error";
+import { readFailureReason, serverReasonCode } from "@/lib/describe-save-error";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -85,8 +85,13 @@ export function IntakeDocumentsPanel({
       .catch((err) => {
         if (!cancelled) {
           // #1223: never the error's own message, which for this READ was
-          // `ArtifactUploadError`'s "Upload failed: <status>".
-          setError(readFailureReason(err) ?? "Couldn't load documents.");
+          // `ArtifactUploadError`'s "Upload failed: <status>". #1225: nor a
+          // plain-string api detail ("X-Client-Id header is required for
+          // this role."), which arrives with no `reason` and is internal
+          // text. Only a TYPED sentence (D-016 {reason, message}) is copy.
+          const typed =
+            serverReasonCode(err) !== null ? readFailureReason(err) : null;
+          setError(typed ?? "Couldn't load documents.");
         }
       });
     return () => {
