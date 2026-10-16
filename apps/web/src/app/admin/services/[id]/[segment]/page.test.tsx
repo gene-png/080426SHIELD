@@ -10,6 +10,7 @@ import {
   A,
   baseWorld,
   installFakeApi,
+  NON_ADMIN_TOKEN,
   NotFoundSignal,
   RedirectSignal,
   type FakeCall,
@@ -116,6 +117,13 @@ describe("old /admin/services/{id}/{segment} URLs", () => {
       call("5e000000-0000-4000-8000-0000000000a1", "settings"),
     ).rejects.toBeInstanceOf(NotFoundSignal);
     expect(calls).toEqual([]);
+  });
+
+  it("refuses when the API says the bearer is not an admin (403)", async () => {
+    session.value = { role: "admin", accessToken: NON_ADMIN_TOKEN };
+    await expect(
+      call("5e000000-0000-4000-8000-0000000000a1", "tech-debt"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("makes no API call for a client-role session", async () => {

@@ -12,6 +12,8 @@
  *   service is the header client's.
  * - `GET /admin/services/{id}`: cross-tenant service detail, 422 for a
  *   non-UUID id, 404 if unknown.
+ * Both `/admin/*` reads are `require_role(ADMIN)`: a bearer whose user is not
+ * an admin (`NON_ADMIN_TOKEN`, e.g. a role changed after sign-in) gets 403.
  */
 import { vi } from "vitest";
 
@@ -47,6 +49,9 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/** A bearer the API resolves to a user who is not an admin. */
+export const NON_ADMIN_TOKEN = "non-admin-tok";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notUuid = () => json({ detail: [{ type: "uuid_parsing" }] }, 422);
 
@@ -63,6 +68,11 @@ export function installFakeApi(world: FakeWorld): FakeCall[] {
       const clientId = header(init, "X-Client-Id");
       calls.push({ path, clientId });
       if (!header(init, "Authorization")) return json({}, 401);
+      if (
+        path.startsWith("/admin/") &&
+        header(init, "Authorization") === `Bearer ${NON_ADMIN_TOKEN}`
+      )
+        return json({ detail: "This action requires role: admin." }, 403);
 
       let m = /^\/admin\/clients\/([^/]+)$/.exec(path);
       if (m) {

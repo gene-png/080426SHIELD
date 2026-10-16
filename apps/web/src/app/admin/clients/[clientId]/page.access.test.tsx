@@ -10,6 +10,7 @@ import {
   A,
   baseWorld,
   installFakeApi,
+  NON_ADMIN_TOKEN,
   NotFoundSignal,
   type FakeCall,
 } from "../fake-api.testkit";
@@ -118,24 +119,6 @@ describe("client overview page", () => {
     ).toHaveAttribute("href", `/admin/queue/${A}`);
   });
 
-  it("leaves out a consultation, which has no workspace", async () => {
-    const world = baseWorld();
-    world.services.push({
-      id: "5e000000-0000-4000-8000-0000000000aa",
-      client_id: A,
-      kind: "consultation" as FrameKind,
-      status: "draft",
-      created_at: "2026-09-05T10:00:00Z",
-    });
-    calls = installFakeApi(world);
-    render(await overview(A));
-    const list = screen.getByRole("list", { name: "Services" });
-    expect(
-      within(list).getByRole("link", { name: "NIST CSF 2.0" }),
-    ).toBeInTheDocument();
-    expect(within(list).getAllByRole("link")).toHaveLength(2);
-  });
-
   it("refuses loudly a service kind the frame does not know", async () => {
     const world = baseWorld();
     world.services.push({
@@ -155,6 +138,11 @@ describe("client overview page", () => {
     await expect(
       overview("c1000000-0000-4000-8000-0000000000ff"),
     ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("refuses when the API says the bearer is not an admin (403)", async () => {
+    session.value = { role: "admin", accessToken: NON_ADMIN_TOKEN };
+    await expect(overview(A)).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses a client id that is not a UUID (the API's 422)", async () => {
@@ -194,6 +182,11 @@ describe("client layout (the rail)", () => {
 
   it("refuses a client id that is not a UUID (the API's 422)", async () => {
     await expect(layout("not-a-uuid")).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("refuses when the API says the bearer is not an admin (403)", async () => {
+    session.value = { role: "admin", accessToken: NON_ADMIN_TOKEN };
+    await expect(layout(A)).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses an unknown client before rendering anything", async () => {

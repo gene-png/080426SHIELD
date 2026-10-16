@@ -12,6 +12,7 @@ import {
   B,
   baseWorld,
   installFakeApi,
+  NON_ADMIN_TOKEN,
   NotFoundSignal,
   RedirectSignal,
   type FakeCall,
@@ -217,6 +218,15 @@ describe("section page: access (the URL is not authorization)", () => {
   it("refuses a client id that is not a UUID (the API's 422)", async () => {
     await expect(
       call("not-a-uuid", "tech-debt", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("refuses when the API says the bearer is not an admin (403)", async () => {
+    session.value = { role: "admin", accessToken: NON_ADMIN_TOKEN };
+    await expect(
+      call(A, "tech-debt", "overview", {
         service: "5e000000-0000-4000-8000-0000000000a1",
       }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
