@@ -118,7 +118,9 @@ echo "$P unit     $UNIT"
 T="$(mktemp -d)"
 if command -v cygpath > /dev/null 2>&1; then T="$(cygpath -m "$T")"; fi
 TM="$T"
-trap 'rm -rf "$T"' EXIT
+CNAME="preflight-$$-$(date +%s)"
+# An interrupted run must not leave its container holding a slot's memory.
+trap 'docker rm -f "$CNAME" > /dev/null 2>&1 || true; rm -rf "$T"' EXIT
 mkdir -p "$T/in" "$T/bin"
 cp "$TITLE" "$T/in/title"
 cp "$BODY" "$T/in/body"
@@ -210,12 +212,15 @@ mkdir -p "$RUNNER_TEMP"
 while IFS=$'\t' read -r idx kind wf job wd name; do
   [ -f "/work/plan/step-$idx.sh" ] || continue
   echo "::group::[$idx] $wf / $job / $name"
+  s0=$(date +%s)
   (
     cd "/work/repo/$wd" || exit 2
     . "/work/plan/step-$idx.env"
     exec bash --noprofile --norc -e "/work/plan/step-$idx.sh"
   )
-  echo "PREFLIGHT-STEP $idx $?"
+  rc=$?
+  echo "PREFLIGHT-STEP $idx $rc"
+  echo "PREFLIGHT-TIME $idx $(( $(date +%s) - s0 ))"
   echo "::endgroup::"
 done < /work/plan/steps.tsv
 EOF
@@ -223,16 +228,17 @@ chmod +x "$T/bin/gh"
 cp -R "$T/plan" "$T/plan.keep"
 
 echo "$P running $(grep -c . "$T/plan/steps.tsv") planned step(s) in $IMAGE ..."
+# Written LIVE into the git dir, so it outlives the temp dir and an interrupted
+# run, and `git add -A` never sees it.
+LOG="$(git rev-parse --absolute-git-dir)/preflight-last.log"
+echo "$P container log: $LOG"
 set +e
-docker run --rm --user 0 --memory="${SHIELD_PREFLIGHT_MEMORY:-1500m}" -v "$TM:/work" -w /work "$IMAGE" \
-  bash /work/run.sh > "$T/container.log" 2>&1
+docker run --rm --name "$CNAME" --user 0 --memory="${SHIELD_PREFLIGHT_MEMORY:-1500m}" -v "$TM:/work" -w /work "$IMAGE" \
+  bash /work/run.sh > "$LOG" 2>&1
 crc=$?
 set -e
-# Kept after the temp dir goes: inside the git dir, so `git add -A` never sees it.
-LOG="$(git rev-parse --absolute-git-dir)/preflight-last.log"
-cp "$T/container.log" "$LOG"
 
-if grep -q "^PREFLIGHT-SETUP-FAILED" "$T/container.log"; then
+if grep -q "^PREFLIGHT-SETUP-FAILED" "$LOG"; then
   echo "$P COULD NOT LOOK -- the container could not install git and nodejs (network?). Log: $LOG" >&2
   exit 2
 fi
@@ -244,8 +250,16 @@ v="$(bash scripts/prettier-hook.sh --print-version)" || { echo "$P COULD NOT LOO
 set +e
 (cd "$T/repo" && npx -y "prettier@$v" --check "$glob") > "$T/prettier.log" 2>&1
 prc=$?
-bash scripts/verify-in-worktree.sh > "$T/web.log" 2>&1
-wrc=$?
+# eslint, tsc and vitest take minutes. A NARROW run skips them when the branch
+# touches nothing they read, and says so; FULL always runs them.
+web_note="eslint, tsc, vitest"
+if [ "$UNIT" = "narrow" ] && ! git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE '^(apps/web/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'; then
+  wrc="-"
+  web_note="NOT RUN: NARROW, and the branch changes nothing under apps/web, packages or the pnpm files"
+else
+  bash scripts/verify-in-worktree.sh > "$T/web.log" 2>&1
+  wrc=$?
+fi
 set -e
 
 # ---- the verdict ----------------------------------------------------------
@@ -254,7 +268,7 @@ printf '\n%s %-4s %-9s %-6s %s\n' "$P" "step" "kind" "exit" "workflow / job / st
 while IFS=$'\t' read -r idx kind wf job wd name; do
   st="-"
   if [ -f "$T/plan.keep/step-$idx.sh" ]; then
-    st="$(grep -E "^PREFLIGHT-STEP $idx [0-9]+$" "$T/container.log" | tail -1 | awk '{print $3}')"
+    st="$(grep -E "^PREFLIGHT-STEP $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}')"
     if [ -z "$st" ]; then
       st="NONE"; cnl=$((cnl + 1))
     elif [ "$kind" = "run" ]; then
@@ -262,12 +276,19 @@ while IFS=$'\t' read -r idx kind wf job wd name; do
       [ "$st" -eq 0 ] || fails=$((fails + 1))
     fi
   fi
-  printf '%s %-4s %-9s %-6s %s / %s / %s\n' "$P" "$idx" "$kind" "$st" "$wf" "$job" "$name"
+  secs="$(grep -E "^PREFLIGHT-TIME $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}')"
+  printf '%s %-4s %-9s %-6s %s / %s / %s%s\n' "$P" "$idx" "$kind" "$st" "$wf" "$job" "$name" "${secs:+ (${secs}s)}"
 done < "$T/plan.keep/steps.tsv"
-printf '%s %-4s %-9s %-6s %s\n' "$P" "W1" "web" "$prc" "prettier@$v --check \"$glob\" (log: tail below on failure)"
-printf '%s %-4s %-9s %-6s %s\n' "$P" "W2" "web" "$wrc" "scripts/verify-in-worktree.sh (eslint, tsc, vitest)"
+printf '%s %-4s %-9s %-6s %s\n' "$P" "W1" "web" "$prc" "prettier@$v --check \"$glob\""
+printf '%s %-4s %-9s %-6s %s\n' "$P" "W2" "web" "$wrc" "scripts/verify-in-worktree.sh ($web_note)"
 [ "$prc" -eq 0 ] || { fails=$((fails + 1)); tail -15 "$T/prettier.log"; }
-[ "$wrc" -eq 0 ] || { [ "$wrc" -eq 2 ] && cnl=$((cnl + 1)) || fails=$((fails + 1)); tail -15 "$T/web.log"; }
+web_count=2
+if [ "$wrc" = "-" ]; then
+  web_count=1
+elif [ "$wrc" -ne 0 ]; then
+  if [ "$wrc" -eq 2 ]; then cnl=$((cnl + 1)); else fails=$((fails + 1)); fi
+  tail -15 "$T/web.log"
+fi
 [ "$crc" -eq 0 ] || echo "$P the container itself exited $crc"
 
 verdict="PASS" code=0
@@ -275,5 +296,5 @@ if [ "$cnl" -gt 0 ]; then verdict="COULD-NOT-LOOK" code=2; elif [ "$fails" -gt 0
 note=", FULL unit run"
 [ "$UNIT" = "narrow" ] && note=", NARROW unit run (CI runs the full suite)"
 echo ""
-echo "$P $verdict at $HEAD_SHA tree $TREE_SHA vs $BASE_SHA -- $ran CI step(s) + 2 web check(s) run, $fails failed, $cnl without an exit status; $LINKED_NOTE$note. Not run here: every \`github\` job above. Log: $LOG"
+echo "$P $verdict at $HEAD_SHA tree $TREE_SHA vs $BASE_SHA -- $ran CI step(s) + $web_count web check(s) run, $fails failed, $cnl without an exit status; $LINKED_NOTE$note. Not run here: every \`github\` job above. Log: $LOG"
 exit "$code"
