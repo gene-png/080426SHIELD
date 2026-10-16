@@ -361,6 +361,9 @@ jobs:
           # its RAN line and a matching pytest summary, and its `--self-test`
           # goes red when the mount is not the worktree. Stub `docker`.
           bash tests/gates/unit_in_worktree_status.sh
+          # preflight.sh reports PASS only when every planned step left a 0, and
+          # a planned step with no status line is could-not-look. Stub `docker`.
+          bash tests/gates/preflight_status.sh
           # A self-test nobody runs is furniture. `red-on-revert.sh` is the
           # harness that keeps `git checkout --` out of the restore path, and
           # it shipped with a restore check that compared a file to itself --
