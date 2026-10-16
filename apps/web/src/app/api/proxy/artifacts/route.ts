@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ACTIVE_CLIENT_COOKIE } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { clientIdRequired } from "@/lib/proxy-client-id";
 import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://api:8000";
@@ -27,19 +28,39 @@ async function bearerOrUnauthorized(): Promise<string | NextResponse> {
 }
 
 /**
+ * #1262: the tenant an UPLOAD is filed under. A client the request names
+ * (`?client_id=`, an admin workspace's own tenant) wins over the shared
+ * cookie, which another tab may have rewritten. An EMPTY value is refused, as
+ * the download proxy does. With no parameter, the cookie as before: the
+ * client wizard names none. It cannot widen access: the api pins a
+ * client-role user to its own client whatever X-Client-Id says
+ * (`current_client`).
+ */
+async function uploadClient(
+  request: Request,
+): Promise<string | undefined | NextResponse> {
+  const named = new URL(request.url).searchParams;
+  if (named.has("client_id")) {
+    const id = named.get("client_id");
+    return id ? id : clientIdRequired("/artifacts");
+  }
+  return (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
+}
+
+/**
  * Bearer + tenant headers for the upstream call. This route hand-rolls the
- * proxy (multipart can't go through `lib/api.ts`), so we forward the active
- * client cookie as X-Client-Id ourselves - otherwise admin uploads
- * hit the backend's `current_client` guard and 400. Don't set Content-Type:
- * `fetch` derives the multipart boundary from the FormData body.
+ * proxy (multipart can't go through `lib/api.ts`), so it forwards the tenant
+ * as X-Client-Id itself - otherwise admin calls hit the backend's
+ * `current_client` guard and 400. Don't set Content-Type: `fetch` derives
+ * the multipart boundary from the FormData body.
  */
 async function upstreamHeaders(
   bearer: string,
+  activeClient?: string,
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${bearer}`,
   };
-  const activeClient = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
   if (activeClient) {
     headers["X-Client-Id"] = activeClient;
   }
@@ -49,6 +70,8 @@ async function upstreamHeaders(
 export async function POST(request: Request): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
+  const client = await uploadClient(request);
+  if (client instanceof NextResponse) return client;
 
   // Forward the FormData payload as-is so multipart boundaries and the
   // raw file bytes are preserved.
@@ -71,7 +94,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     upstream = await fetch(`${BASE_URL}/artifacts`, {
       method: "POST",
-      headers: await upstreamHeaders(bearer),
+      headers: await upstreamHeaders(bearer, client),
       body: form,
     });
     body = await upstream.text();
@@ -94,7 +117,10 @@ export async function GET(): Promise<NextResponse> {
   let body: string;
   try {
     upstream = await fetch(`${BASE_URL}/artifacts`, {
-      headers: await upstreamHeaders(bearer),
+      headers: await upstreamHeaders(
+        bearer,
+        (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value,
+      ),
       cache: "no-store",
     });
     body = await upstream.text();

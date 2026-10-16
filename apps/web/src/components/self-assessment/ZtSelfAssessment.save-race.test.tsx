@@ -272,9 +272,10 @@ function stageRadio(code: string, stage: number): HTMLElement {
   const group = screen.getByRole("radiogroup", {
     name: `Maturity stage for ${code}`,
   });
-  return within(group).getByRole("radio", {
-    name: new RegExp(`^S${stage}(?![0-9])`),
-  });
+  // Z3 (#736 6205956728): a stage button is named by its stage's name alone.
+  const label = CATALOG.stages.find((s) => s.stage === stage)?.label;
+  if (label === undefined) throw new Error(`no stage ${stage} in CATALOG`);
+  return within(group).getByRole("radio", { name: label });
 }
 
 describe("ZtSelfAssessment through the real stage picker and notes box (#758 review)", () => {

@@ -4,6 +4,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 import { AiStatusBanner } from "@/components/admin/AiStatusBanner";
+import { SHELL_COPY } from "@/components/service-shell/shellCopy";
 import { SignOutButton } from "@/components/site/SignOutButton";
 import { SkipToContent } from "@/components/site/SkipToContent";
 
@@ -22,6 +23,8 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: "Intake Queue", href: "/admin/queue" },
+  // T6: the client-scoped frame (`/admin/clients/{id}/...`).
+  { label: SHELL_COPY.navClients, href: "/admin/clients" },
   { label: "Deliverables", href: "/admin/deliverables" },
   { label: "Risk Register", href: "/admin/risk-register" },
   { label: "Messages", href: "/admin/messages" },
@@ -125,10 +128,15 @@ function WithClientParam({
 /**
  * #1050: a service workspace (`/admin/services/<id>/...`) carries wide
  * editable tables, so it runs full-width. List and form pages keep the
- * readable `max-w-6xl` cap.
+ * readable `max-w-6xl` cap. T6: a section of the client frame
+ * (`/admin/clients/<id>/services/<slug>/<section>`) wraps that workspace, so
+ * it runs full-width too.
  */
 function isWorkspace(pathname: string): boolean {
-  return /^\/admin\/services\/[^/]+\/.+/.test(pathname);
+  return (
+    /^\/admin\/services\/[^/]+\/.+/.test(pathname) ||
+    /^\/admin\/clients\/[^/]+\/services\/[^/]+\/[^/]+/.test(pathname)
+  );
 }
 
 export function AdminShell({
