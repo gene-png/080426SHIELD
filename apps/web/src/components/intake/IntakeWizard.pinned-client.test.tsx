@@ -35,6 +35,8 @@ vi.mock("./Dropzone", () => ({
 }));
 
 const CLIENT_A = "00000000-0000-4000-8000-0000000000a1";
+const CLIENT_B = "00000000-0000-4000-8000-0000000000b2";
+let loads = CLIENT_A;
 
 function stateFor(id: string): IntakeStateResponse {
   return {
@@ -66,6 +68,7 @@ const calls: Array<{ method: string; url: string }> = [];
 beforeEach(() => {
   calls.length = 0;
   dropzoneProps.length = 0;
+  loads = CLIENT_A;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -73,7 +76,7 @@ beforeEach(() => {
       if (url.startsWith("/api/proxy/artifacts")) {
         return new Response(JSON.stringify({ items: [] }), { status: 200 });
       }
-      return new Response(JSON.stringify(stateFor(CLIENT_A)), { status: 200 });
+      return new Response(JSON.stringify(stateFor(loads)), { status: 200 });
     }),
   );
 });
@@ -130,6 +133,27 @@ describe("IntakeWizard names the client it loaded on every later call (#1262)", 
     expect(submits).toEqual([
       { method: "POST", url: `/api/proxy/intake/submit?${PINNED}` },
     ]);
+  });
+
+  it("a remount for another client (the page's key) saves under that client (review of 69fbc5b1)", async () => {
+    // The header's client switcher sets the cookie and refreshes; the page
+    // keys the wizard on the active client, so the wizard remounts and loads B.
+    const { rerender } = render(<IntakeWizard key={CLIENT_A} />);
+    await screen.findByRole("button", { name: "Next →" });
+    loads = CLIENT_B;
+    rerender(<IntakeWizard key={CLIENT_B} />);
+    await screen.findByRole("button", { name: "Next →" });
+    await next(); // -> organization
+    const city = document.getElementById("city") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(city, { target: { value: "Arlington" } });
+      fireEvent.blur(city, { target: { value: "Arlington" } });
+    });
+    const patches = calls.filter((c) => c.method === "PATCH");
+    expect(patches.length).toBeGreaterThan(0);
+    for (const p of patches) {
+      expect(p.url).toBe(`/api/proxy/intake?client_id=${CLIENT_B}`);
+    }
   });
 
   it("loads the intake itself without naming a client, as before", async () => {
