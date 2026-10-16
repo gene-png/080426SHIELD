@@ -691,7 +691,7 @@ def create_engagement(
     # blank normaliser since #1093), so any pre-branch
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
-    # sentinel. The branch introduces a write-time invariant and ships nothing
+    # sentinel. The D-080 branch introduced a write-time invariant and shipped nothing
     # that establishes it for existing data. Migration 0050 has since NULLed
     # every blank `legal_name` (with Python's `.strip()`), so no stored row
     # holds one today: the strip stays as a RATCHET against a future writer or
@@ -733,8 +733,8 @@ def create_engagement(
     #
     # The general shape, which is the part worth keeping: an invariant enforced
     # at every WRITER still does not hold for rows that predate the enforcement.
-    # Either backfill them or keep reading defensively. This does the second,
-    # because the first cannot distinguish `"   "` from a name someone meant.
+    # Backfill them, and keep reading defensively. Both are done here: 0050
+    # backfilled the blanks, and this strip is the ratchet.
     if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
