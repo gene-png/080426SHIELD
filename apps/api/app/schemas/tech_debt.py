@@ -241,6 +241,11 @@ class CapabilityDispositionBulkSet(BaseModel):
 
     item_ids: list[uuid.UUID] = Field(max_length=5000)
     disposition: CapabilityDisposition | None
+    # TD-11 (for #1055): "Keep {n} undecided rows" sends the rows that were
+    # undecided when the page loaded. True refuses the whole request if any of
+    # them has been decided since, so a click never overwrites a decision.
+    # Opt-in: #641's select-and-set keeps its meaning.
+    only_if_undecided: bool = False
 
 
 class ConsolidationPlanSummary(BaseModel):

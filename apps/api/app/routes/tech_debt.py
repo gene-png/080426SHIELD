@@ -1467,6 +1467,15 @@ def patch_capability_item(
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
 
 
+def _already_decided_message(decided: int, selected: int) -> str:
+    """TD-11 (for #1055). PLACEHOLDER copy, pending approval on #736; it
+    follows the shape of the not-in-list refusal beside it."""
+    return (
+        f"{decided} of the {selected} selected rows already have a decision. "
+        "Nothing was changed. Reload the list and select again."
+    )
+
+
 @router.post(
     "/capability-lists/{list_id}/items/disposition",
     response_model=CapabilityListResponse,
@@ -1527,6 +1536,23 @@ def bulk_set_disposition(
                 ),
             },
         )
+    decided = [i for i in items if i.disposition is not None]
+    if body.only_if_undecided and decided:
+        # TD-11 (for #1055): all or nothing, like the refusal above, so the
+        # consultant's "Set {n} rows to Keep." is never a partial truth.
+        _log.warning(
+            "tech_debt.bulk_disposition_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            already_decided=len(decided),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "capability_items_already_decided",
+                "message": _already_decided_message(len(decided), len(wanted)),
+            },
+        )
     for item in items:
         item.disposition = body.disposition
         item.confidence_pct = None
@@ -1543,6 +1569,7 @@ def bulk_set_disposition(
             "disposition": body.disposition.value if body.disposition else None,
             "item_count": len(item_ids),
             "item_ids": item_ids,
+            "only_if_undecided": body.only_if_undecided,
         },
     )
     db.commit()
