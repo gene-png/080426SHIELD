@@ -93,6 +93,31 @@ describe("CsfGapList, tiers by name and the priority's working", () => {
     ).toBeInTheDocument();
   });
 
+  it("rounds DOWN where rounding to nearest would differ: 3 × 1.15 is 3.4", () => {
+    // #1242 review: 3.45 is where "rounded down" (3.4) and to nearest (3.5)
+    // part, and 1.15's float 1.1499… hides it on the 1-tier example.
+    render(
+      <CsfGapList
+        analysis={analysis([
+          gap({
+            current_tier: 1,
+            target_tier: 4,
+            gap_size: 3,
+            priority_score: 3.45,
+            weight: 1.15,
+          }),
+        ])}
+        targetTier={4}
+        onChangeTargetTier={() => undefined}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Priority 3.4: 3 tiers below target × 1.15 (Protect weighting)",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("keeps a whole weight's decimal, as it is stored (1.0)", () => {
     render(
       <CsfGapList
