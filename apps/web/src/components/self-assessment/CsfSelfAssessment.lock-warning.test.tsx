@@ -120,10 +120,11 @@ beforeEach(() => {
 describe("CsfSelfAssessment: the warning's Submit anyway honours the lock (#1171)", () => {
   it("turns Submit anyway off when a function loses its only answer with the warning open", async () => {
     render(<CsfSelfAssessment serviceId="s1" />);
+    const submit = await screen.findByRole("button", {
+      name: "Submit for review",
+    });
     await act(async () => {
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Submit for review" }),
-      );
+      fireEvent.click(submit);
     });
     const anyway = screen.getByRole("button", { name: "Submit anyway" });
     // The precondition: open while every function has an answer.
