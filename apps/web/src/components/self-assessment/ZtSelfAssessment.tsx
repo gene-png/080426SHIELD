@@ -585,6 +585,11 @@ export function ZtSelfAssessment({
                   );
                 })}
               </ul>
+              {/* Z2, the client's wording (#736 6204461502 section 6, approved
+                  at 6205956728): once, under the stage buttons. */}
+              <p className="text-xs text-ink-tertiary">
+                The highlighted stage is your current answer.
+              </p>
 
               {/* Within-pillar navigation */}
               <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-3">

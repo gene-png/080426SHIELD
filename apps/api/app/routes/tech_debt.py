@@ -95,9 +95,11 @@ from app.schemas.tech_debt import (
     OverlapBucketResponse,
     SavingsPreviewRequest,
     SavingsPreviewResponse,
+    SecurityClassificationBulkConfirm,
     SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
+    TechDebtCategoriesResponse,
     TopCostItemResponse,
 )
 from app.security.rate_limit import enforce_ai_rate_limit
@@ -112,6 +114,7 @@ from app.tech_debt.exporters import (
     render_xlsx,
 )
 from app.tech_debt.extract import (
+    CATEGORIES,
     PROMPT_VERSIONS_WITH_CLOSED_SCALES,
     client_org_name_for_tenant,
     duplicated_source_rows,
@@ -130,6 +133,7 @@ from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusion
 from app.tech_debt.savings import estimated_savings
 from app.tech_debt.security_scope import (
     PROMPT_VERSIONS_WITH_PREFIX,
+    awaiting_security_signoff,
     not_in_use_contradiction,
     not_in_use_security_tool,
     security_scope_filter,
@@ -475,6 +479,46 @@ def _refuse_unstorable_values(cost: float | None, licenses: int | None) -> None:
                 "message": "License count must be a whole number between 0 and 2,147,483,647.",
             },
         )
+
+
+#: #1176: what "Uncategorized" is called. It is stored as null (the client
+#: dashboard labels null the same way, `routes/clients.py` `_UNCATEGORIZED`).
+_UNCATEGORIZED_LABEL = "Uncategorized"
+
+
+@router.get(
+    "/categories",
+    response_model=TechDebtCategoriesResponse,
+    summary="The capability category list the editor offers (admin, #1176)",
+)
+def list_categories(
+    _user: Annotated[User, _admin_required],
+) -> TechDebtCategoriesResponse:
+    """`CATEGORIES`, read from the extraction prompt's module, never copied."""
+    return TechDebtCategoriesResponse(
+        categories=list(CATEGORIES), uncategorized_label=_UNCATEGORIZED_LABEL
+    )
+
+
+def _refuse_off_list_category(value: str | None, *, current: str | None) -> None:
+    """#1176: a consultant's category is one from the list, null
+    ("Uncategorized"), or the row's current value unchanged -- so a stored
+    value from before the closed list (v3.2) is kept, never remapped.
+
+    Applied to the item PATCH only. The include-a-row and add-components
+    routes also take a typed category, and are deliberately left alone (the
+    coordinator's scope call; the rest is tracked in #1247): a value they
+    store is shown by the dropdown as "(not on the list)"."""
+    if value is None or value in CATEGORIES or value == current:
+        return
+    _log.info("tech_debt.category_refused", reason="category_not_on_list")
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "reason": "category_not_on_list",
+            "message": "Choose a category from the list, or Uncategorized.",
+        },
+    )
 
 
 def _serialize_list_with_items(db: Session, cap_list: CapabilityList) -> CapabilityListResponse:
@@ -976,6 +1020,10 @@ def include_excluded_row(
         capability_list_id=cap_list.id,
         name=body.name,
         vendor=body.vendor,
+        # #1176: NOT restricted to the closed list, deliberately: the web asks
+        # with free text, and refusing it needs its own plan and copy (tracked
+        # in #1247). The item PATCH is restricted (`_refuse_off_list_category`);
+        # a value stored here shows in its dropdown as "(not on the list)".
         category=body.category,
         function=body.function,
         annual_cost_usd=body.annual_cost_usd,
@@ -1158,8 +1206,20 @@ def confirm_security_classification(
             },
         )
 
-    item.security_class_confirmed = True
     _record_edit(db, item.capability_list_id)
+    _confirm_signoff(db, item, user)
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+def _confirm_signoff(db: Session, item: CapabilityItem, user: User) -> None:
+    """ONE row's sign-off, called by the single and the bulk confirm (#1174),
+    so the two cannot drift. Each row gets its own audit row: ATT&CK's what-if
+    dates a row's exit from scope by its first per-item confirmation
+    (`routes/attack_scenarios.py`). The caller has checked the row is awaiting
+    sign-off and called `_record_edit`."""
+    item.security_class_confirmed = True
     # #845: a security tool the extraction marked not in use is taken out of
     # ATT&CK scope, not judged "not security-related", and the record says so.
     removed = not_in_use_security_tool(item)
@@ -1175,9 +1235,106 @@ def confirm_security_classification(
         actor_user_id=user.id,
         details={"name": item.name, "notes": item.notes} if removed else {"name": item.name},
     )
+
+
+@router.post(
+    "/capability-lists/{list_id}/items/security-classification/confirm",
+    response_model=CapabilityListResponse,
+    summary="Agree many capabilities are not security-related, at once (admin, #1174)",
+)
+def bulk_confirm_security_classification(
+    list_id: uuid.UUID,
+    body: SecurityClassificationBulkConfirm,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """#1174: "select all, then untick the exceptions". The bulk twin of
+    `confirm_security_classification`, with its per-row effect (and audit
+    rows), all or nothing: one selected row that is not awaiting sign-off, or
+    is not in this list, refuses the whole request and nothing is written."""
+    cap_list = _editable_list_or_404(db, list_id, client)
+    wanted = set(body.item_ids)
+    if not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_items_selected",
+                "message": "Select at least one row to classify.",
+            },
+        )
+    # The list row's lock FIRST, as every edit path takes it (sessions do not
+    # autoflush), and the rows are read AFTER it: an override commits under
+    # the same lock, so the check below sees it rather than a value read
+    # before it landed. Every refusal below rolls the bump back.
+    _record_edit(db, cap_list.id)
+    items = (
+        db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.id.in_(wanted))
+        )
+        .scalars()
+        .all()
+    )
+    missing = len(wanted) - len(items)
+    if missing:
+        db.rollback()
+        _log.warning(
+            "tech_debt.bulk_security_signoff_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_in_list=missing,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_items_not_in_list",
+                "message": (
+                    f"{missing} of the {len(wanted)} selected rows are not in this "
+                    "capability list. Nothing was changed. Reload the list and "
+                    "select again."
+                ),
+            },
+        )
+    # Stricter than the single confirm's `security_related is not False`, on
+    # purpose: an already-confirmed row is refused too. The single route lets a
+    # consultant confirm one row again; a bulk selection naming a row someone
+    # already confirmed means the page is stale, and all-or-nothing says so.
+    not_awaiting = [i for i in items if not awaiting_security_signoff(i)]
+    if not_awaiting:
+        db.rollback()
+        _log.warning(
+            "tech_debt.bulk_security_signoff_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_awaiting=len(not_awaiting),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "not_a_negative_classification",
+                "message": _not_awaiting_message(len(not_awaiting), len(wanted)),
+            },
+        )
+    for item in items:
+        _confirm_signoff(db, item, user)
     db.commit()
+    _log.info(
+        "tech_debt.bulk_security_signoff",
+        capability_list_id=str(cap_list.id),
+        item_count=len(items),
+    )
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+def _not_awaiting_message(not_awaiting: int, selected: int) -> str:
+    """#1174. PLACEHOLDER copy, pending approval on #736."""
+    return (
+        f"{not_awaiting} of the {selected} selected rows do not need sign-off. "
+        "Nothing was changed. Reload the list and try again."
+    )
 
 
 #: The audit action an override writes. Named so its readers import it: the
@@ -1306,6 +1463,8 @@ def add_capability_components(
                 parent_item_id=item.id,
                 name=comp.name,
                 vendor=item.vendor,
+                # #1176: not restricted to the closed list, deliberately, as
+                # in the include route above (tracked in #1247).
                 category=comp.category,
                 function=comp.function,
                 # No cost: the parent holds the licence value.
@@ -1422,6 +1581,8 @@ def patch_capability_item(
             detail="Patch body is empty.",
         )
     _refuse_unstorable_values(data.get("annual_cost_usd"), data.get("license_count"))
+    if "category" in data:
+        _refuse_off_list_category(data["category"], current=item.category)
     # for #927: a part carries no cost; its bundle holds the license value
     # (`tech_debt/components.py`). Null stays allowed: it is the state a part is
     # born in, and the way a cost stored before this refusal is cleared.
