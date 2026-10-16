@@ -36,7 +36,7 @@ from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
-from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, SOURCE_CONSULTANT, protected_keys
 from app.ai.runs import (
     RunContext,
     RunFailed,
@@ -1464,8 +1464,10 @@ def patch_answer(
                 detail=f"target_stage must be 1-{max_stage}.",
             )
         row.target_stage = ts
+        row.target_source = SOURCE_CONSULTANT  # #982: the consultant set it
     elif "target_stage" in data:
         row.target_stage = None
+        row.target_source = None  # no target, so no origin (#982)
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
