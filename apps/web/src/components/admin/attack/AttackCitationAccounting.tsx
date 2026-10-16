@@ -180,6 +180,28 @@ function AttackOmittedBlock({
   );
 }
 
+/**
+ * #1047: the run asked a second time about the techniques a successful batch
+ * left out. The omitted block above already counts what is STILL missing
+ * after that; this line says the second ask happened, and how many of its
+ * requests failed.
+ *
+ * PLACEHOLDER copy (R-1047-1): sent for approval on #736 and replaced
+ * verbatim once approved. Absent (a run stored before #1047) or 0 renders
+ * nothing.
+ */
+function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
+  const asked = result.reasked_count ?? 0;
+  if (asked === 0) return null;
+  const total = result.reask_batches_total ?? 0;
+  const failed = result.reask_batches_failed ?? 0;
+  return (
+    <p className="text-ink-secondary" data-testid="attack-reask">
+      {`PLACEHOLDER R-1047-1: asked again ${asked}; requests ${total}; failed ${failed}`}
+    </p>
+  );
+}
+
 export function AttackCitationAccounting({
   result,
 }: {
@@ -286,6 +308,7 @@ export function AttackCitationAccounting({
         result={result}
         otherAlert={runIncomplete || rejected > 0}
       />
+      <AttackReaskLine result={result} />
 
       {pendingRows > 0 ? (
         <p
