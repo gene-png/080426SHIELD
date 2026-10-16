@@ -82,4 +82,18 @@ describe("IntakeDocumentsPanel inside the real EnsureActiveClient (#1129)", () =
     expect(href.pathname).toBe(`/api/proxy/artifacts/${DOC.id}/download`);
     expect(href.searchParams.get("client_id")).toBe(CLIENT_A);
   });
+
+  it("links Download with no client_id outside a workspace (review of 5ae6bd01)", async () => {
+    // No provider: the panel falls back to the cookie, and its link must be
+    // the bare download path. An empty or "null" client_id would be refused
+    // by the download proxy with a 400.
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <IntakeDocumentsPanel onExtract={() => undefined} extracting={false} />,
+    );
+    const link = await screen.findByRole("link", { name: "Download" });
+    expect(link.getAttribute("href")).toBe(
+      `/api/proxy/artifacts/${DOC.id}/download`,
+    );
+  });
 });
