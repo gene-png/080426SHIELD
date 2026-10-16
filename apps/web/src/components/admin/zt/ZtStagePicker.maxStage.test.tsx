@@ -37,6 +37,8 @@ describe("ZtStagePicker #922: stages above the capability's maximum", () => {
     const advanced = screen.getByRole("radio", { name: "Advanced" });
     expect(advanced).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(advanced);
+    // jsdom fires no click from a key, so this guards only against a future
+    // onKeyDown that selects; a real Space or Enter is a click, caught above.
     fireEvent.keyDown(advanced, { key: " " });
     expect(onChange).not.toHaveBeenCalled();
     // Still in place: three buttons, in order.
