@@ -1,8 +1,11 @@
 """The world the #552 redaction-isolation tests share: one tenant on SQLite with
 an admin, a recording fixture provider wired into Tech Debt, CSF and Risk, and
 a redaction budget too generous to be met by ordinary work (`ROOM_TO_REDACT_S`),
-plus the helpers the test files use. A test that exercises the budget, or
-quotes the "0.5-second" copy, sets `OVER_BUDGET_S` itself (`set_budget`). A module
+plus the helpers the test files use. A test that exercises the budget sets its
+own (`set_budget` here, or the environment directly): `SPIN_BUDGET_S` when its
+child must first prove it started (a PID), and `OVER_BUDGET_S` only when
+nothing about the child having started is asserted -- quoting the
+"0.5-second" copy included. A module
 rather than a conftest so the fixture is imported by name where it is used
 (`_world`, requested as `world`)."""
 
@@ -45,9 +48,19 @@ HANG_GUARD_S = 60
 ROOM_TO_REDACT_S = "10"
 
 #: The budget a test sets EXPLICITLY, with `set_budget`, when it exercises the
-#: budget (a child that spins until it is stopped) or quotes the approved copy
-#: with "0.5-second" in it. Short, so a deliberate overrun costs half a second.
+#: budget and asserts NOTHING about the child having started, or quotes the
+#: approved copy with "0.5-second" in it. Short, so a deliberate overrun costs
+#: half a second. NOT for a child that must prove it started (a PID): the budget
+#: counts start-up, so use `SPIN_BUDGET_S` (#1132).
 OVER_BUDGET_S = "0.5"
+
+#: The budget for a test whose child spins until it is stopped AND must first
+#: prove it started, by writing its PID (#1132). The budget counts the child's
+#: start-up (0.6 to 1.8 s on a shared CPU, above), so at 0.5 s a loaded runner
+#: killed the child before it wrote the PID and the test could not tell "ran
+#: and was stopped" from "never ran". 5 s clears that start-up with room and
+#: stays well under `HANG_GUARD_S`; the child still spins past it.
+SPIN_BUDGET_S = "5"
 
 #: apps/api: where a stand-in api process must start, so `app` and `tests` import.
 API_DIR = Path(__file__).resolve().parent.parent

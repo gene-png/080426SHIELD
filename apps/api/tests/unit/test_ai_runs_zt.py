@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.zt_assessment import ZtAnswer
 from tests._ai_runs import DeferringRunner, defer_runs, get_run, start_run
+from tests._zt_notes import note_rows
 
 
 @dataclass
@@ -45,6 +46,8 @@ class World:
         return f"/zt/services/{self.svc_id}/run-ai"
 
     def suggest(self, n: int) -> None:
+        # #1084: only a capability with notes is sent, so note the ones answered.
+        note_rows(self.c, self.h, self.answers[:n])
         caps = [{"code": a["capability_code"], "current": 2} for a in self.answers[:n]]
         self.provider.register_static("zt_score", LLMResponse(json.dumps({"capabilities": caps})))
 
