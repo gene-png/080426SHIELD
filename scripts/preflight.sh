@@ -24,20 +24,22 @@
 #
 # ## Usage (Git Bash; the docker CLI on PATH)
 #
-#     scripts/preflight.sh --title FILE --body FILE --unit full|narrow [--pr N] [--base REF]
+#     scripts/preflight.sh --title FILE --body FILE [--unit narrow|full] [--pr N] [--base REF]
 #
 #   --title, --body  the PR title and description you will submit (files)
-#   --unit full      CI's whole unit selection, under CI's own options
-#   --unit narrow    only the test files this branch changes, plus the ones
-#                    importing a module it changes; the summary says NARROW.
-#                    CI runs the full suite either way.
+#   --unit narrow    THE DEFAULT (advisor, #736 6206934217): only the test files
+#                    this branch changes, plus the ones importing a module it
+#                    changes. The summary says NARROW; a PR body never presents
+#                    a narrow run as full. CI runs the full suite either way.
+#   --unit full      CI's whole unit selection, under CI's own options. Only in a
+#                    hold the coordinator has scheduled for it.
 #   --pr N           an open PR: its real closing links are fetched with `gh`.
 #                    Without it the linked set is taken as EMPTY, and the summary
 #                    says so.
 #   --base REF       default origin/main
 #
-# Take the shared docker lock first (see the track brief); this starts one
-# container and holds it for the run.
+# Take a container slot first (see the track brief); this starts one container
+# at a time (`--memory 1500m` by default) and holds the slot for the run.
 #
 # ## Exit codes (D-090)
 #
@@ -52,11 +54,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: scripts/preflight.sh --title FILE --body FILE --unit full|narrow [--pr N] [--base REF]" >&2
+  echo "usage: scripts/preflight.sh --title FILE --body FILE [--unit narrow|full] [--pr N] [--base REF]" >&2
   exit 2
 }
 
-TITLE="" BODY="" UNIT="" PR="0" BASE="origin/main"
+TITLE="" BODY="" UNIT="narrow" PR="0" BASE="origin/main"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --title | --body | --unit | --pr | --base)
@@ -207,7 +209,7 @@ cp -R "$T/plan" "$T/plan.keep"
 
 echo "$P running $(grep -c . "$T/plan/steps.tsv") planned step(s) in $IMAGE ..."
 set +e
-docker run --rm --user 0 --memory="${SHIELD_PREFLIGHT_MEMORY:-4g}" -v "$TM:/work" -w /work "$IMAGE" \
+docker run --rm --user 0 --memory="${SHIELD_PREFLIGHT_MEMORY:-1500m}" -v "$TM:/work" -w /work "$IMAGE" \
   bash /work/run.sh > "$T/container.log" 2>&1
 crc=$?
 set -e
@@ -255,7 +257,7 @@ printf '%s %-4s %-9s %-6s %s\n' "$P" "W2" "web" "$wrc" "scripts/verify-in-worktr
 
 verdict="PASS" code=0
 if [ "$cnl" -gt 0 ]; then verdict="COULD-NOT-LOOK" code=2; elif [ "$fails" -gt 0 ]; then verdict="FAIL" code=1; fi
-note=""
+note=", FULL unit run"
 [ "$UNIT" = "narrow" ] && note=", NARROW unit run (CI runs the full suite)"
 echo ""
 echo "$P $verdict at $HEAD_SHA tree $TREE_SHA vs $BASE_SHA -- $ran CI step(s) + 2 web check(s) run, $fails failed, $cnl without an exit status; $LINKED_NOTE$note. Not run here: every \`github\` job above. Log: $LOG"
