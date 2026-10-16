@@ -177,7 +177,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(TWO_BLANK));
     expect(
       screen.getByText(
-        "2 of 4 outcomes have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "2 of 4 outcomes have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(csfClient.submitSelfAssessment).not.toHaveBeenCalled();
@@ -309,7 +309,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(TWO_BLANK, { profile: "HIGH" }));
     expect(
       screen.getByText(
-        "3 of 5 outcomes have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "3 of 5 outcomes have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(
