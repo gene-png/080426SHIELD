@@ -149,7 +149,7 @@ describe("the header's Next: line, from the current stage", () => {
   it.each([
     ["prepare", "Next: add the inputs", "inputs"],
     ["analyze", "Next: run the AI draft", "ai-draft"],
-    ["review", "Next: review the AI draft", "review"],
+    ["review", "Next: review and approve the AI draft", "review"],
     // The API never makes `approve` current today (derive_stages sets
     // reviewed = approved); the approved line is pinned for when it does.
     ["approve", "Next: approve the assessment", "approve-and-release"],

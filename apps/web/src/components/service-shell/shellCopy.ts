@@ -66,12 +66,14 @@ export const SHELL_COPY = {
    * 15. The header's "Next:" action for the current stage (same ruling). The
    * header prints "Next:" itself. Stage-level for now; a service track may
    * replace its line with a count line, which goes to the advisor first.
+   * `review` covers sign-off as well, because the API never makes `approve`
+   * current (see #1297): reworded in issuecomment-6220094031 item 4.
    */
   next: {
     prepareInputs: "add the inputs",
     prepareSelfAssessment: "wait for the client's self-assessment",
     analyze: "run the AI draft",
-    review: "review the AI draft",
+    review: "review and approve the AI draft",
     approve: "approve the assessment",
     generate: "generate the deliverable",
     release: "release to the client",
