@@ -12,7 +12,9 @@ from a fixed table. A job is planned as one of:
              toolchain (E2E, Demo, Web, Secret scan). It stays on GitHub and is
              listed so nobody reads its absence as a pass. So is a job that
              uses an action other than checkout, setup-python or an artifact
-             move. `preflight.sh` runs
+             move, and a job that reads another job's outcome
+             (`${{ needs.* }}`, an aggregate), which exists only on GitHub;
+             a bare `needs:` key orders jobs and does not count. `preflight.sh` runs
              the web checks (prettier, eslint, tsc, vitest) by its own route.
 
 Inside a `run` job a step is one of:
