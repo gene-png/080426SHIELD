@@ -167,8 +167,11 @@ test("CSF answers persist across save-and-exit, and submit moves the status", as
     );
   }
 
-  // Submit for review moves the assessment out of draft.
+  // Submit for review moves the assessment out of draft. Most outcomes are
+  // still blank here, so Submit first warns about them (#1173), and the
+  // client submits anyway.
   await page.getByRole("button", { name: "Submit for review" }).click();
+  await page.getByRole("button", { name: "Submit anyway" }).click();
   await expect(page.getByText("Self-assessment submitted")).toBeVisible({
     timeout: 20000,
   });
