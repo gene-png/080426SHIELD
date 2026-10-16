@@ -19,6 +19,13 @@ from tests._paths import find_workflows_dir
 pytestmark = pytest.mark.unit
 
 
+def _skip_without_workflows() -> None:
+    # The api container mounts only apps/api. On a full checkout (CI) this
+    # cannot fire: ci.yml's "the audit-gate tests must not skip on a full
+    # checkout" step fails if find_workflows_dir returns None there.
+    pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+
+
 def _repo(tmp_path: Path, **workflows: str) -> Path:
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)
@@ -204,7 +211,8 @@ def test_workflows_not_run_on_pull_requests_are_not_planned(tmp_path: Path) -> N
 
 def test_the_real_workflows_plan_the_python_and_audit_jobs_and_keep_e2e_on_github() -> None:
     wf = find_workflows_dir(Path(__file__).resolve())
-    assert wf is not None, "no .github/workflows above this file: run from a full checkout"
+    if wf is None:
+        _skip_without_workflows()
     steps = pp.plan(wf.parent.parent, "main", "0", "full", [])
     jobs: dict[tuple[str, str], set[str]] = {}
     for s in steps:
@@ -334,7 +342,8 @@ def test_before_a_pr_exists_the_close_guard_runs_without_linked_and_says_so(tmp_
 
 def test_the_real_close_guard_step_loses_linked_and_nothing_else() -> None:
     wf = find_workflows_dir(Path(__file__).resolve())
-    assert wf is not None, "no .github/workflows above this file: run from a full checkout"
+    if wf is None:
+        _skip_without_workflows()
     without = [
         s for s in pp.plan(wf.parent.parent, "main", "0", "full", []) if "NOT verified" in s["name"]
     ]
