@@ -133,31 +133,32 @@ a 210,958-byte file, so agents read that a PR "tripping condition 5" comes back
 and could not read WHICH PATHS trip it. Keep it here; D-079 records how that
 happened.
 
-**Since 2026-10-16 (Gene, D-113): a PR whose required checks pass is merged
-by an agent, unless it is EXTRA CARE; extra-care PRs go to the advisor, which
+**Since 2026-10-16 UTC (Gene, D-113): a PR whose checks pass is merged by an
+agent, unless it is EXTRA CARE; extra-care PRs go to the advisor, which
 reviews, approves and merges them.** Extra care is conditions 4, 5 and 6
-below. An agent merges with GitHub auto-merge when conditions 1, 2, 4, 5 and
-6 hold:
+below. An agent merges, once every check on the head has FINISHED, when
+conditions 1 to 6 hold:
 
-    gh pr merge <n> --auto --squash --match-head-commit <reviewed head sha>
+    gh pr merge <n> --squash --match-head-commit <reviewed head sha>
 
-Never `--admin`, never bypass branch protection, never edit the required
-checks. A PR that cannot merge (a red required check, a conflict, BLOCKED) is
-reported on #736 with its reason, never forced.
+**No `--auto`.** Auto-merge waits only for REQUIRED checks, so a red
+non-required gate (merge-rule text, compose content, migration declared) would
+not stop it, and it can merge a later push nobody reviewed. Never `--admin`,
+never bypass branch protection, never edit the required checks. A PR that
+cannot merge (a red check, a conflict, BLOCKED) is reported on #736 with its
+reason, never forced.
 
-1. **Every required check green on the PR's head.** Read the set from branch
-   protection, never from prose: `gh api
-   repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks
-   --jq .contexts`. A green certificate is about the head it ran on (see "READY
-   is two claims").
+1. **EVERY check on the PR's head finished and green, required or not.** The
+   required set alone is not enough: the merge-rule-text, compose and
+   migration gates are deliberately not required. A green certificate is about
+   the head it ran on (see "READY is two claims").
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
    first. The gate checks only that `Findings:` and `Disposition:` exist; it
    does not read `Scope:` and cannot tell whether the reviewer ran at all.
-3. **Retired 2026-10-16 (D-113).** Status documents (`DELIVERY_PLAN.md`,
-   `CONTEXT.md`, `context/<name>.md`) are batched; they are not a merge gate.
-   The number stays so that "condition 4/5/6" keeps meaning what it meant.
+3. **`DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated in the
+   landing commit**, with any counts read live rather than carried forward.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
@@ -166,12 +167,20 @@ reported on #736 with its reason, never forced.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
-**Any red is reported, never merged. Any PR tripping 4, 5 or 6 is EXTRA CARE
-and goes to the advisor** — the session named as advisor in the project doc
-`claude/roles-and-handoff.md` — **which reviews it, approves it and merges
-it.** Approval is a GitHub review approval from that session, or a ruling on
-#736 headed with its session id; the agent that built the PR never approves
-its own extra-care PR. Gene may approve and merge anything directly.
+**Any red is reported, never merged. A PR failing condition 2 or 3 is fixed
+and re-checked. Any PR tripping 4, 5 or 6 is EXTRA CARE and goes to the
+advisor, which reviews it, approves it and merges it.**
+
+- **Who the advisor is:** the one Claude session Gene designates. Its id is
+  kept in Gene's project doc `claude/roles-and-handoff.md`, which is NOT in
+  git, and every advisor post on #736 is headed `Advisor (session_<id>)`.
+  When in doubt, ask on #736 or ask Gene. Never infer it.
+- **What counts as approval:** an advisor ruling on #736 that names the PR
+  and its head SHA. The agent that built a PR never approves its own
+  extra-care PR.
+- **Limit, stated plainly:** sessions can share a GitHub account, so the
+  header is a convention, not proof of identity. Gene may approve and merge
+  anything directly.
 
 **Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
 live-prompt clause needs a diff read. Conditions 2 and 6 are self-attested by
@@ -182,6 +191,10 @@ extra care.
 ### Condition 5: the paths
 
 These are the EXTRA-CARE paths, the ones where a green suite proves least.
+
+- `CLAUDE.md`'s `## The merge rule` section, `DECISIONS.md` entries that change
+  it, and `.claude/agents/**` — a PR must never clear itself under a rule it
+  rewrites (#572).
 
 - `apps/api/app/ai/` — the single egress path for all five services.
 - `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
@@ -287,8 +300,9 @@ conditions rather than from an issue number for that reason.
 - **Anything whose fix changes what a client's dashboard or deliverable shows
   is extra care** under condition 6 — that is what condition 6 says, and it is
   the clause most often talked past.
-- **A dependency bump that touches only manifests and lockfiles, with every
-  required check green, is NOT extra care**, and an agent merges it.
+- **A dependency bump is merged by an agent only if it trips none of
+  conditions 4, 5 and 6.** A GitHub Actions bump edits `.github/workflows/**`,
+  so it is extra care.
 
 ## Real commands (use these, not generic equivalents)
 
@@ -1383,7 +1397,7 @@ because it is long. Load-bearing rules stay at any length:
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 reads the required checks from branch protection, and D-059
+  condition 1 reads every check on the head, and D-059
   says to re-derive its measurement whenever condition 5 changes. Never leave a
   known gap in it because a budget said not to grow. What to resist is growth
   in KIND — another condition, another worked example. If it becomes
