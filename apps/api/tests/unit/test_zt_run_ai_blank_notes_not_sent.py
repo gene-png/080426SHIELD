@@ -253,3 +253,43 @@ def test_a_row_given_notes_during_the_run_is_named_by_its_edit(world, monkeypatc
     drops = [(d["reason"], d["values"]) for d in result["dropped"] if d["key"] == late]
     assert drops == [("edited", 1)], result["dropped"]
     assert world.row(late).maturity_stage is None
+
+
+@pytest.mark.unit
+def test_a_wholly_blank_assessment_makes_no_model_call(world) -> None:
+    """Every row blank, as on a fresh assessment: nothing would be sent, so no
+    call is made and no `llm_calls` row is written (CSF's P1 does the same).
+    The run still lists every capability as omitted with `notes_blank`, and
+    says it sent none, so the panel does not read it as a broken response.
+
+    Red-on-revert: call the provider with the empty list again, and
+    `world.sent` and `llm_calls` each hold one."""
+    from app.models.llm_call import LLMCall
+
+    world.respond()
+
+    result = world.run()
+
+    assert world.sent == [], "the provider was called with nothing to score"
+    with world.sessions() as s:
+        assert s.execute(select(LLMCall)).scalars().all() == []
+    every = sorted(a["capability_code"] for a in world.answers)
+    omitted = result["omitted_capabilities"]
+    assert [o["capability_code"] for o in omitted] == every
+    assert all(o["notes_blank"] for o in omitted), omitted
+    assert result["omitted_count"] == len(every)
+    assert result["capabilities_sent"] == 0
+    assert (result["suggestions_received"], result["suggestions_applied"]) == (0, 0)
+    assert result["dropped"] == []
+
+
+@pytest.mark.unit
+def test_a_run_states_how_many_capabilities_it_sent(world) -> None:
+    """The positive half: a run that sends rows says how many, so the panel's
+    "nothing sent" state cannot be reached by a run that sent some."""
+    sent, _blank = _noted(world)
+    world.respond()
+
+    result = world.run()
+
+    assert result["capabilities_sent"] == len(sent) == len(world.sent[0]["capabilities"])
