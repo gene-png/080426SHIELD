@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { namedClientId } from "@/lib/proxy-client-id";
 import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 async function bearerOrUnauthorized(): Promise<string | NextResponse> {
@@ -24,11 +25,14 @@ async function bearerOrUnauthorized(): Promise<string | NextResponse> {
   return token;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
+  // #1262: the client the wizard names, else the cookie (`namedClientId`).
+  const clientId = namedClientId(request, "/intake");
+  if (clientId instanceof NextResponse) return clientId;
   try {
-    const result = await apiFetch<unknown>("/intake", { bearer });
+    const result = await apiFetch<unknown>("/intake", { bearer, clientId });
     return NextResponse.json(result);
   } catch (err) {
     return mapError(err);
@@ -38,6 +42,8 @@ export async function GET(): Promise<NextResponse> {
 export async function PATCH(request: Request): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
+  const clientId = namedClientId(request, "/intake");
+  if (clientId instanceof NextResponse) return clientId;
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -52,6 +58,7 @@ export async function PATCH(request: Request): Promise<NextResponse> {
       method: "PATCH",
       bearer,
       body,
+      clientId,
     });
     return NextResponse.json(result);
   } catch (err) {

@@ -360,6 +360,73 @@ export function blindSpots(techniques: DashTechnique[]): DashTechnique[] {
   return techniques.filter((t) => t.status === "gap" && !t.computed_parent);
 }
 
+/** #1180: one category of blind spots -- the tactic each card already shows. */
+export interface BlindCategory {
+  tactic: string;
+  slug: string;
+  rows: DashTechnique[];
+}
+
+/** #1180: the URL segment for a tactic: its name, lower-cased, hyphenated. */
+export function tacticSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * #1180 (Gene's 2026-10-15 item 12; B-1 to B-4 approved, #736 6216024281):
+ * the blind spots grouped by category, the tactic each card shows
+ * (`tactic_name`, the technique's FIRST catalog tactic), in the catalog's
+ * tactic order (`rollup.by_tactic`), any other name after it. Each technique
+ * is in exactly one category, so the counts sum to `blindSpots(...)`.
+ */
+export function blindByTactic(data: AttackDashboardData): BlindCategory[] {
+  const groups = new Map<string, DashTechnique[]>();
+  for (const t of blindSpots(data.techniques)) {
+    // A technique with no tactic would be listed under a blank name whose
+    // link opens no page. The catalog has none today; a regenerated one that
+    // did must fail here, not ship a dead link (#1180 review F3).
+    if (tacticSlug(t.tactic_name) === "") {
+      throw new Error(
+        `ATT&CK blind spots: technique ${t.code} has no tactic (tactic_name ${JSON.stringify(t.tactic_name)})`,
+      );
+    }
+    const rows = groups.get(t.tactic_name) ?? [];
+    rows.push(t);
+    groups.set(t.tactic_name, rows);
+  }
+  const order = data.rollup.by_tactic.map((t) => t.tactic_name);
+  const names = [
+    ...order.filter((n) => groups.has(n)),
+    ...[...groups.keys()].filter((n) => !order.includes(n)).sort(),
+  ];
+  return names.map((tactic) => ({
+    tactic,
+    slug: tacticSlug(tactic),
+    rows: groups.get(tactic) ?? [],
+  }));
+}
+
+/**
+ * #1180 review F1: whether `slug` names a tactic of this dashboard -- one in
+ * the rollup's tactic list, or one a blind spot is listed under. A tactic with
+ * nothing uncovered is known (B-4 says so); a slug naming no tactic (a typo,
+ * or a tactic the catalog has since renamed) is not, and must not read as
+ * "No uncovered techniques in this category."
+ */
+export function isKnownTactic(
+  data: AttackDashboardData,
+  slug: string,
+): boolean {
+  return (
+    data.rollup.by_tactic.some((t) => tacticSlug(t.tactic_name) === slug) ||
+    blindByTactic(data).some((g) => g.slug === slug)
+  );
+}
+
 /**
  * #620 round 5: the sentence that reconciles the Blind spots KPI (the rollup's
  * gaps, parents included) with the list (gaps through sub-techniques), or null

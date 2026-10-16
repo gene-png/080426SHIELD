@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.redact import RedactionMode, redact_for_ai
+from app.ai.redact import RedactionMode
 from app.attack.analytics import CoverageRollup, compute
 from app.attack.catalog import NOT_PREVENTABLE, all_codes
 from app.attack.citations import Candidate, CitationResolver
@@ -47,8 +47,12 @@ from app.attack.parents import is_computed_parent
 from app.attack.pending import pending_codes, row_tools
 from app.attack.release_readiness import unreviewed_codes
 from app.attack.rules import parents_computed, statuses_computed
+from app.attack.shown_forms import shown_forms
+from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment, AttackAssessmentStatus
 from app.models.capability import CapabilityListStatus, SecurityFunction
+
+_log = get_logger(__name__)
 
 _LISTS = ("detection_tools", "prevention_tools", "response_tools")
 _FLAGS = (
@@ -118,26 +122,34 @@ def removed_spellings(
     client_org_name: str | None,
     redaction_mode: RedactionMode,
     name_hints: Iterable[str] = (),
+    also: Iterable[str] = (),
 ) -> Removed:
-    """The shown form is asked of `redact_for_ai`, the egress's own redactor,
-    with the egress's mode and hints -- what `CitationResolver` asks when it
-    indexes its aliases, so the two cannot disagree."""
+    """The shown form is asked of the egress's own redactor, with the egress's
+    mode and hints -- what `CitationResolver` asks when it indexes its aliases,
+    so the two cannot disagree.
+
+    #1080 (D-111): asked ONCE, through `shown_forms`, for the removed `names`
+    and for `also`, every other name the caller will ask `covers` about (the
+    base rows' tools, the client's offered tools). With name hints that one
+    call goes through the redaction child. A name outside both is still asked
+    the same way, one call for it, and logged, so a caller that forgot a set
+    is slower but never wrong."""
     hints = tuple(name_hints)
+    names = tuple(names)
+
+    def ask(batch: Iterable[str]) -> dict[str, str]:
+        return shown_forms(
+            batch, mode=redaction_mode, client_org_name=client_org_name, name_hints=hints
+        )
+
+    asked = ask([*names, *also])
 
     def show(name: str) -> str:
-        # #552: still in-process. One tool name, never a payload, and nothing
-        # here egresses (the egress redacts in a child, ai/isolation.py). But
-        # it holds the api's GIL, once per name against every hint: a measured
-        # residual, D-111, recorded on #1124 and to be moved by #1080.
-        shown, _counts = redact_for_ai(
-            name,
-            mode=redaction_mode,
-            client_org_name=client_org_name or None,
-            name_hints=hints,
-        )
-        return _key(shown)
+        if name not in asked:
+            _log.info("attack_scenario.shown_form_unprepared", hints=len(hints))
+            asked.update(ask([name]))
+        return _key(asked[name])
 
-    names = tuple(names)
     return Removed(
         names=names,
         stored=frozenset(_key(n) for n in names),
@@ -331,6 +343,7 @@ def validate_added(
     name_hints: Iterable[str] = (),
     limit: int = MAX_ADDED,
     check_characters: bool = True,
+    shown: Mapping[str, str] | None = None,
 ) -> list[AddedTool]:
     """The admin's added tools, or a typed refusal naming the first bad one.
 
@@ -364,18 +377,29 @@ def validate_added(
             client_org_name=client_org_name,
             redaction_mode=mode,
             name_hints=hints,
+            # Asked with THIS mode only: the "off" resolver redacts nothing.
+            shown=shown if mode == redaction_mode else None,
         )
+
+    # #1080 (D-111): every shown form this check needs -- the client's tools
+    # and each added name -- asked ONCE (through the redaction child when the
+    # build carries hints), and shared by every resolver built below.
+    entry_names = [
+        n for n in (_text(e.get("name")) for e in raw if isinstance(e, Mapping)) if n is not None
+    ]
+    # `shown`: forms a caller already asked for with THIS mode, client name
+    # and hints; only the names it lacks are asked here.
+    given = dict(shown or {})
+    shown = given | shown_forms(
+        [n for n in [*client, *entry_names] if n not in given],
+        mode=redaction_mode,
+        client_org_name=client_org_name,
+        name_hints=hints,
+    )
 
     def citable(name: str) -> set[str]:
         """The strings the model can cite for a tool: as stored and as shown."""
-        # #552: still in-process. One tool name, never a payload, and nothing
-        # here egresses (the egress redacts in a child, ai/isolation.py). But
-        # it holds the api's GIL, once per name against every hint: a measured
-        # residual, D-111, recorded on #1124 and to be moved by #1080.
-        shown, _counts = redact_for_ai(
-            name, mode=redaction_mode, client_org_name=client_org_name or None, name_hints=hints
-        )
-        return {name, shown}
+        return {name, shown[name]}
 
     out: list[AddedTool] = []
     for entry in raw:
@@ -885,8 +909,13 @@ def parse_delta(
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
     name_hints: tuple[str, ...] = (),
+    shown: Mapping[str, str] | None = None,
 ) -> ParsedDelta:
     """Validate one batch's answer against the contract.
+
+    `shown` (#1080): the shown forms of every `available` name and vendor,
+    asked ONCE by the caller before the batches were sent, so reading an
+    answer that has already been paid for never asks the redaction child.
 
     `asked` is the batch's slice of affected techniques; `available` is the
     client's tools minus the removed ones. A tool is resolved by `mitre_map`'s
@@ -922,6 +951,7 @@ def parse_delta(
         client_org_name=client_org_name,
         redaction_mode=redaction_mode,
         name_hints=name_hints,
+        shown=shown,
     )
     lists = {code: {name: [] for name in _LISTS} for code in asked}
     accepted: list[dict[str, Any]] = []

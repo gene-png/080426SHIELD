@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, insert, select, update
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.unit
@@ -85,8 +85,10 @@ def world(tmp_path):
             return SimpleNamespace(id=a_id)
 
         def answer(a, code: str, stage: int | None, notes: str | None = None) -> None:
-            db.add(
-                ZtAnswer(
+            # Core, not the ORM, for the same reason as `assessment`: the head
+            # model carries `target_source` (0076), which this schema lacks.
+            db.execute(
+                insert(ZtAnswer.__table__).values(
                     assessment_id=a.id,
                     client_id=client.id,
                     capability_code=code,
@@ -131,8 +133,13 @@ def world(tmp_path):
 def _codes(engine, assessment_id) -> dict[str, tuple]:
     from app.models.zt_assessment import ZtAnswer
 
+    t = ZtAnswer.__table__  # Core: the head model carries later columns (0076)
     with Session(engine) as db:
-        rows = db.execute(select(ZtAnswer).where(ZtAnswer.assessment_id == assessment_id)).scalars()
+        rows = db.execute(
+            select(t.c.capability_code, t.c.maturity_stage, t.c.notes).where(
+                t.c.assessment_id == assessment_id
+            )
+        )
         return {r.capability_code: (r.maturity_stage, r.notes) for r in rows}
 
 
@@ -181,12 +188,13 @@ def test_downgrade_never_deletes_an_answered_inserted_row(world) -> None:
     cfg, engine, ids = world
     command.upgrade(cfg, "0064")
     with Session(engine) as db:  # someone answers the new row
-        row = db.execute(
-            select(ZtAnswer).where(
-                ZtAnswer.assessment_id == ids["live"], ZtAnswer.capability_code == "DOD.USR.09"
-            )
-        ).scalar_one()
-        row.notes = "ICAM platform in place"
+        t = ZtAnswer.__table__  # Core: the head model carries later columns (0076)
+        hit = db.execute(
+            update(t)
+            .where(t.c.assessment_id == ids["live"], t.c.capability_code == "DOD.USR.09")
+            .values(notes="ICAM platform in place")
+        )
+        assert hit.rowcount == 1
         db.commit()
     command.downgrade(cfg, "0063")
     assert _codes(engine, ids["live"])["DOD.USR.09"] == (None, "ICAM platform in place")
