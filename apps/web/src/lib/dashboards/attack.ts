@@ -386,6 +386,14 @@ export function tacticSlug(name: string): string {
 export function blindByTactic(data: AttackDashboardData): BlindCategory[] {
   const groups = new Map<string, DashTechnique[]>();
   for (const t of blindSpots(data.techniques)) {
+    // A technique with no tactic would be listed under a blank name whose
+    // link opens no page. The catalog has none today; a regenerated one that
+    // did must fail here, not ship a dead link (#1180 review F3).
+    if (tacticSlug(t.tactic_name) === "") {
+      throw new Error(
+        `ATT&CK blind spots: technique ${t.code} has no tactic (tactic_name ${JSON.stringify(t.tactic_name)})`,
+      );
+    }
     const rows = groups.get(t.tactic_name) ?? [];
     rows.push(t);
     groups.set(t.tactic_name, rows);
@@ -400,6 +408,23 @@ export function blindByTactic(data: AttackDashboardData): BlindCategory[] {
     slug: tacticSlug(tactic),
     rows: groups.get(tactic) ?? [],
   }));
+}
+
+/**
+ * #1180 review F1: whether `slug` names a tactic of this dashboard -- one in
+ * the rollup's tactic list, or one a blind spot is listed under. A tactic with
+ * nothing uncovered is known (B-4 says so); a slug naming no tactic (a typo,
+ * or a tactic the catalog has since renamed) is not, and must not read as
+ * "No uncovered techniques in this category."
+ */
+export function isKnownTactic(
+  data: AttackDashboardData,
+  slug: string,
+): boolean {
+  return (
+    data.rollup.by_tactic.some((t) => tacticSlug(t.tactic_name) === slug) ||
+    blindByTactic(data).some((g) => g.slug === slug)
+  );
 }
 
 /**

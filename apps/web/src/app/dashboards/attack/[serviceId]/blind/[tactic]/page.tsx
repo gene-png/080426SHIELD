@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { AttackBlindCategory } from "@/components/dashboards/attack/AttackBlindCategory";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -11,7 +11,10 @@ import {
 import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
 import { auth } from "@/lib/auth/options";
 import { SkipToContent } from "@/components/site/SkipToContent";
-import type { AttackDashboardData } from "@/lib/dashboards/attack";
+import {
+  isKnownTactic,
+  type AttackDashboardData,
+} from "@/lib/dashboards/attack";
 
 import type { JSX } from "react";
 
@@ -117,6 +120,19 @@ export default async function AttackBlindCategoryPage({
     );
   }
 
+  // #1180 review F1 and F5: a segment that names no tactic of this dashboard
+  // (a typo, a renamed tactic, or one that is not valid percent-encoding) is
+  // a 404, never "No uncovered techniques in this category.".
+  let slug: string;
+  try {
+    slug = decodeURIComponent(tactic);
+  } catch {
+    notFound();
+  }
+  if (!isKnownTactic(data, slug)) {
+    notFound();
+  }
+
   // The dashboards render their own dark shell, so they were returning no
   // <main> at all — the skip-to-content link had no destination here and the
   // page exposed no main landmark (found in the 2026-08-04 review). Matches
@@ -129,7 +145,7 @@ export default async function AttackBlindCategoryPage({
         tabIndex={-1}
         className="focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
       >
-        <AttackBlindCategory data={data} slug={decodeURIComponent(tactic)} />
+        <AttackBlindCategory data={data} slug={slug} />
       </main>
     </>
   );

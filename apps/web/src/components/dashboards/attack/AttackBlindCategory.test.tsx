@@ -53,7 +53,19 @@ function data(techniques: DashTechnique[]): AttackDashboardData {
       unable_to_determine: 0,
       coverage_pct: 0,
       coverage_measured: true,
-      by_tactic: [],
+      by_tactic: ["Execution", "Persistence", "Discovery"].map((name) => ({
+        tactic_id: name,
+        tactic_name: name,
+        covered: 0,
+        partial: 0,
+        gap: 0,
+        not_applicable: 0,
+        unscored: 0,
+        outside_control_surface: 0,
+        unable_to_determine: 0,
+        coverage_pct: 0,
+        coverage_measured: false,
+      })),
     },
     techniques,
   };
@@ -113,5 +125,37 @@ describe("AttackBlindCategory (#1180)", () => {
       "No uncovered techniques in this category.",
     );
     expect(screen.queryByTestId("attack-blind-category-cards")).toBeNull();
+  });
+
+  it("refuses a slug that names no tactic, never saying nothing is uncovered", () => {
+    // Review F1: B-4 over an unknown name is a false all-clear. The page
+    // answers 404 first; this is the component's backstop.
+    expect(() =>
+      render(<AttackBlindCategory data={data(WORLD)} slug="defense-evasion" />),
+    ).toThrow(/names no tactic/);
+    expect(screen.queryByTestId("attack-blind-none")).toBeNull();
+  });
+
+  it("lists a computed parent's gap through its sub-techniques, not as a card", () => {
+    // Review F2: the dashboard section renders no cards now, so the "no
+    // Parent technique card" check belongs on the page that renders them.
+    const parent = tech({
+      code: "T1001",
+      name: "Parent technique",
+      tactic_name: "Execution",
+      computed_parent: true,
+      sub_technique_count: 2,
+    });
+    const kid = tech({
+      code: "T1001.001",
+      name: "Kid",
+      tactic_name: "Execution",
+    });
+    render(<AttackBlindCategory data={data([parent, kid])} slug="execution" />);
+    const cards = screen.getByTestId("attack-blind-category-cards");
+    // Positive first: the sub-technique is listed.
+    expect(within(cards).getByText("T1001.001")).toBeInTheDocument();
+    expect(within(cards).queryByText("Parent technique")).toBeNull();
+    expect(within(cards).queryByText("T1001")).toBeNull();
   });
 });

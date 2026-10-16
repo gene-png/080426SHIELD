@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   blindByTactic,
   blindSpots,
+  isKnownTactic,
   tacticSlug,
   type AttackDashboardData,
   type DashTactic,
@@ -124,5 +125,26 @@ describe("blindByTactic (#1180)", () => {
 
   it("is empty when nothing is uncovered", () => {
     expect(blindByTactic(data([tech({ status: "covered" })]))).toEqual([]);
+  });
+
+  it("refuses a blind spot with no tactic rather than list a dead link", () => {
+    expect(() =>
+      blindByTactic(data([tech({ code: "T9999", tactic_name: "" })])),
+    ).toThrow(/T9999 has no tactic/);
+  });
+});
+
+describe("isKnownTactic (#1180 review F1)", () => {
+  it("knows a catalog tactic with nothing uncovered", () => {
+    expect(isKnownTactic(data(WORLD), "discovery")).toBe(true);
+  });
+
+  it("knows a tactic only a blind spot is listed under", () => {
+    expect(isKnownTactic(data(WORLD), "command-and-control")).toBe(true);
+  });
+
+  it("does not know a name that is no tactic of the dashboard", () => {
+    expect(isKnownTactic(data(WORLD), "defense-evasion")).toBe(false);
+    expect(isKnownTactic(data(WORLD), "")).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import type { JSX } from "react";
 import { C, DashShell, Section } from "@/components/dashboards/shared";
 import {
   blindByTactic,
+  isKnownTactic,
   type AttackDashboardData,
 } from "@/lib/dashboards/attack";
 
@@ -13,8 +14,10 @@ import { BlindSpotCard } from "./AttackDashboard";
 /**
  * #1180 (Gene's 2026-10-15 item 12): one category of "What you're blind to
  * today", on its own page. Copy B-2 to B-4 approved verbatim (#736 comment
- * 6216024281). `slug` comes from the URL; a name that matches no category with
- * blind spots says so (B-4) rather than showing an empty page.
+ * 6216024281). `slug` comes from the URL. A tactic of this dashboard with no
+ * blind spots says so (B-4); a slug naming no tactic at all is refused here,
+ * because B-4 over it would be a false all-clear (review F1). The page checks
+ * `isKnownTactic` first and answers 404, so this throw is the backstop.
  */
 export function AttackBlindCategory({
   data,
@@ -23,6 +26,11 @@ export function AttackBlindCategory({
   data: AttackDashboardData;
   slug: string;
 }): JSX.Element {
+  if (!isKnownTactic(data, slug)) {
+    throw new Error(
+      `ATT&CK blind-spot category: ${JSON.stringify(slug)} names no tactic of this dashboard`,
+    );
+  }
   const group = blindByTactic(data).find((g) => g.slug === slug) ?? null;
   return (
     <DashShell
