@@ -1789,18 +1789,16 @@ def bulk_set_disposition(
     return _serialize_list_with_items(db, cap_list)
 
 
-#: TD-5 (for #1060). PLACEHOLDER copy, pending approval on #736: the stale-tab
-#: case, where the button was shown but every uncosted row has since been costed.
-_NOTHING_TO_ESTIMATE = "No tools without a cost are left to estimate."
+#: TD-5 (for #1060). Copy approved on #736 (6218297098): the stale-tab case,
+#: where the button was shown but every uncosted row has since been costed.
+_NOTHING_TO_ESTIMATE = "Every tool already has a cost, so there is nothing to estimate."
 #: Tools per call: 50 answers of about 50 tokens each, far inside the purpose's
 #: output budget, so no inventory is ever truncated.
 _ESTIMATE_BATCH = 50
 _ESTIMATE_MAX_WORKERS = 4
-#: PLACEHOLDER copy, pending approval on #736 (CSF's approved deadline sentence
-#: without its CSF-specific ending).
+#: Copy approved on #736 (6218297098).
 _ESTIMATE_DEADLINE = (
-    "This run did not finish within its time limit, so it was stopped and "
-    "nothing from it was applied. Run it again."
+    "The AI estimate stopped before it finished. Tools it did not reach still have no cost."
 )
 
 

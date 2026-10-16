@@ -130,6 +130,10 @@ def test_nothing_to_estimate_is_a_typed_refusal_and_no_run(app_client) -> None: 
     )
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "no_costs_to_estimate"
+    # Copy approved on #736 (6218297098), typed here.
+    assert r.json()["error"]["message"] == (
+        "Every tool already has a cost, so there is nothing to estimate."
+    )
 
 
 def test_a_locked_uncosted_row_is_not_asked(app_client) -> None:  # noqa: F811

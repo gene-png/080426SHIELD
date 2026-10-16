@@ -265,6 +265,15 @@ def cost_label(ctx: DeliverableContext) -> str:
         return "Included annual cost"
     if ctx.source_rows_total is None:
         return "Annual cost (may not be complete)"
+    if ctx.ai_estimate_count > 0:
+        # TD-5 (for #1060): never "Total" while an AI estimate is in it. Copy
+        # approved on #736 (6218297098).
+        k = ctx.ai_estimate_count
+        return (
+            "Annual cost, including 1 AI estimate"
+            if k == 1
+            else f"Annual cost, including {k} AI estimates"
+        )
     return "Total annual cost"
 
 
@@ -301,11 +310,12 @@ def build_context(
     # TD-10 (for #1048): the floor flag is DERIVED from the uncosted items, so
     # the count the files state and the label above it cannot disagree.
     uncosted = no_cost_items(items_list)
-    # TD-5 (for #1060): an AI estimate is not a recorded cost either, so a total
-    # including one is not a "Total" -- the deliverable's twin of the dashboard's
-    # E7 ("partial"), so the two surfaces cannot disagree about one list.
+    # TD-5 (for #1060): an AI estimate is not a recorded cost, so a total
+    # including one is never a "Total" -- `cost_label` names the estimates
+    # instead, the deliverable's twin of the dashboard's E7 ("partial"). It is
+    # counted, not a floor: the figure includes it.
     estimated = sum(1 for it in items_list if is_ai_estimate(it))
-    spend_known = not uncosted and not estimated
+    spend_known = not uncosted
     for it in items_list:
         # for #835: a split bundle's part is not a cost. Its parent holds the
         # license value, so the part neither adds to the total nor, by having

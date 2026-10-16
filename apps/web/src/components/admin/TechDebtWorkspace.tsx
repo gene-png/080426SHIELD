@@ -672,8 +672,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
       setUncostedOnly(false);
       await refreshOverlap();
     } catch (err) {
-      // PLACEHOLDER fallback copy, pending approval on #736; the API's own
-      // typed message is shown whenever there is one.
+      // Fallback copy approved on #736 (6218297098); the API's own typed
+      // message is shown whenever there is one.
       setEstimateError(
         proxyMessage(err, "The AI estimate could not be started."),
       );

@@ -101,9 +101,35 @@ def test_a_total_including_an_estimate_is_not_called_a_total(render, read) -> No
     """The deliverable's twin of E7: the dashboard calls this list "partial", so
     the document must not call its figure a "Total" (#126's rule: two surfaces,
     one list, no contradictory claims)."""
+    # The label approved on #736 (6218297098), typed here.
     text = read(render(_ctx([_item(name="Tool A", annual_cost_usd=1_000), _estimated("Tool B")])))
     assert "Total annual cost" not in text
+    assert "Annual cost, including 1 AI estimate" in text
+    text = read(
+        render(_ctx([_item(name="A", annual_cost_usd=1), _estimated("B"), _estimated("C")]))
+    )
+    assert "Total annual cost" not in text
+    assert "Annual cost, including 2 AI estimates" in text
+
+
+@RENDERERS
+def test_a_missing_cost_still_outranks_the_estimate_label(render, read) -> None:
+    """A total that also leaves a tool out is a floor: "may not be complete" is
+    the stronger qualification, and the E6 note still states the estimates."""
+    items = [_item(name="A", annual_cost_usd=None), _estimated("B")]
+    text = read(render(_ctx(items)))
     assert "Annual cost (may not be complete)" in text
+    assert "Annual cost, including" not in text
+    assert SINGULAR in text
+
+
+@RENDERERS
+def test_a_list_with_no_estimate_is_still_a_total(render, read) -> None:
+    """POSITIVE CONTROL for the label: nothing estimated, nothing missing."""
+    items = [_item(name="A", annual_cost_usd=1), _item(name="B", annual_cost_usd=2)]
+    text = read(render(_ctx(items)))
+    assert "Total annual cost" in text
+    assert "Annual cost, including" not in text
 
 
 # ---------------------------------------------------------------------------
