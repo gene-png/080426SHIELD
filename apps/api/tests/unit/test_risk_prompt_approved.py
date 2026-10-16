@@ -42,9 +42,15 @@ pytestmark = pytest.mark.unit
 #: recorded it", and `STORED_RESIDUAL_SENTENCE` appended, after one space, to
 #: "unmitigated when it shows none.". Derived by script from v3 and the two
 #: edits, not read from the module: 12763 ASCII bytes, 106 lines, no trailing
-#: newline.
-APPROVED_SHA256 = "c9bdb3fe865d68c07f6bd9adc1c1021243bb912c0c33ad4c72faa8f27c55a797"
-APPROVED_BYTES = 12763
+#: newline (sha256 c9bdb3fe865d68c07f6bd9adc1c1021243bb912c0c33ad4c72faa8f27c55a797).
+#: v5 (Gene, #736 6205956728): v4 with the two edits of #736 6204461502
+#: section 7, the first carrying the clause proposed in 6204492978 ("and,
+#: only on an assessment approved before this change, `evidence_capped` ...")
+#: after its `evidence` item. Derived by script from v4 and those comments,
+#: each edit asserted to match once, not read from the module: 13010 ASCII
+#: bytes, no trailing newline.
+APPROVED_SHA256 = "2e0edd5f975f911c722bf9d2cdd960185fe2bd0bcdca34cc2a45915df0c3f18b"
+APPROVED_BYTES = 13010
 
 
 def _prompt() -> str:
@@ -57,11 +63,12 @@ def test_the_risk_prompt_is_the_approved_text() -> None:
     assert hashlib.sha256(raw).hexdigest() == APPROVED_SHA256
 
 
-def test_the_risk_job_is_prompt_version_v4() -> None:
+def test_the_risk_job_is_prompt_version_v5() -> None:
     """C9 (#806 5983938383): `llm_calls` tells each approved prompt's runs
     apart. v2 was the assembly above; v3 adds ruling #736 6105137014's
-    `status_basis` sentence; v4 makes ruling #736 6105759625's two edits."""
-    assert get_job("risk_synthesize").prompt_version == "v4"
+    `status_basis` sentence; v4 makes ruling #736 6105759625's two edits; v5
+    makes CSF Options 1 and 3's two edits (6205956728)."""
+    assert get_job("risk_synthesize").prompt_version == "v5"
 
 
 #: Ruling #736 6105759625, edit 2, verbatim.
@@ -110,16 +117,22 @@ def test_the_label_example_stays_the_attack_one() -> None:
     prompt = _prompt()
     assert 'label` (for example "ATT&CK T1003: gap")' in prompt
     assert "level 2 of target 3" not in prompt
+    # The label's wording since #736 6216024281 item 3c.
+    assert "below target" not in prompt
 
 
 def test_the_provenance_sentence_is_ruling_4() -> None:
     """Ruling 4 (#736 6086417594, approved in 6087027524), both halves."""
     prompt = " ".join(_prompt().split())
+    # v5 (#736 6204461502 section 7, edit 2): "capped where evidence was not
+    # recorded" became "not validated by evidence where `evidence` is not
+    # `on_file`".
     assert (
         "CSF levels are computed by SHIELD from dimension scores that may have been "
-        "drafted by AI and edited by a consultant, and are capped where evidence was "
-        "not recorded"
+        "drafted by AI and edited by a consultant, and are not validated by evidence "
+        "where `evidence` is not `on_file`"
     ) in prompt
+    assert "capped where evidence was not recorded" not in prompt
     assert (
         "Zero Trust stages may have been entered by the client in a self-assessment, "
         "set by a consultant, or drafted by AI"

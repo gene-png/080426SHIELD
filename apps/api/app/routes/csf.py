@@ -29,9 +29,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
-from app.ai.batching import run_batches
+from app.ai.batching import Batched, run_batches
 from app.ai.catalog_fields import register_catalog_field
 from app.ai.diff import diff_keyed_rows
 from app.ai.llm import LLMClient
@@ -61,6 +61,7 @@ from app.csf.catalog import (
     subcategory_by_code,
 )
 from app.csf.enterprise import codes_with_notes as _codes_with_notes
+from app.csf.enterprise import coverage as csf_coverage
 from app.csf.enterprise import dimensions_of as _dims
 from app.csf.enterprise import enterprise_subcategories as _enterprise_subcategories
 from app.csf.enterprise import has_notes as _has_notes
@@ -71,7 +72,7 @@ from app.csf.exporters import render_xlsx as render_csf_xlsx
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as analyze_gaps
 from app.csf.gap import resolve_target_tier
-from app.csf.maturity import TIER_DEFINITIONS
+from app.csf.maturity import TIER_DEFINITIONS, tier_label
 from app.csf.playbook import (
     Tier,
     score_tier,
@@ -84,7 +85,8 @@ from app.csf.retired import (
     retired_scores,
     working_profile_sentence,
 )
-from app.csf.rules import SCORED_TIERS as CSF_SCORED_TIERS
+from app.csf.rules import UNCAPPED as CSF_UNCAPPED
+from app.csf.rules import evidence_cap_applies as csf_evidence_cap_applies
 from app.csf.rules import scored_tiers_only as csf_scored_tiers_only
 from app.csf.scoring import compute as compute_score
 from app.db.session import get_db
@@ -101,7 +103,7 @@ from app.models.csf_assessment import (
     CsfAssessment,
     CsfAssessmentStatus,
 )
-from app.models.csf_profile import CsfDimensionScore, CsfGapAction
+from app.models.csf_profile import EVIDENCE_STATUS_GROUP, CsfDimensionScore, CsfGapAction
 from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE, Deliverable
 from app.models.evidence_link import EvidenceTargetKind
 from app.models.llm_call import LLMCallMode
@@ -158,6 +160,8 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    latest_released_version,
+    refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
 )
@@ -544,6 +548,12 @@ def create_assessment(
         )
         response.status_code = status.HTTP_200_OK
         return _serialize_assessment(db, prior, viewer=user)
+    # #1123 item 1: never a plain draft over released work; a revision only.
+    # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
+    # its next list by extraction and has no Start a revision, so it does not.
+    released = latest_released_version(db, CsfAssessment, CsfAssessmentStatus.RELEASED, svc.id)
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = CsfAssessment(
         service_id=svc.id,
@@ -909,12 +919,13 @@ def approve_assessment(
             CsfAssessment.id == a.id,
             CsfAssessment.status.in_((CsfAssessmentStatus.DRAFT, CsfAssessmentStatus.SUBMITTED)),
         )
-        # #1031 (migration 0070): approved under the scored-tiers roll-up.
+        # #1031 (migration 0070): approved under the newest rules, now 3
+        # (Options 1 and 3: no evidence cap, no level without a scored tier).
         .values(
             status=CsfAssessmentStatus.APPROVED,
             approved_at=utcnow(),
             approved_by=user.id,
-            rollup_rules=CSF_SCORED_TIERS,
+            rollup_rules=CSF_UNCAPPED,
         )
         .execution_options(synchronize_session=False)
     )
@@ -1165,6 +1176,7 @@ def gap_analysis(
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
                 notes=g.notes,
+                weight=g.weight,
             )
             for g in analysis.gaps
         ],
@@ -1178,8 +1190,10 @@ def gap_analysis(
 _VALID_TIERS = {t.value for t in Tier}
 
 
-def _score_response(row: CsfDimensionScore) -> CsfDimensionScoreResponse:
-    result = score_tier(_dims(row), has_evidence=row.has_evidence)
+def _score_response(row: CsfDimensionScore, *, cap: bool) -> CsfDimensionScoreResponse:
+    """One row with its code-computed total and level. `cap` is the row's
+    assessment's rule (`csf_evidence_cap_applies`), passed by every caller."""
+    result = score_tier(_dims(row), has_evidence=row.has_evidence, cap=cap)
     return CsfDimensionScoreResponse(
         id=row.id,
         tier=row.tier,
@@ -1192,6 +1206,7 @@ def _score_response(row: CsfDimensionScore) -> CsfDimensionScoreResponse:
         in_scope=row.in_scope,
         rationale=row.rationale,
         what_we_found=row.what_we_found,
+        evidence_status=row.evidence_status,
         has_evidence=row.has_evidence,
         target_level=row.target_level,
         locked=row.locked,
@@ -1323,12 +1338,14 @@ def get_profile(
                 CsfDimensionScore.assessment_id == a.id,
                 CsfDimensionScore.tier == tier,
             )
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
             .order_by(CsfDimensionScore.subcategory_code)
         )
         .scalars()
         .all()
     )
-    return CsfProfileResponse(tier=tier, rows=[_score_response(r) for r in rows])
+    cap = csf_evidence_cap_applies(a)
+    return CsfProfileResponse(tier=tier, rows=[_score_response(r, cap=cap) for r in rows])
 
 
 @router.patch(
@@ -1351,6 +1368,16 @@ def patch_dimension_score(
         refuse_while_running(db, owner.service_id)  # #645: the edit lock
         _refuse_working_profile_edit(owner)  # #1120 A2
     data = body.model_dump(exclude_unset=True)
+    # Migration 0075: the old two-valued write and the three-valued one name
+    # the same column. Both at once cannot both be honoured, so neither is.
+    if "has_evidence" in data and "evidence_status" in data:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "evidence_fields_conflict",
+                "message": "Send the evidence choice once: use evidence_status alone.",
+            },
+        )
     for f in (
         "governance",
         "policy",
@@ -1360,7 +1387,8 @@ def patch_dimension_score(
         "in_scope",
         "rationale",
         "what_we_found",
-        "has_evidence",
+        "has_evidence",  # the model maps it onto `evidence_status`
+        "evidence_status",
         "target_level",
         "locked",
     ):
@@ -1407,7 +1435,7 @@ def patch_dimension_score(
         },
     )
     db.commit()
-    return _score_response(row)
+    return _score_response(row, cap=csf_evidence_cap_applies(owner))
 
 
 @router.get(
@@ -1427,13 +1455,19 @@ def enterprise_profile(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
     out, tiers_in_use = _enterprise_subcategories(db, a)
     stored = (
-        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        db.execute(
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == a.id)
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
+        )
         .scalars()
         .all()
     )
     return EnterpriseProfileResponse(
         tiers_in_use=sorted(tiers_in_use),
         subcategories=out,
+        coverage=csf_coverage(out),
+        evidence_cap=csf_evidence_cap_applies(a),
         # #852: the rows `_enterprise_subcategories` leaves out, said aloud.
         retired_rows=len(retired_scores(stored)),
         retired_rows_note=_working_profile_note(db, a, stored),
@@ -1699,11 +1733,19 @@ def _stand_in_enterprise_row(db: Session, a: CsfAssessment, code: str) -> Enterp
         name=getattr(subcategory_by_code(code), "name", code),
         function=str(getattr(subcategory_by_code(code), "function", "")),
         tier_levels={},
-        enterprise_level=0,
-        rollup_rule=0,
+        # Option 1, #1073: nothing rolled up is no level, never a 0 stand-in.
+        enterprise_level=None,
+        rollup_rule=None,
         target_level=None,
         gap=False,
         priority=None,
+        scored=False,
+        self_rating=db.execute(
+            select(CsfAnswer.maturity_tier).where(
+                CsfAnswer.assessment_id == a.id, CsfAnswer.subcategory_code == code
+            )
+        ).scalar_one_or_none(),
+        tier_evidence={},
         no_notes=code not in _codes_with_notes(db, a),
     )
 
@@ -2027,7 +2069,9 @@ def _apply_suggestions(
             # #1000 (Gene's ruling 2): a LIVE run does not assess a row with no
             # notes. The prompt scores such a row 0, which over a hand-typed
             # score is a wrong number nobody asked for; the row keeps what it
-            # had and is disclosed. A by-design skip, like `locked`.
+            # had and is disclosed. A by-design skip, like `locked`. Since P1
+            # the leave-out sends no blank-notes row, so no current payload
+            # reaches this branch: it is a ratchet against a loosened leave-out.
             dropped.append(
                 CsfDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
             )
@@ -2102,6 +2146,9 @@ class CsfAiRequest:
     rows: dict[str, CsfDimensionScore]
     locked_keys: frozenset[str]
     preview: AiPreviewPayload
+    #: The subcategory codes the leave-out kept out of the payload
+    #: (`_left_out_codes`): never sent, never scored by this run.
+    left_out: frozenset[str]
 
 
 def build_csf_ai_request(db: Session, svc: Service, client: Client) -> CsfAiRequest:
@@ -2135,6 +2182,20 @@ register_catalog_field(
 )
 
 
+def _left_out_codes(
+    rows: Mapping[str, CsfDimensionScore], answers: Mapping[str, CsfAnswer]
+) -> frozenset[str]:
+    """Option 1, code decides what is scored (#736 6201620727 item 1): the
+    subcategory codes left out of the csf_score payload BEFORE egress, in
+    every mode, so the preview is what egresses. A code with no answer row
+    has no notes (`_has_notes`, #1000's one statement of it).
+
+    P1 (Gene, #736 6205956728): EVERY subcategory whose current answer has no
+    notes is left out, a consultant-scored one included."""
+    codes = {r.subcategory_code for r in rows.values()}
+    return frozenset(c for c in codes if c not in answers or not _has_notes(answers[c].notes))
+
+
 def _catalog_tier(tier: str) -> str:
     """A tier as the vocabulary has it; KeyError for one it does not have."""
     if tier not in _VALID_TIERS:
@@ -2165,7 +2226,11 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
     rows = {
         f"{r.tier}|{r.subcategory_code}": r
         for r in catalog_rows(
-            db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+            db.execute(
+                select(CsfDimensionScore)
+                .where(CsfDimensionScore.assessment_id == a.id)
+                .options(undefer_group(EVIDENCE_STATUS_GROUP))
+            )
             .scalars()
             .all()
         )
@@ -2185,17 +2250,32 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
     answer_rows = catalog_rows(
         db.execute(select(CsfAnswer).where(CsfAnswer.assessment_id == a.id)).scalars().all()
     )
+    by_code = {ans.subcategory_code: ans for ans in answer_rows}
+    left_out = _left_out_codes(rows, by_code)
+    # Option 1: only the codes that are scored are sent, with their own
+    # answers; a left-out code's rating and evidence flag do not egress.
+    codes = sorted({r.subcategory_code for r in rows.values()} - left_out)
     answers = {
-        ans.subcategory_code: {
-            "maturity_tier": ans.maturity_tier,
-            "notes": ans.notes,
-            "has_evidence": ans.evidence_artifact_id is not None,
+        code: {
+            "maturity_tier": by_code[code].maturity_tier,
+            "notes": by_code[code].notes,
+            "has_evidence": by_code[code].evidence_artifact_id is not None,
         }
-        for ans in answer_rows
-        if ans.maturity_tier is not None or ans.notes or ans.evidence_artifact_id is not None
+        for code in codes
+        if code in by_code
+        and (
+            by_code[code].maturity_tier is not None
+            or by_code[code].notes
+            or by_code[code].evidence_artifact_id is not None
+        )
     }
+    _log.info(
+        "csf.run_ai.leave_out",
+        assessment_id=str(a.id),
+        sent_codes=len(codes),
+        left_out_codes=len(left_out),
+    )
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
-    codes = sorted({r.subcategory_code for r in rows.values()})
     return CsfAiRequest(
         assessment=a,
         rows=rows,
@@ -2220,6 +2300,7 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
             # measure script cannot differ.
             name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
+        left_out=left_out,
     )
 
 
@@ -2361,8 +2442,9 @@ def _omitted_keys(
     only) it asks for keys that are not rows. Such a key keeps no score, so
     it is not an omitted row. Approved on #736 (comment 6067815887).
 
-    An omitted row keeps its previous values -- zeros on a new Playbook, which
-    `score_tier` reads as Level 1 -- so it is counted and named. Not a
+    An omitted row keeps its previous values -- zeros on a new Playbook, so,
+    under the current rules, not scored (frozen rules read them as Ad hoc) --
+    so it is counted and named. Not a
     `dropped` reason: the W1 identity is over values the model SENT, and an
     omitted row sent none.
 
@@ -2376,7 +2458,9 @@ def _omitted_keys(
     - A locked row is left alone by design whether answered or not.
     - A row with no notes on a LIVE run (#1000) is not assessed whether
       answered or not, and no re-run can answer it, so it is counted as
-      `no_notes_count` rather than alerted here.
+      `no_notes_count` rather than alerted here. Since P1 no such row is
+      ever sent (the leave-out keeps every blank-notes code back), so this
+      subtraction is a ratchet no current payload reaches.
     - A row EDITED during the run is NOT subtracted: the model still sent
       nothing for it, so "got no answer from the AI" stays true (approved
       on #736, comment 6067815887).
@@ -2435,24 +2519,32 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # `llm_calls` row in its own session; a failed batch leaves its rows as
     # they were and is counted, and only a total failure fails the run, typed,
     # through `ai_call_boundary`.
-    batched = run_batches(
-        db,
-        llm,
-        req.preview.job_name,
-        _csf_batch_inputs(req.preview.inputs),
-        requested_by=ctx.requested_by,
-        service_id=ctx.service_id,
-        client_id=ctx.client_id,
-        client_org_name=req.preview.client_org_name,
-        name_hints=req.preview.name_hints,
-        deadline_at=ctx.deadline_at,
-        max_workers=_CSF_MAX_WORKERS,
-        deadline_message=(
-            "This run did not finish within its time limit, so it was stopped and "
-            "nothing from it was applied. Run it again; if it repeats, the AI "
-            "provider is answering too slowly for a full CSF run."
-        ),
-    )
+    #
+    # Option 1: when the leave-out kept every code out there is nothing to
+    # ask, so no call is made; `_csf_batch_inputs` would otherwise send the
+    # empty payload whole (its `or [inputs]`).
+    if not req.preview.inputs["subcategories"]:
+        _log.info("csf.run_ai.nothing_to_send", assessment_id=str(a.id))
+        batched = Batched(answers=[], inputs=[], total=0, failed=0)
+    else:
+        batched = run_batches(
+            db,
+            llm,
+            req.preview.job_name,
+            _csf_batch_inputs(req.preview.inputs),
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=req.preview.client_org_name,
+            name_hints=req.preview.name_hints,
+            deadline_at=ctx.deadline_at,
+            max_workers=_CSF_MAX_WORKERS,
+            deadline_message=(
+                "This run did not finish within its time limit, so it was stopped and "
+                "nothing from it was applied. Run it again; if it repeats, the AI "
+                "provider is answering too slowly for a full CSF run."
+            ),
+        )
     # The provider calls are over, in the batches' own sessions. Read the rows
     # as they are NOW -- an edit that landed while the model answered must be
     # seen -- and take the PRE-WRITE stamps: `onupdate=utcnow` stamps every row
@@ -2472,11 +2564,16 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # ever written from the batch that asked for it.
     scores, strays = _split_strays(batched.inputs, batched.answers, rows)
     # #1000: on a LIVE run, the rows whose answer had no notes IN WHAT WAS SENT
-    # -- the notes the model saw, not notes typed while it answered. Offline,
-    # none: fixture output still fills a blank Playbook (the demo and e2e).
+    # -- the notes the model saw, not notes typed while it answered. Since
+    # Option 1 the leave-out keeps a blank-notes code out of what is sent in
+    # every mode, so this is the second guard (a stray row naming one is
+    # dropped as a stray first). Offline, none: the fixture answers only what
+    # it was sent. Since P1 (every blank-notes code is left out) no current
+    # payload reaches this guard: every sent code has notes. It is a ratchet
+    # against a loosened leave-out, reached in tests by switching it off.
     #
-    # ZT is not touched: its twin (`routes/zt.py`, beside `protected_keys`)
-    # waits on #981's prompt.
+    # ZT's twin is its own leave-out: since #1084 a capability with blank
+    # notes is never sent (`routes/zt.py::_notes_blank`).
     live = provider_serves(llm) == "live"
     covered = _covered_keys(batched.inputs, rows, locked_keys)
     sent_answers = req.preview.inputs["answers"]
@@ -2509,10 +2606,17 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     received, applied, dropped = _apply_suggestions(
         data, rows, protected, edited, strays, no_notes=no_notes
     )
-    # #1000: the counts the panel and the client files state. None offline.
-    # The subcategory counts are over IN-SCOPE codes (see `CsfRunAiResponse`).
-    no_notes_count = len(covered & no_notes) if live else None
-    in_scope_codes = {rows[k].subcategory_code for k in covered if rows[k].in_scope}
+    # #1000: the counts the panel and the client files state. The subcategory
+    # counts are over IN-SCOPE codes (see `CsfRunAiResponse`).
+    #
+    # Option 1: the rows the leave-out kept out of the payload were never
+    # asked, so they are not in `covered`; they are counted here in every mode
+    # (C4), beside the live run's `no_notes` drops of rows that were sent.
+    left_out_keys = {
+        k for k, r in rows.items() if r.subcategory_code in req.left_out and k not in locked_keys
+    }
+    no_notes_count = len(left_out_keys) + (len(covered & no_notes) if live else 0)
+    in_scope_codes = {rows[k].subcategory_code for k in covered | left_out_keys if rows[k].in_scope}
     no_notes_subcategories_total = len(in_scope_codes) if live else None
     no_notes_subcategories = len(in_scope_codes - noted_codes) if live else None
 
@@ -2540,11 +2644,14 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # Leaving the row NULL after an AI run gives the same "fixture may refresh
     # its own output" behaviour with none of that. A consultant re-editing the
     # row restamps `consultant` and restores protection.
-    if not diffs:
+    if not diffs and batched.total:
         # FAIL LOUDLY: a run that parsed but changed nothing is the exact
         # symptom of the T0 schema-drift bug (a compliant response silently
         # discarded). Surface it — a re-run that suggests identical values also
         # trips this, which is still worth a "did this do anything?" signal.
+        # Not when nothing was sent (`batched.total` 0, CSF Option 1): no
+        # response came back to be discarded, and `csf.run_ai.nothing_to_send`
+        # already said why.
         _log.warning(
             "csf_run_ai_no_changes",
             service_id=str(ctx.service_id),
@@ -2630,7 +2737,8 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
             "batches_failed": batched.failed,
             # #836: a count, never the row keys (codes and counts only).
             "omitted_count": len(omitted_rows),
-            # #1000: rows a live run did not assess (no notes); None offline.
+            # #1000 and C4: rows the run did not assess (no notes), counted in
+            # every mode since CSF Option 1; None only on a result from before.
             "no_notes_count": no_notes_count,
         },
     )
@@ -2638,7 +2746,7 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     payload = CsfRunAiResponse(
         changed=changes,
         rows=[
-            _score_response(r)
+            _score_response(r, cap=csf_evidence_cap_applies(a))
             for r in sorted(rows.values(), key=lambda r: (r.tier, r.subcategory_code))
         ],
         suggestions_received=received,
@@ -2670,7 +2778,9 @@ def _last_live_run_no_notes_note(
     files say what that run did, and notes typed since did not change it.
 
     None, and the sentence is omitted, when no live run has completed (an
-    offline run assesses every row, so it has nothing to state), or when the
+    offline run's answers are fixture output, so the client files state no
+    count from one, though it counts its left-out rows since CSF Option 1),
+    or when the
     latest live run was stored before #1000 and carries no count: "not
     counted" is not zero, and a number we do not have is not printed."""
     run = db.execute(
@@ -2731,7 +2841,11 @@ def export_playbook(
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
     stored_rows = (
-        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        db.execute(
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == a.id)
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
+        )
         .scalars()
         .all()
     )
@@ -2749,6 +2863,9 @@ def export_playbook(
     # #1031: the roll-up rule the copy describes, and POA&M entries kept for
     # the record on codes that are not (or no longer) gaps.
     _scored_only = csf_scored_tiers_only(a)
+    # Options 1 and 3: the frozen cap's copy, and the C3 counts.
+    _evidence_cap = csf_evidence_cap_applies(a)
+    _coverage = csf_coverage(computed_rows)
     _kept = _kept_for_the_record(db, a, computed_rows, gap_actions)
     tier_profiles: dict[str, list] = {}
     for tier in ("high", "moderate", "low"):
@@ -2757,7 +2874,9 @@ def export_playbook(
             key=lambda r: r.subcategory_code,
         )
         if trows:
-            tier_profiles[tier] = [_score_response(r) for r in trows]
+            tier_profiles[tier] = [
+                _score_response(r, cap=csf_evidence_cap_applies(a)) for r in trows
+            ]
 
     from app.docx_export import DOCX_MIME
 
@@ -2828,6 +2947,8 @@ def export_playbook(
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
                 scored_only=_scored_only,
+                evidence_cap=_evidence_cap,
+                coverage=_coverage,
             ),
         ),
         (
@@ -2845,6 +2966,8 @@ def export_playbook(
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
                 scored_only=_scored_only,
+                evidence_cap=_evidence_cap,
+                coverage=_coverage,
             ),
         ),
         (
@@ -2862,6 +2985,8 @@ def export_playbook(
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
                 scored_only=_scored_only,
+                evidence_cap=_evidence_cap,
+                coverage=_coverage,
             ),
         ),
         (
@@ -2879,6 +3004,8 @@ def export_playbook(
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
                 scored_only=_scored_only,
+                evidence_cap=_evidence_cap,
+                coverage=_coverage,
             ),
         ),
         (
@@ -2896,6 +3023,8 @@ def export_playbook(
                 retired_note=retired_note,
                 no_notes_note=_no_notes_note,
                 scored_only=_scored_only,
+                evidence_cap=_evidence_cap,
+                coverage=_coverage,
             ),
         ),
     ]
@@ -3130,7 +3259,7 @@ def finalize_csf_deliverable(
     summary_line = (
         f"Overall maturity: {score.overall_maturity_label}. "
         f"{score.answered_subcategories}/{score.total_subcategories} subcategories scored; "
-        f"{gap.total_gap_count} gap(s) at target T{gap.target_tier}."
+        f"{gap.total_gap_count} gap(s) at target {tier_label(gap.target_tier)}."
     )
     # #783: `/results` shows this line to the client, so it says what the
     # document says when the target is a default.

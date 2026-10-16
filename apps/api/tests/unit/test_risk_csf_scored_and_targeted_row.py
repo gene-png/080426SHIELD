@@ -29,6 +29,7 @@ import pytest
 from app.ai.llm import LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch
+from tests._csf_notes import note_every_answer
 from tests.unit.test_risk_baseline_disclosure import _client_dashboard, _latest
 from tests.unit.test_risk_per_service import _export_texts
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
@@ -91,6 +92,8 @@ def _world(
         from app.routes.csf import _llm_dep as csf_llm_dep
 
         c.app.dependency_overrides[csf_llm_dep] = lambda: LLMClient(provider)
+        # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+        note_every_answer(sid)
         provider.register(
             "csf_score",
             csf_scores_by_batch(
@@ -237,8 +240,9 @@ def test_the_partial_case_raises_the_finding_and_states_the_count(
     # #474 E: `findings` is keyed by `source_id` (ruling 6).
     csf = [{"source_id": sid, **f} for sid, f in payload["findings"].items() if f["kind"] == "csf"]
     assert [f["source_id"] for f in csf] == [A], csf
-    assert csf[0]["label"].startswith(f"CSF {A}: level "), csf
-    assert csf[0]["label"].endswith(" of target 4"), csf
+    # Levels by name since #736 6216024281 item 3c (4 is Managed).
+    assert csf[0]["label"].startswith(f"CSF {A}: "), csf
+    assert csf[0]["label"].endswith(", below target Managed"), csf
     body = _latest(c, bearer, cid)
     assert _csf_target(body)["source"] == "playbook"
     inp = _csf_input(c, bearer, cid)

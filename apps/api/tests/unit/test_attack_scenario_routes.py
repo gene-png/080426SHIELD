@@ -610,7 +610,13 @@ def test_a_what_if_overtaken_by_a_newer_confirmed_assessment_is_stale_and_not_ru
     w = _world(app_parts)
     w.answer({})
     sid = w.create([EDR]).json()["id"]
-    v2 = w.c.post(f"/attack/services/{w.svc_id}/assessments", headers=w.h)
+    # #1123 item 1: the next version over released work is a revision.
+    v1 = w.c.get(f"/attack/services/{w.svc_id}/assessments/latest", headers=w.h).json()["id"]
+    v2 = w.c.post(
+        f"/attack/services/{w.svc_id}/assessments/{v1}/revisions",
+        headers=w.h,
+        json={"reason": "re-assessment"},
+    )
     assert v2.status_code == 201, v2.text
     r = w.c.post(f"/attack/assessments/{v2.json()['id']}/approve", headers=w.h)
     assert r.status_code == 200, r.text

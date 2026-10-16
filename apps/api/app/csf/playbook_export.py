@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import io
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from html import escape
 from typing import Any
 
+# W4 (#736 6205956728): every level cell by name, from the one map.
+from app.csf.levels import level_name as _level_name
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     XLSX_SHEET_TITLE,
@@ -167,6 +170,11 @@ def render_xlsx(
     gap_actions: Mapping[str, Any] | None = None,
     kept_rows: Sequence[Any] = (),
     scored_only: bool = False,
+    # Options 1 and 3: the frozen cap's copy unless the route says the
+    # assessment has none (`csf/rules.py::evidence_cap_applies`), and the C3
+    # counts (`csf/enterprise.py::coverage`). The route passes both.
+    evidence_cap: bool = True,
+    coverage: Any = None,
 ) -> bytes:
     """`enterprise_rows` are EnterpriseSubcategory-like; `tier_profiles` maps a
     tier name to its CsfDimensionScoreResponse-like rows (total/level computed).
@@ -233,7 +241,10 @@ def render_xlsx(
             "Mod",
             "Low",
             "Enterprise",
-            "Rule",
+            # C8: the evidence, grouped by tier. C13: the rule in words, here
+            # only (#736 6205956728).
+            "Evidence",
+            "Roll-up rule",
             "Target",
             "Gap",
             "Priority",
@@ -249,8 +260,9 @@ def render_xlsx(
                 _tier_cell(r, "high", ""),
                 _tier_cell(r, "moderate", ""),
                 _tier_cell(r, "low", ""),
-                f"L{r.enterprise_level}",
-                f"#{r.rollup_rule}",
+                _level(r.enterprise_level),
+                _evidence_cell(r),
+                _rule_words(r.rollup_rule),
                 _target_cell(r, ""),
                 _gap_cell(r),
                 r.priority or "",
@@ -276,7 +288,7 @@ def render_xlsx(
                 "Continuous Improvement",
                 "Total",
                 "Level",
-                "Evidence capped",
+                "Evidence capped" if evidence_cap else EVIDENCE_HEADER,
                 "In scope",
                 "Target",
             ],
@@ -292,10 +304,14 @@ def render_xlsx(
                     row.monitoring,
                     row.improvement,
                     row.total,
-                    f"L{row.level}",
-                    "Yes" if row.evidence_capped else "",
+                    _level(row.level),
+                    (
+                        ("Yes" if row.evidence_capped else "")
+                        if evidence_cap
+                        else EVIDENCE_WORDS[row.evidence_status]
+                    ),
                     "Yes" if row.in_scope else "No",
-                    f"L{row.target_level}" if row.target_level else "",
+                    _level_or(row.target_level, ""),
                 ],
             )
         _autofit(ts, from_row=2)
@@ -334,7 +350,7 @@ def render_xlsx(
             [
                 r.subcategory_code,
                 r.name,
-                f"L{r.enterprise_level}" if r.enterprise_level else "",
+                _level(r.enterprise_level),
                 _target_cell(r, ""),
                 (override or (r.priority or "")) if is_gap else KEPT_FOR_THE_RECORD,
                 getattr(act, "characterization", "") or "" if act else "",
@@ -357,12 +373,14 @@ def render_xlsx(
         safe_text_row(cover, [retired_note])  # #852: kept rows, not on any sheet below
     if no_notes_note:
         safe_text_row(cover, [no_notes_note])  # #1000: see `no_notes_note`
+    for line in coverage_lines(coverage, evidence_cap=evidence_cap):  # C3 and E3
+        safe_text_row(cover, [line])
     safe_text_row(cover, [])
     safe_text_row(
         cover,
         [
             "Levels are code-computed: total = sum of the five dimensions (0-10); "
-            "L1 0-2, L2 3-5, L3 6-7, L4 8-9, L5 10. "
+            "Ad hoc 0-2, Developing 3-5, Defined 6-7, Managed 8-9, Optimized 10. "
             + (
                 SCORED_METHOD
                 if scored_only
@@ -418,8 +436,8 @@ METHODOLOGY = [
     "Process, Implementation, Monitoring & Measurement, and Continuous "
     "Improvement — on a 0-2 scale.",
     "The five dimension scores sum to a 0-10 total, which maps to a maturity "
-    "level: Level 1 (0-2), Level 2 (3-5), Level 3 (6-7), Level 4 (8-9), Level "
-    "5 (10).",
+    "level: Ad hoc (0-2), Developing (3-5), Defined (6-7), Managed (8-9), "
+    "Optimized (10).",
     "An evidence cap applies: where producible evidence is absent, "
     "Implementation is held to at most 1 and the maturity level to at most 2.",
     "Scoring is performed per FIPS-199 impact tier (HIGH / MODERATE / LOW) as "
@@ -439,20 +457,102 @@ def _overridden(r: Any) -> bool:
     return bool(getattr(r, "priority_overridden", False))
 
 
-def _methodology(rows: Sequence[Any]) -> list[str]:
-    """METHODOLOGY plus the number of overridden priorities, stated even at
-    zero so "none" and "not stated" cannot look alike."""
+#: C8 (Gene, #736 6205956728, as written in 6204461502): METHODOLOGY for an
+#: assessment with no evidence cap (Option 3), built from METHODOLOGY so the
+#: sentences that do not change are written once.
+METHODOLOGY_UNCAPPED = [
+    METHODOLOGY[0],
+    METHODOLOGY[1],
+    "Evidence does not change a score or a level. Each tier records whether "
+    "evidence is on file, the level was confirmed in discussion, or neither. "
+    "Where neither applies, the level is reported as not validated by evidence, "
+    "and a Managed or Optimized level is reported as notional.",
+    "A subcategory with no notes and no recorded score is not scored: it is "
+    "reported with the client's self-rating as self-reported, not validated, "
+    "and is not part of any level, average or gap.",
+    METHODOLOGY[3],
+    "AI assists by drafting the dimension scores; all totals, levels, the "
+    "roll-up and gaps are computed deterministically in code. Each gap's "
+    "priority is computed in code too, and a consultant may override it; "
+    "where one did, this playbook uses the override.",
+]
+
+
+def _methodology(rows: Sequence[Any], *, evidence_cap: bool) -> list[str]:
+    """METHODOLOGY (the frozen cap's) or METHODOLOGY_UNCAPPED, plus the number
+    of overridden priorities, stated even at zero so "none" and "not stated"
+    cannot look alike."""
+    method = METHODOLOGY if evidence_cap else METHODOLOGY_UNCAPPED
     n = sum(1 for r in rows if _overridden(r))
-    return [*METHODOLOGY, f"Priorities set by consultant override in this playbook: {n}."]
+    return [*method, f"Priorities set by consultant override in this playbook: {n}."]
 
 
 def _fn_code(raw: Any) -> str:
     return str(raw or "").split(".")[-1].upper()
 
 
-def _overall_level(rows: Sequence[Any]) -> int:
-    levels = [r.enterprise_level for r in rows]
-    return round(sum(levels) / len(levels)) if levels else 0
+def _scored_levels(rows: Sequence[Any]) -> list[int]:
+    """The Enterprise levels of the scored subcategories. A subcategory with
+    no scored tier has none (Option 1, #1073) and is in no average."""
+    return [r.enterprise_level for r in rows if r.enterprise_level is not None]
+
+
+@dataclass(frozen=True)
+class _Average:
+    """An average level as the files print it (W3, #736 6205956728): `value`
+    orders functions, `text` is the number printed, `name` the level it falls
+    in."""
+
+    value: float
+    text: str
+    name: str
+
+
+def _frozen(rows: Sequence[Any]) -> bool:
+    """Whether these rows' assessment was approved before Options 1 and 3
+    (rules 1 or 2), from `EnterpriseSubcategory.evidence_cap`. One assessment
+    has one rule, so rows that disagree are a defect and raise."""
+    flags = {bool(getattr(r, "evidence_cap", False)) for r in rows}
+    if len(flags) > 1:
+        raise ValueError("enterprise rows from assessments under different rules")
+    return flags == {True}
+
+
+def _average(levels: Sequence[int], *, frozen: bool) -> _Average | None:
+    """None when nothing is scored: never a 0 that reads as a level.
+
+    W3 (#736 6205956728): one decimal, ROUNDED DOWN, named for the whole
+    level it falls in, e.g. 2.5 of 5 (Developing). Computed in integer tenths,
+    because a float 2.3 * 10 floors to 22. Under the frozen rules (`frozen`)
+    the average is what the deliverable already said: `round()` of the mean,
+    a whole level, so a released assessment's re-export keeps its numbers and
+    gains only the name."""
+    if not levels:
+        return None
+    if frozen:
+        whole = round(sum(levels) / len(levels))
+        return _Average(value=float(whole), text=str(whole), name=_level_name(whole))
+    tenths = (10 * sum(levels)) // len(levels)
+    return _Average(
+        value=tenths / 10,
+        text=f"{tenths // 10}.{tenths % 10}",
+        name=_level_name(tenths // 10),
+    )
+
+
+def _overall_level(rows: Sequence[Any]) -> _Average | None:
+    return _average(_scored_levels(rows), frozen=_frozen(rows))
+
+
+def _average_cell(avg: _Average | None) -> str:
+    """The scorecard's Maturity cell: `2.5 of 5 (Developing)`, or "Not
+    scored" for a function none of whose subcategories is scored."""
+    return NOT_SCORED if avg is None else f"{avg.text} of 5 ({avg.name})"
+
+
+def _shade_level(avg: _Average | None) -> int | None:
+    """The whole level a scorecard cell is shaded by (LEVEL_HEX)."""
+    return None if avg is None else int(avg.value)
 
 
 def _priority_counts(rows: Sequence[Any]) -> dict[str, int]:
@@ -465,7 +565,8 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
         code = _fn_code(r.function)
         g = groups.setdefault(code, {"levels": [], "gaps": 0, "targets": [], "rows": []})
         g["rows"].append(r)
-        g["levels"].append(r.enterprise_level)
+        if r.enterprise_level is not None:
+            g["levels"].append(r.enterprise_level)
         if r.gap:
             g["gaps"] += 1
         if r.target_level:
@@ -474,14 +575,15 @@ def _function_summary(rows: Sequence[Any]) -> list[dict[str, Any]]:
         c for c in groups if c not in FUNCTION_ORDER
     ]
     out: list[dict[str, Any]] = []
+    frozen = _frozen(rows)
     for code in ordered:
         g = groups[code]
-        avg = round(sum(g["levels"]) / len(g["levels"])) if g["levels"] else 0
+        avg = _average(g["levels"], frozen=frozen)
         out.append(
             {
                 "code": code,
                 "name": FUNCTION_NAMES.get(code, code or "Other"),
-                "count": len(g["levels"]),
+                "count": len(g["rows"]),
                 "avg": avg,
                 "gaps": g["gaps"],
                 "target": max(g["targets"]) if g["targets"] else None,
@@ -530,9 +632,13 @@ def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> li
     lines: list[str | None] = [
         f"This assessment covers {total} in-scope NIST CSF 2.0 "
         f"{'subcategory' if total == 1 else 'subcategories'}. "
-        f"Enterprise maturity, rolled up across the "
-        f"{'scored impact tiers in use' if scored_only else 'impact tiers in use'}, "
-        f"averages Level {overall} of 5.",
+        + (
+            f"Enterprise maturity, rolled up across the "
+            f"{'scored impact tiers in use' if scored_only else 'impact tiers in use'}, "
+            f"averages {overall.text} of 5 ({overall.name})."
+            if overall is not None
+            else NO_AVERAGE
+        ),
         shortfall,
         _unmeasured_line(unmeasured) if unmeasured else None,
     ]
@@ -541,14 +647,16 @@ def _overview_sentences(rows: Sequence[Any], *, scored_only: bool = False) -> li
     if unscored:
         lines.insert(1, unscored)
     out = [line for line in lines if line]
-    if len(fns) >= 2:
-        strongest = max(fns, key=lambda f: f["avg"])
-        weakest = min(fns, key=lambda f: f["avg"])
+    averaged = [f for f in fns if f["avg"] is not None]
+    if len(averaged) >= 2:
+        strongest = max(averaged, key=lambda f: f["avg"].value)
+        weakest = min(averaged, key=lambda f: f["avg"].value)
         if strongest["code"] != weakest["code"]:
             out.append(
                 f"The strongest function is {strongest['name']} "
-                f"(avg Level {strongest['avg']}); the area needing the most "
-                f"attention is {weakest['name']} (avg Level {weakest['avg']})."
+                f"(average {strongest['avg'].text} of 5, {strongest['avg'].name}); the "
+                f"area needing the most attention is {weakest['name']} (average "
+                f"{weakest['avg'].text} of 5, {weakest['avg'].name})."
             )
     return out
 
@@ -572,10 +680,108 @@ KEPT_FOR_THE_RECORD = "No longer a gap: kept for the record"
 NOT_MEASURED = "Not measured"
 
 
+#: C13 (#736 6205956728): the roll-up rule in words, in the XLSX only. The
+#: numbers are `csf/playbook.py::weighted_floor_rollup`'s.
+ROLLUP_RULE_WORDS: dict[int, str] = {
+    1: "All tiers equal",
+    2: "Core metric: lowest tier",
+    3: "High tier is lowest",
+    4: "Moderate tier is lowest",
+    5: "Only Low is lowest, supporting outcome: higher tier",
+    6: "Mixed: lowest tier",
+}
+
+
+def _level(level: int | None) -> str:
+    """A level cell by name; "Not scored" for a subcategory with no scored
+    tier (Option 1, #1073), never "LNone" or "L0"."""
+    return NOT_SCORED if level is None else _level_name(level)
+
+
+def _level_or(level: int | None, missing: str) -> str:
+    """A target or tier level by name, else `missing` (none set, not in use)."""
+    return _level_name(level) if level else missing
+
+
+def _rule_words(rule: int | None) -> str:
+    """C13's Roll-up rule cell; empty for a subcategory with no roll-up. An
+    unknown rule number raises rather than print nothing."""
+    if rule is None:
+        return ""
+    if rule not in ROLLUP_RULE_WORDS:
+        raise ValueError(f"CSF roll-up rule {rule!r} has no words")
+    return ROLLUP_RULE_WORDS[rule]
+
+
+def _evidence_cell(r: Any) -> str:
+    """C8: the Evidence cell, grouped by tier the way the panel's C12 groups
+    levels, e.g. "Evidence on file (High) · Neither (Moderate, Low)"; "Not
+    scored" for a subcategory with no scored tier."""
+    if r.enterprise_level is None:
+        return NOT_SCORED
+    groups: dict[str, list[str]] = {}
+    tier_evidence = getattr(r, "tier_evidence", None) or {}
+    for tier, label in (("high", "High"), ("moderate", "Moderate"), ("low", "Low")):
+        value = tier_evidence.get(tier)
+        if value is not None:
+            groups.setdefault(EVIDENCE_WORDS[value], []).append(label)
+    return " · ".join(f"{word} ({', '.join(tiers)})" for word, tiers in groups.items())
+
+
+# Approved by Gene (#736 6205956728), as written in 6204461502 with the
+# advisor's C3 and E3 changes (6205425122 item 3):
+def coverage_line(coverage: Any) -> str:
+    """C3, stated at zero too, with the fourth count the advisor recommended
+    for Q-A (#736 6205425122 item 3)."""
+    return (
+        f"{coverage.scored} of {coverage.total} subcategories scored; "
+        f"{coverage.notes_not_scored} with notes, not yet scored; "
+        f"{coverage.self_reported} self-reported only, not validated; "
+        f"{coverage.not_answered} not answered."
+    )
+
+
+def evidence_line(coverage: Any) -> str:
+    """E3, approved verbatim (#736 6205956728), stated at zero too."""
+    return (
+        f"Of the {coverage.scored} scored subcategories: "
+        f"{coverage.evidence_on_file} with evidence on file for every scored tier; "
+        f"{coverage.evidence_confirmed} confirmed in discussion (every scored tier on file "
+        "or confirmed, at least one confirmed); "
+        f"{coverage.evidence_mixed} mixed (at least one scored tier with neither, and at "
+        "least one with evidence on file or confirmed); "
+        f"{coverage.evidence_neither} with neither on any scored tier; "
+        f"{coverage.notional} at Managed or Optimized are notional."
+    )
+
+
+def coverage_lines(coverage: Any, *, evidence_cap: bool) -> list[str]:
+    """The C3 and E3 lines, and neither on an assessment approved before
+    Options 1 and 3 (`evidence_cap`): its unscored subcategories keep the
+    levels it was delivered with, so a count of them as "not scored" would
+    contradict its own tables, and under its cap "notional" describes nothing
+    (#1203 review)."""
+    if coverage is None or evidence_cap:
+        return []
+    return [coverage_line(coverage), evidence_line(coverage)]
+
+
+#: C8, the tier sheet's evidence column and values, when the cap does not apply.
+EVIDENCE_HEADER = "Evidence"
+EVIDENCE_WORDS = {
+    "on_file": "Evidence on file",
+    "confirmed_in_discussion": "Confirmed in discussion",
+    "neither": "Neither",
+}
+#: The summary sentence when no subcategory is scored. Approved as proposed
+#: (advisor, #736 6216024281 item 3c; the text is 6209105057's).
+NO_AVERAGE = "No subcategory has been scored yet, so there is no average level."
+
+
 def _target_cell(r: Any, missing: str) -> str:
     if getattr(r, "target_not_measured", False):
         return NOT_MEASURED
-    return f"L{r.target_level}" if r.target_level else missing
+    return _level_or(r.target_level, missing)
 
 
 def _unscored_count(rows: Sequence[Any]) -> int:
@@ -597,7 +803,7 @@ def _tier_cell(r: Any, tier: str, missing: str) -> Any:
     roll-up (#1031), else its level, else `missing` (not in use)."""
     if tier in (getattr(r, "unscored_tiers", ()) or ()):
         return NOT_SCORED
-    return r.tier_levels.get(tier, missing)
+    return _level_or(r.tier_levels.get(tier), missing)
 
 
 # #762: the third state. `routes/csf.py::_enterprise_subcategories` sets
@@ -655,7 +861,7 @@ def _scorecard_target(f: Mapping[str, Any]) -> str:
         # #1031: no measured target at all; "Not measured" when any row has a
         # target that was not measured, else "No target".
         return NOT_MEASURED if f.get("unmeasured", 0) else NO_TARGET
-    return f"L{f['target']}"
+    return _level(f["target"])
 
 
 def _scorecard_gaps(f: Mapping[str, Any]) -> str:
@@ -715,7 +921,7 @@ def _function_detail(frows: Sequence[Any]) -> str:
     """The per-function line of the full PDF and DOCX, built ONCE for both
     (#692 round 2): '1 subcategories … 1 gap(s)' read one as several."""
     n = len(frows)
-    avg = round(sum(r.enterprise_level for r in frows) / n)
+    avg = _average(_scored_levels(frows), frozen=_frozen(frows))
     fgaps = sum(1 for r in frows if r.gap)
     what = "subcategory" if n == 1 else "subcategories"
     # #765: the gap count is of the function's TARGETED rows only. #1031
@@ -737,7 +943,8 @@ def _function_detail(frows: Sequence[Any]) -> str:
         gaps = f"{fgaps} {_gaps(fgaps)} among the {measured} with a target · " + " · ".join(beside)
     else:
         gaps = f"{fgaps} {_gaps(fgaps)}"
-    return f"{n} {what} · average Level {avg} · {gaps}."
+    average = f"average {avg.text} of 5 ({avg.name})" if avg is not None else NOT_SCORED
+    return f"{n} {what} · {average} · {gaps}."
 
 
 def _next_steps(rows: Sequence[Any]) -> list[str]:
@@ -919,6 +1126,7 @@ def _cover(
     generated_on: str | None,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    coverage_lines: Sequence[str] = (),
 ) -> None:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, Spacer
@@ -940,6 +1148,8 @@ def _cover(
     if no_notes_note:
         # #1000: the cover, beside the other statements about the whole file.
         story.append(Paragraph(escape(no_notes_note), styles["body"]))
+    for line in coverage_lines:  # C3 and E3
+        story.append(Paragraph(escape(line), styles["body"]))
     if generated_on:
         story.append(Paragraph(f"Generated: {escape(generated_on)}", styles["body"]))
     story.append(Spacer(1, 0.3 * inch))
@@ -963,20 +1173,21 @@ def _scorecard(story: list[Any], styles: dict[str, Any], rows: Sequence[Any]) ->
         [
             f["name"],
             str(f["count"]),
-            f"L{f['avg']}",
+            _average_cell(f["avg"]),
             _scorecard_target(f),
             _scorecard_gaps(f),
         ]
         for f in fns
     ]
-    levels = [f["avg"] for f in fns]
+    levels = [_shade_level(f["avg"]) for f in fns]
     story.append(
         _pdf_table(
             ["Function", "Subcategories", "Maturity", "Target", "Gaps"],
             body,
             # Gaps is wider than its header since #765: "0 (2 no target)", and
             # a plain-string reportlab cell does not wrap.
-            [2.0 * inch, 1.3 * inch, 1.1 * inch, 1.0 * inch, 1.1 * inch],
+            # W3: the Maturity cell is "2.5 of 5 (Developing)" since #736 6205956728.
+            [1.6 * inch, 1.0 * inch, 1.6 * inch, 1.0 * inch, 1.3 * inch],
             color_col=2,
             color_levels=levels,
         )
@@ -998,8 +1209,8 @@ def _gap_table(
         [
             g.subcategory_code,
             Paragraph(escape(g.name), styles["cell"]),
-            f"L{g.enterprise_level}",
-            f"L{g.target_level}" if g.target_level else "—",
+            _level(g.enterprise_level),
+            _level_or(g.target_level, "—"),
             g.priority or "",
         ]
         for g in gaps
@@ -1071,6 +1282,11 @@ def render_exec_pdf(
     retired_note: str | None = None,
     no_notes_note: str | None = None,
     scored_only: bool = False,
+    # Options 1 and 3: the frozen cap's copy unless the route says the
+    # assessment has none (`csf/rules.py::evidence_cap_applies`), and the C3
+    # counts (`csf/enterprise.py::coverage`). The route passes both.
+    evidence_cap: bool = True,
+    coverage: Any = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1093,6 +1309,7 @@ def render_exec_pdf(
         ai_mode=ai_mode,
         retired_note=retired_note,
         no_notes_note=no_notes_note,
+        coverage_lines=coverage_lines(coverage, evidence_cap=evidence_cap),
     )
     story.append(PageBreak())
 
@@ -1119,6 +1336,11 @@ def render_full_pdf(
     retired_note: str | None = None,
     no_notes_note: str | None = None,
     scored_only: bool = False,
+    # Options 1 and 3: the frozen cap's copy unless the route says the
+    # assessment has none (`csf/rules.py::evidence_cap_applies`), and the C3
+    # counts (`csf/enterprise.py::coverage`). The route passes both.
+    evidence_cap: bool = True,
+    coverage: Any = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1142,6 +1364,7 @@ def render_full_pdf(
         ai_mode=ai_mode,
         retired_note=retired_note,
         no_notes_note=no_notes_note,
+        coverage_lines=coverage_lines(coverage, evidence_cap=evidence_cap),
     )
     story.append(PageBreak())
 
@@ -1165,7 +1388,7 @@ def render_full_pdf(
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("2. Methodology", styles["h2"]))
-    for line in _methodology(enterprise_rows):
+    for line in _methodology(enterprise_rows, evidence_cap=evidence_cap):
         story.append(Paragraph(line, styles["body"]))
 
     story.append(Paragraph("3. Maturity scorecard", styles["h2"]))
@@ -1193,7 +1416,7 @@ def render_full_pdf(
             [
                 r.subcategory_code,
                 Paragraph(escape(r.name), styles["cell"]),
-                f"L{r.enterprise_level}",
+                _level(r.enterprise_level),
                 _target_cell(r, "—"),
                 _gap_cell(r),
                 r.priority or "",
@@ -1228,25 +1451,24 @@ def render_full_pdf(
             _tier_cell(r, "high", "—"),
             _tier_cell(r, "moderate", "—"),
             _tier_cell(r, "low", "—"),
-            f"L{r.enterprise_level}",
-            f"#{r.rollup_rule}",
+            _level(r.enterprise_level),
             _gap_cell(r),
         ]
         for r in sorted(enterprise_rows, key=lambda r: r.subcategory_code)
     ]
+    # C13 (#736 6205956728): no Rule column; the XLSX keeps it, in words.
     story.append(
         _pdf_table(
-            ["Subcat", "Function", "H", "M", "L", "Ent.", "Rule", "Gap"],
+            ["Subcat", "Function", "H", "M", "L", "Ent.", "Gap"],
             appx,
             [
                 0.9 * inch,
-                1.2 * inch,
-                0.5 * inch,
-                0.5 * inch,
-                0.5 * inch,
-                0.6 * inch,
-                0.5 * inch,
-                0.5 * inch,
+                1.1 * inch,
+                0.8 * inch,
+                0.8 * inch,
+                0.8 * inch,
+                0.9 * inch,
+                0.7 * inch,
             ],
             color_col=5,
             color_levels=[
@@ -1283,6 +1505,7 @@ def _docx_cover(
     ai_mode: AiModeStamp,
     retired_note: str | None = None,
     no_notes_note: str | None = None,
+    coverage_lines: Sequence[str] = (),
 ) -> None:
     from app.docx_export import add_paragraphs, add_title, set_footer
 
@@ -1302,6 +1525,8 @@ def _docx_cover(
     if no_notes_note:
         # #1000: beside the kept-rows note, for the same reason.
         add_paragraphs(doc, [no_notes_note])
+    if coverage_lines:
+        add_paragraphs(doc, list(coverage_lines))  # C3 and E3
     meta = [
         f"Prepared for: {client_name}",
         f"Working profile version: {version}",
@@ -1330,14 +1555,14 @@ def _docx_scorecard(doc: Any, rows: Sequence[Any]) -> None:
             [
                 f["name"],
                 f["count"],
-                f"L{f['avg']}",
+                _average_cell(f["avg"]),
                 _scorecard_target(f),
                 _scorecard_gaps(f),
             ]
             for f in fns
         ],
     )
-    _shade_col(table, 2, [f["avg"] for f in fns])
+    _shade_col(table, 2, [_shade_level(f["avg"]) for f in fns])
 
 
 def render_exec_docx(
@@ -1347,6 +1572,11 @@ def render_exec_docx(
     retired_note: str | None = None,
     no_notes_note: str | None = None,
     scored_only: bool = False,
+    # Options 1 and 3: the frozen cap's copy unless the route says the
+    # assessment has none (`csf/rules.py::evidence_cap_applies`), and the C3
+    # counts (`csf/enterprise.py::coverage`). The route passes both.
+    evidence_cap: bool = True,
+    coverage: Any = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1365,6 +1595,7 @@ def render_exec_docx(
         ai_mode=ai_mode,
         retired_note=retired_note,
         no_notes_note=no_notes_note,
+        coverage_lines=coverage_lines(coverage, evidence_cap=evidence_cap),
     )
 
     add_heading(doc, "Executive summary")
@@ -1384,8 +1615,8 @@ def render_exec_docx(
                 [
                     g.subcategory_code,
                     g.name,
-                    f"L{g.enterprise_level}",
-                    f"L{g.target_level}" if g.target_level else "—",
+                    _level(g.enterprise_level),
+                    _level_or(g.target_level, "—"),
                     g.priority or "",
                 ]
                 for g in gaps
@@ -1407,6 +1638,11 @@ def render_full_docx(
     retired_note: str | None = None,
     no_notes_note: str | None = None,
     scored_only: bool = False,
+    # Options 1 and 3: the frozen cap's copy unless the route says the
+    # assessment has none (`csf/rules.py::evidence_cap_applies`), and the C3
+    # counts (`csf/enterprise.py::coverage`). The route passes both.
+    evidence_cap: bool = True,
+    coverage: Any = None,
     client_name: str,
     version: int,
     enterprise_rows: Sequence[Any],
@@ -1432,6 +1668,7 @@ def render_full_docx(
         ai_mode=ai_mode,
         retired_note=retired_note,
         no_notes_note=no_notes_note,
+        coverage_lines=coverage_lines(coverage, evidence_cap=evidence_cap),
     )
     add_page_break(doc)
 
@@ -1439,7 +1676,7 @@ def render_full_docx(
     add_paragraphs(doc, _overview_sentences(enterprise_rows, scored_only=scored_only))
 
     add_heading(doc, "2. Methodology")
-    add_paragraphs(doc, _methodology(enterprise_rows))
+    add_paragraphs(doc, _methodology(enterprise_rows, evidence_cap=evidence_cap))
 
     add_heading(doc, "3. Maturity scorecard")
     _docx_scorecard(doc, enterprise_rows)
@@ -1464,7 +1701,7 @@ def render_full_docx(
                 [
                     r.subcategory_code,
                     r.name,
-                    f"L{r.enterprise_level}",
+                    _level(r.enterprise_level),
                     _target_cell(r, "—"),
                     _gap_cell(r),
                     r.priority or "",
@@ -1488,8 +1725,8 @@ def render_full_docx(
                 [
                     g.subcategory_code,
                     g.name,
-                    f"L{g.enterprise_level}",
-                    f"L{g.target_level}" if g.target_level else "—",
+                    _level(g.enterprise_level),
+                    _level_or(g.target_level, "—"),
                     g.priority or "",
                 ]
                 for g in gaps
@@ -1504,7 +1741,8 @@ def render_full_docx(
     ordered_rows = sorted(enterprise_rows, key=lambda r: r.subcategory_code)
     table = add_table(
         doc,
-        ["Subcat", "Function", "High", "Mod", "Low", "Enterprise", "Rule", "Gap"],
+        # C13 (#736 6205956728): no Rule column; the XLSX keeps it, in words.
+        ["Subcat", "Function", "High", "Mod", "Low", "Enterprise", "Gap"],
         [
             [
                 r.subcategory_code,
@@ -1512,8 +1750,7 @@ def render_full_docx(
                 _tier_cell(r, "high", "—"),
                 _tier_cell(r, "moderate", "—"),
                 _tier_cell(r, "low", "—"),
-                f"L{r.enterprise_level}",
-                f"#{r.rollup_rule}",
+                _level(r.enterprise_level),
                 _gap_cell(r),
             ]
             for r in ordered_rows

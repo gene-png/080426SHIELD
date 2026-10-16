@@ -79,10 +79,12 @@ cited anything for this row", and those two must score differently.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.ai.redact import RedactionMode, redact_for_ai
+from app.ai.redact import RedactionMode
+from app.attack.shown_forms import shown_forms
 
 _PUNCT = re.compile(r"[^a-z0-9]+")
 _WS = re.compile(r"\s+")
@@ -139,6 +141,16 @@ class Resolution:
     rejected_reason: str | None = None
 
 
+def resolver_names(candidates: Iterable[Candidate]) -> list[str]:
+    """Every string a `CitationResolver` over `candidates` asks the shown form
+    of: each name, and each vendor that is not blank. ONE rule, so a caller
+    that asks ahead (`shown=`) asks for exactly these (#1080 review A1)."""
+    candidates = list(candidates)
+    return [c.name for c in candidates] + [
+        c.vendor for c in candidates if c.vendor and c.vendor.strip()
+    ]
+
+
 class CitationResolver:
     """Maps a cited string to a canonical capability name, or refuses.
 
@@ -152,6 +164,7 @@ class CitationResolver:
         client_org_name: str | None = None,
         redaction_mode: RedactionMode = "strict",
         name_hints: tuple[str, ...] = (),
+        shown: Mapping[str, str] | None = None,
     ) -> None:
         """`client_org_name` closes #33 finding 5, and it is not cosmetic.
 
@@ -178,6 +191,11 @@ class CitationResolver:
         Uniqueness still governs. Two capabilities that redact to the same string
         are ambiguous and are refused, exactly as two that collide on any other
         key are.
+
+        `shown` (#1080): the shown forms a caller already asked for, with THIS
+        build's mode, client name and hints (`shown_forms`), so a caller that
+        builds several resolvers over one set of names asks once. Names it
+        lacks are asked here, in one call.
         """
         self._candidates = list(candidates)
         self._client_org_name = (client_org_name or "").strip()
@@ -199,6 +217,18 @@ class CitationResolver:
         #: Every string the two NAME tiers index, as written: each name and,
         #: where redaction changes it, the form the model is shown.
         self._citable: list[str] = []
+        #: #1080: every name and vendor's shown form, asked ONCE for the whole
+        #: build (`shown_forms`: through the redaction child when the build
+        #: carries name hints), never once per name in this process.
+        needed = resolver_names(candidates)
+        given = dict(shown or {})
+        missing = [n for n in needed if n not in given]
+        self._shown = given | shown_forms(
+            missing,
+            mode=self._redaction_mode,
+            client_org_name=self._client_org_name or None,
+            name_hints=self._name_hints,
+        )
         for c in candidates:
             self._by_norm.setdefault(_norm(c.name), set()).add(c.name)
             self._by_fold.setdefault(_fold(c.name), set()).add(c.name)
@@ -233,8 +263,9 @@ class CitationResolver:
     def _redacted_form(self, name: str) -> str | None:
         """`name` as the model sees it, or None when redaction changes nothing.
 
-        Calls `redact_for_ai` -- the WHOLE pipeline, with the same mode and name
-        hints the egress path uses -- rather than the org-name rule alone.
+        Asks the egress's WHOLE redactor (`redact_for_ai`, through `shown_forms`
+        since #1080), with the same mode and name hints the egress path uses --
+        rather than the org-name rule alone.
 
         The first version called `redact_org_name` directly while its docstring
         claimed to use "the SAME redactor the egress path uses". That was false
@@ -265,18 +296,14 @@ class CitationResolver:
         `Unit 42` egress as `[ADDRESS]` with no alias indexed.
         The condition for aliasing is "did the redactor change this string", and
         the only way to know that is to ask it.
+
+        #1080: the answer was asked for the whole build in `__init__`
+        (`shown_forms`, D-111), so this reads it. The test is now "the shown
+        form differs" alone: a batched call returns no per-name counts, and a
+        string the redactor changed IS the string the model is shown.
         """
-        # #552: still in-process. One tool name, never a payload, and nothing
-        # here egresses (the egress redacts in a child, ai/isolation.py). But
-        # it holds the api's GIL, once per name against every hint: a measured
-        # residual, D-111, recorded on #1124 and to be moved by #1080.
-        redacted, counts = redact_for_ai(
-            name,
-            mode=self._redaction_mode,
-            client_org_name=self._client_org_name or None,
-            name_hints=self._name_hints,
-        )
-        return redacted if counts and redacted != name else None
+        redacted = self._shown[name]
+        return redacted if redacted != name else None
 
     def citable_forms(self) -> tuple[str, ...]:
         """Every string `named_by` can match, as written: each candidate's

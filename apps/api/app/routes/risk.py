@@ -45,6 +45,7 @@ from app.attack.rules import parents_computed, statuses_computed
 from app.audit import audit
 from app.csf.catalog import subcategory_by_code
 from app.csf.enterprise import enterprise_subcategories as csf_enterprise_subcategories
+from app.csf.levels import level_name as csf_level_name
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.db.session import get_db
 from app.dependencies import require_role
@@ -1403,9 +1404,11 @@ def _gather_findings(
                         "source": "questionnaire_response",
                         "source_id": e.subcategory_code,
                         "kind": "csf",
+                        # Levels by name (advisor, #736 6216024281 item 3c):
+                        # "CSF GV.OC-01: Developing, below target Defined".
                         "label": (
-                            f"CSF {e.subcategory_code}: level {e.enterprise_level} "
-                            f"of target {e.target_level}"
+                            f"CSF {e.subcategory_code}: {csf_level_name(e.enterprise_level)}, "
+                            f"below target {csf_level_name(e.target_level)}"
                         ),
                         "evidence": _csf_evidence(e, in_scope_rows[e.subcategory_code]),
                     }
@@ -1585,22 +1588,29 @@ def _attack_evidence(row: object, *, computed: bool) -> dict:
 
 
 def _csf_evidence(e: object, tier_rows: dict[str, CsfDimensionScore]) -> dict:
-    """The approved `csf` evidence (#474 E, rulings 2, 3 and 6), from the
-    Playbook roll-up `_gather_findings` already called. `evidence_capped` is
-    `tier_evidence_capped`, true only where the cap CHANGED that tier's result
-    (`csf/playbook.py::score_tier`), never "has no evidence". `tier_notes` are
-    the in-scope rows' own, keyed like `tier_levels`; a tier the roll-up scored
-    has a row by construction, so a missing one raises."""
-    return {
+    """The approved `csf` evidence (#474 E, rulings 2, 3 and 6; risk_synthesize
+    v5, #736 6205956728), from the Playbook roll-up `_gather_findings` already
+    called. `evidence` is each rolled-up tier's three-valued `evidence_status`
+    (migration 0075). `evidence_capped` is sent ONLY for an assessment approved
+    before Options 1 and 3 (`e.evidence_cap`), the one kind whose levels the
+    former cap can still have lowered: `tier_evidence_capped`, true only where
+    the cap CHANGED that tier's result (`csf/playbook.py::score_tier`), never
+    "has no evidence". `tier_notes` are the in-scope rows' own, keyed like
+    `tier_levels`; a tier the roll-up scored has a row by construction, so a
+    missing one raises."""
+    out: dict = {
         "enterprise_level": e.enterprise_level,
         "target_level": e.target_level,
         "tier_levels": dict(e.tier_levels),
-        "evidence_capped": {t: e.tier_evidence_capped[t] for t in e.tier_levels},
-        "tier_notes": {
-            t: {"rationale": tier_rows[t].rationale, "what_we_found": tier_rows[t].what_we_found}
-            for t in e.tier_levels
-        },
+        "evidence": {t: e.tier_evidence[t] for t in e.tier_levels},
     }
+    if e.evidence_cap:
+        out["evidence_capped"] = {t: e.tier_evidence_capped[t] for t in e.tier_levels}
+    out["tier_notes"] = {
+        t: {"rationale": tier_rows[t].rationale, "what_we_found": tier_rows[t].what_we_found}
+        for t in e.tier_levels
+    }
+    return out
 
 
 def _record_drafted_from(snap: _InputSnapshot, findings: list[dict], src: _Source) -> None:

@@ -25,6 +25,7 @@ from openpyxl import load_workbook
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
 from app.models.csf_profile import CsfDimensionScore, CsfGapAction
 from tests._ai_mode import docx_text, env_sessions, pdf_text
+from tests._csf_notes import note_every_answer
 from tests.unit.test_csf_dashboard import (  # noqa: F401  (fixture)
     _register,
     app_client,
@@ -351,6 +352,10 @@ def test_the_ai_payload_carries_no_kept_row(app_client) -> None:  # noqa: F811
     assert r.status_code == 200, r.text
     _keep_answer(a["id"], tier=1)
     _keep_profile_rows(a["id"], scored_tiers=("high",))
+    # CSF Option 1 (D-114): only answers with notes are sent. Every answer
+    # gets them AFTER the kept row is written, the kept one included, so the
+    # kept row stays out for being kept, never for having no notes.
+    note_every_answer(svc_id)
     prev = c.post("/ai/preview", json={"service_id": svc_id}, headers=h)
     assert prev.status_code == 200, prev.text
     inputs = prev.json()["payload"]
