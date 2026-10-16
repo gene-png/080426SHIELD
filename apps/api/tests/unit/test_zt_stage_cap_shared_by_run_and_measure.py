@@ -25,7 +25,7 @@ from scripts.measure_ai_consistency import measure_zt
 from app.ai.llm import LLMClient, LLMResponse
 from app.routes.zt import _validated_stage
 from tests._ai_runs import zt_run_ai
-from tests._zt_notes import noted_assessment
+from tests._zt_notes import note_rows, noted_assessment
 from tests.unit.test_measure_ai_consistency import world  # noqa: F401  (fixture)
 from tests.unit.test_zt_run_ai import _admin_service, app_client  # noqa: F401  (fixture)
 
@@ -89,6 +89,7 @@ def _dod_assessment(c: TestClient) -> None:
     assert a.status_code in (200, 201), a.text
     codes = {r["capability_code"] for r in a.json()["answers"]}
     assert {NO_ADVANCED, HAS_ADVANCED} <= codes
+    note_rows(c, h, a.json()["answers"])  # sent, and measured, only with notes (#1084)
 
 
 def test_measure_zt_refuses_what_the_run_refuses(world) -> None:  # noqa: F811
