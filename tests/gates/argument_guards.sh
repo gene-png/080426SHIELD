@@ -77,7 +77,7 @@ for f in "$ROOT"/tests/gates/*.sh; do
   [ -f "$f" ] || continue
   SUBJECTS="$SUBJECTS $f"
 done
-for named in scripts/dev-web.sh scripts/web-install-if-stale.sh scripts/verify-in-worktree.sh; do
+for named in scripts/dev-web.sh scripts/web-install-if-stale.sh scripts/verify-in-worktree.sh scripts/unit-in-worktree.sh; do
   if [ ! -f "$ROOT/$named" ]; then
     echo "FAIL: could not look -- $named is missing. This gate names it" >&2
     echo "      explicitly, so its absence is a moved file rather than a" >&2
