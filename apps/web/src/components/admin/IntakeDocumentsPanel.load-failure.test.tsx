@@ -110,12 +110,12 @@ describe("IntakeDocumentsPanel: the document list failed to load (#1223)", () =>
 
   it("shows a TYPED server sentence (D-016 {reason, message})", async () => {
     respond(
-      409,
+      401,
       JSON.stringify({
         error: {
-          code: 409,
-          reason: "client_archived",
-          message: "This client has been archived.",
+          code: 401,
+          reason: "credentials_changed",
+          message: "This session has ended. Sign in again.",
         },
       }),
     );
@@ -123,7 +123,7 @@ describe("IntakeDocumentsPanel: the document list failed to load (#1223)", () =>
       <IntakeDocumentsPanel onExtract={() => undefined} extracting={false} />,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "This client has been archived.",
+      "This session has ended. Sign in again.",
     );
   });
 });
