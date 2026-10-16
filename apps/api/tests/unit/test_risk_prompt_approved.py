@@ -110,6 +110,8 @@ def test_the_label_example_stays_the_attack_one() -> None:
     prompt = _prompt()
     assert 'label` (for example "ATT&CK T1003: gap")' in prompt
     assert "level 2 of target 3" not in prompt
+    # The label's wording since #736 6216024281 item 3c.
+    assert "below target" not in prompt
 
 
 def test_the_provenance_sentence_is_ruling_4() -> None:
