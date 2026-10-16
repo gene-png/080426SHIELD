@@ -88,3 +88,14 @@ describe("POST /api/proxy/artifacts files under the workspace's client (#1262)",
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /api/proxy/artifacts keeps the cookie (review of f9975caa)", () => {
+  it("forwards the active-client cookie as X-Client-Id, as before", async () => {
+    // A guard: this branch changes only the upload; the list's cookie read
+    // must survive the shared helper's rewrite.
+    const { GET } = await import("./artifacts/route");
+    const res = await GET();
+    expect(res.status).toBe(200);
+    expect(sent()).toEqual({ path: "/artifacts", clientId: COOKIE_CLIENT });
+  });
+});
