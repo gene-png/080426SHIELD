@@ -1,10 +1,7 @@
 /**
  * #1173: the warning a client sees on "Submit for review" while answers are
- * still blank.
- *
- * PLACEHOLDER COPY, pending Gene's verbatim approval. These are the strings
- * proposed on #736 (6205190541); the approved text replaces them here, in one
- * commit, and the tests that quote them move with it.
+ * still blank. Approved verbatim on #736 (6206818759 item 4), the jump button
+ * naming the function or pillar rather than its code.
  */
 
 export type BlankAnswersNoun = "outcomes" | "capabilities";
@@ -17,8 +14,8 @@ export function blankAnswersMessage(
   return `${blank} of ${total} ${noun} have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.`;
 }
 
-export function goToAreaLabel(code: string, blank: number): string {
-  return `Go to ${code} (${blank} blank)`;
+export function goToAreaLabel(name: string, blank: number): string {
+  return `Go to ${name} (${blank} blank)`;
 }
 
 export const SUBMIT_ANYWAY = "Submit anyway";

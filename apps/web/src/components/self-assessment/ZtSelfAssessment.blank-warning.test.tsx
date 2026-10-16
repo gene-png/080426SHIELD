@@ -14,9 +14,8 @@ import { ZtSelfAssessment } from "./ZtSelfAssessment";
  * has one, and "Submit anyway". A complete assessment submits straight
  * through. ZT's existing gate (an answer in every pillar) is unchanged.
  *
- * Expected copy is quoted from the strings proposed on #736 (6205190541), not
- * imported from the component's copy module. They are placeholders until Gene
- * approves them verbatim; the approved text replaces these literals.
+ * Expected copy is quoted from the approval on #736 (6206818759 item 4), not
+ * imported from the component's copy module.
  */
 
 vi.mock("@/lib/zt/client", () => ({
@@ -144,9 +143,11 @@ describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
   it("offers a button to each pillar with a blank, and none to a complete one", async () => {
     await mountWith(assessment(ONE_BLANK));
     expect(
-      screen.getByRole("button", { name: "Go to DV (1 blank)" }),
+      screen.getByRole("button", { name: "Go to Devices (1 blank)" }),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: /^Go to ID/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^Go to Identity/ }),
+    ).toBeNull();
   });
 
   it("goes to the pillar and scrolls it into view", async () => {
@@ -154,7 +155,7 @@ describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
     expect(screen.getByText("Pillar 1 of 2")).toBeVisible();
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "Go to DV (1 blank)" }),
+        screen.getByRole("button", { name: "Go to Devices (1 blank)" }),
       );
     });
     expect(screen.getByText("Pillar 2 of 2")).toBeVisible();

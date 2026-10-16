@@ -321,6 +321,7 @@ export function CsfSelfAssessment({
   // "answered" count above, so the two always add up to `total`.
   const blankAreas = filteredCatalog.functions.map((fn) => ({
     code: fn.code,
+    name: fn.name,
     blank: fn.categories
       .flatMap((c) => c.subcategories)
       .filter((s) => (answersByCode[s.code]?.maturity_tier ?? null) === null)

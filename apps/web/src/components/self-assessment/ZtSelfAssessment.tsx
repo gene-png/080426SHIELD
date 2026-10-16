@@ -641,6 +641,7 @@ export function ZtSelfAssessment({
         <BlankAnswersWarning
           areas={pillarStats.map((s) => ({
             code: s.code,
+            name: s.name,
             blank: s.total - s.answered,
           }))}
           total={capabilityTotal}

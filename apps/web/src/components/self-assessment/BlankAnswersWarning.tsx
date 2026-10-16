@@ -12,6 +12,7 @@ import type { JSX } from "react";
 
 export interface BlankArea {
   code: string;
+  name: string;
   blank: number;
 }
 
@@ -59,7 +60,7 @@ export function BlankAnswersWarning({
             onClick={() => onGoTo(a.code)}
             className="rounded-md border border-border bg-surface-card px-3 py-1.5 text-sm font-medium text-ink-secondary hover:border-border-strong hover:text-ink-primary"
           >
-            {goToAreaLabel(a.code, a.blank)}
+            {goToAreaLabel(a.name, a.blank)}
           </button>
         ))}
         <button

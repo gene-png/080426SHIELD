@@ -14,9 +14,8 @@ import { CsfSelfAssessment } from "./CsfSelfAssessment";
  * that has one, and "Submit anyway". A complete assessment submits straight
  * through.
  *
- * Expected copy is quoted from the strings proposed on #736 (6205190541), not
- * imported from the component's copy module. They are placeholders until Gene
- * approves them verbatim; the approved text replaces these literals.
+ * Expected copy is quoted from the approval on #736 (6206818759 item 4), not
+ * imported from the component's copy module.
  */
 
 vi.mock("@/lib/csf/client", () => ({
@@ -172,9 +171,9 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
       }),
     );
     expect(
-      screen.getByRole("button", { name: "Go to ID (1 blank)" }),
+      screen.getByRole("button", { name: "Go to Identify (1 blank)" }),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: /^Go to GV/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Go to Govern/ })).toBeNull();
   });
 
   it("goes to the function: selects its tab and scrolls the questionnaire into view", async () => {
@@ -185,7 +184,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     );
     await act(async () => {
       fireEvent.click(
-        screen.getByRole("button", { name: "Go to ID (1 blank)" }),
+        screen.getByRole("button", { name: "Go to Identify (1 blank)" }),
       );
     });
     expect(screen.getByRole("tab", { name: /^ID/ })).toHaveAttribute(
@@ -231,7 +230,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Go to GV (2 blank)" }),
+      screen.getByRole("button", { name: "Go to Govern (2 blank)" }),
     ).toBeVisible();
   });
 });
