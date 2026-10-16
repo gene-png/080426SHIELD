@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from tests._ai_runs import run_ai_expecting_failure, zt_run_ai
+from tests._zt_notes import NOTE, noted_assessment
 
 
 @pytest.fixture()
@@ -72,7 +73,7 @@ def _admin_service(c: TestClient, kind: str) -> tuple[dict, str, str]:
 def test_zt_run_ai_applies_current_and_target(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     provider.register_static(
@@ -129,7 +130,7 @@ def test_zt_run_ai_applies_current_and_target(app_client) -> None:
 def test_zt_run_ai_clamps_out_of_range_for_dod(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_dod")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
     code = "DOD.USR.02"  # 1.2 has Advanced activities, so 3 is reachable (#839 F1)
     # DoD max stage is 3; a suggested 4 is out of range and must be ignored.
     provider.register_static(
@@ -190,7 +191,7 @@ def test_gap_endpoint_respects_per_capability_target_and_returns_roadmap(app_cli
 def test_zt_run_ai_skips_locked(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     ans = a.json()["answers"][0]
     code, ans_id = ans["capability_code"], ans["id"]
     c.patch(f"/zt/answers/{ans_id}", headers=h, json={"locked": True})
@@ -217,10 +218,11 @@ def test_zt_run_ai_skips_locked(app_client) -> None:
 
 def _submitted_self_assessment(c, h, svc_id: str) -> tuple[str, str]:
     """Answer one capability as the client and submit. Returns (code, answer id)."""
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     ans = a.json()["answers"][0]
     code, ans_id = ans["capability_code"], ans["id"]
-    c.patch(f"/zt/answers/{ans_id}", headers=h, json={"maturity_stage": 3})
+    # #1084: a note, so the run asks about it; a blank row is never sent.
+    c.patch(f"/zt/answers/{ans_id}", headers=h, json={"maturity_stage": 3, "notes": NOTE})
     submitted = c.post(
         f"/zt/services/{svc_id}/self-assessment/submit",
         headers=h,
@@ -445,7 +447,7 @@ def test_live_run_ai_drops_an_out_of_range_value_but_applies_its_sibling(
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
     sibling = a.json()["answers"][1]["capability_code"]
 
@@ -487,7 +489,7 @@ def test_live_run_ai_does_stamp_ai_provenance_when_it_changes_a_stage(
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
@@ -532,7 +534,7 @@ def test_a_malformed_response_does_not_500_and_changes_nothing(app_client, monke
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     monkeypatch.setattr(type(provider), "name", "anthropic", raising=False)
@@ -622,7 +624,7 @@ def test_zt_run_ai_boolean_is_not_a_stage_of_one(app_client) -> None:
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": True}])
@@ -639,7 +641,7 @@ def test_zt_run_ai_in_range_float_is_refused_not_silently_truncated(app_client) 
     """`int(1.9)` is 1 - a value the model never sent, reported as applied."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 1.9}])
@@ -659,7 +661,7 @@ def test_zt_run_ai_out_of_range_float_reports_range_not_a_fraction(app_client) -
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 4.9}])
@@ -675,7 +677,7 @@ def test_zt_run_ai_whole_number_written_as_text_or_float_is_applied(app_client) 
     defect facing the other way."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": "2"}])
@@ -694,7 +696,7 @@ def test_zt_run_ai_unknown_field_is_counted_not_silently_ignored(app_client) -> 
     """The loop reads only code/current/target, so a drifted key vanishes."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": 2, "maturity_level": 3}])
@@ -709,7 +711,7 @@ def test_zt_run_ai_unknown_field_is_counted_not_silently_ignored(app_client) -> 
 def test_zt_run_ai_unknown_code_is_itemized_verbatim(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": "NOPE-1", "current": 2}])
     d = _only_dropped(body)
@@ -723,7 +725,7 @@ def test_zt_run_ai_unknown_code_is_itemized_verbatim(app_client) -> None:
 def test_zt_run_ai_unreadable_entry_counts_the_full_row_width(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
 
     body = _run_ai_caps(c, provider, h, svc_id, ["not-a-dict"])
     d = _only_dropped(body)
@@ -738,7 +740,7 @@ def test_zt_run_ai_locked_row_is_a_visible_reason_not_a_silent_skip(app_client) 
     """`if row.locked or code in protected: continue` records nothing today."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     ans = a.json()["answers"][0]
     code, ans_id = ans["capability_code"], ans["id"]
     c.patch(f"/zt/answers/{ans_id}", headers=h, json={"locked": True})
@@ -755,7 +757,7 @@ def test_zt_run_ai_locked_row_is_a_visible_reason_not_a_silent_skip(app_client) 
 def test_zt_run_ai_superseded_value_is_not_counted_as_applied(app_client) -> None:
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(
@@ -785,7 +787,7 @@ def test_zt_run_ai_audit_row_carries_counts_but_no_model_content(app_client) -> 
 
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     # THREE values behind ONE unrecognized key, so `dropped_by_reason` cannot
@@ -826,7 +828,7 @@ def test_zt_run_ai_logs_carry_no_key_and_no_model_text(app_client, capsys) -> No
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     capsys.readouterr()
@@ -860,7 +862,7 @@ def test_zt_run_ai_container_under_a_recognized_key_is_counted_whole(app_client)
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(
@@ -881,7 +883,7 @@ def test_zt_run_ai_containers_on_both_fields_lose_nothing(app_client) -> None:
     """The same leak, widened: four values behind two recognized names."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(
@@ -923,7 +925,7 @@ def test_zt_run_ai_entry_naming_a_capability_with_no_values_is_not_silent(app_cl
     not zero — a zero satisfies the invariant vacuously."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code}])
@@ -941,7 +943,7 @@ def test_zt_run_ai_unknown_field_name_is_bounded(app_client) -> None:
     so a hostile key name reached the response, and the admin DOM, unbounded."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "x" * 5000: 2, "current": 1}])
@@ -966,7 +968,7 @@ def test_zt_run_ai_unresolvable_row_is_named_even_when_it_charges_nothing(app_cl
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": "NOPE-1", "maturity_level": 2}])
     assert {d["reason"] for d in body["dropped"]} == {"unknown_field", "unknown_key"}, body
@@ -982,7 +984,7 @@ def test_zt_run_ai_locked_row_still_reports_field_drift(app_client) -> None:
     """Drift is itemized BEFORE the lock check, so a locked row cannot hide it."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     ans = a.json()["answers"][0]
     code, ans_id = ans["capability_code"], ans["id"]
     c.patch(f"/zt/answers/{ans_id}", headers=h, json={"locked": True})
@@ -1005,7 +1007,7 @@ def test_zt_run_ai_absurdly_large_integer_is_itemized_not_a_500(app_client) -> N
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": code, "current": int("9" * 400)}])
@@ -1021,7 +1023,7 @@ def test_zt_run_ai_two_level_wrapper_counts_leaves_not_the_wrapper(app_client) -
     """Counting the container's own `len` stops one level down and hides the rest."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     body = _run_ai_caps(
@@ -1045,7 +1047,7 @@ def test_zt_run_ai_same_field_on_two_capabilities_is_not_a_supersede(app_client)
     make the second capability look like an overwrite of the first."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     answers = a.json()["answers"]
     first, second = answers[0]["capability_code"], answers[1]["capability_code"]
 
@@ -1095,7 +1097,7 @@ def test_zt_run_ai_unencodable_code_does_not_500_after_committing(app_client) ->
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    a = noted_assessment(c, h, svc_id)
     code = a.json()["answers"][0]["capability_code"]
 
     lone_surrogate = "\\u" + "d800"  # two chars in THIS file, one escape in JSON
@@ -1132,7 +1134,7 @@ def test_zt_run_ai_control_characters_in_a_code_are_escaped(app_client) -> None:
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
 
     bidi = "\\u" + "202e"
     provider.register_static(
@@ -1156,7 +1158,7 @@ def test_zt_run_ai_ordinary_code_is_not_mangled_by_the_escaping(app_client) -> N
     """
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_cisa")
-    c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    noted_assessment(c, h, svc_id)
 
     body = _run_ai_caps(c, provider, h, svc_id, [{"code": "CISA.NOPE-1", "current": 2}])
     d = _only_dropped(body)
