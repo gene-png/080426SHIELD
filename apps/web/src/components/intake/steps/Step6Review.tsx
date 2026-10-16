@@ -17,7 +17,7 @@ import {
 import type { JSX } from "react";
 import { formatDateOnly, formatInstantUtc } from "@/lib/dates";
 import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
-import { readFailureReason } from "@/lib/describe-save-error";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 import { isNamedOrg } from "@/lib/org-name";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
@@ -108,7 +108,7 @@ export function Step6Review({
         // Non-blocking: the list is confirmation, not a submit gate. But say
         // that it failed, as Step 5 does for the same list: the read rule (RR-2), then its copy.
         if (!cancelled) {
-          setListError(readFailureReason(err) ?? "Failed to load uploads.");
+          setListError(typedReadFailure(err) ?? "Failed to load uploads.");
         }
       });
     return () => {

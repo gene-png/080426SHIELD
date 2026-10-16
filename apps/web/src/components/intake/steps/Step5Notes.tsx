@@ -19,7 +19,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
-import { readFailureReason } from "@/lib/describe-save-error";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 
 export interface Step5NotesProps {
   state: IntakeStateResponse;
@@ -81,7 +81,7 @@ export function Step5Notes({
     } catch (err) {
       // A READ: #550's "couldn't confirm" sentence is for a write, so it is
       // withheld here (RR-2, #1223), as on the review step.
-      setListError(readFailureReason(err) ?? "Failed to load uploads.");
+      setListError(typedReadFailure(err) ?? "Failed to load uploads.");
     }
   }, []);
 
