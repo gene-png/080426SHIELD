@@ -18,17 +18,24 @@ from sqlalchemy.pool import Pool
 
 @contextmanager
 def pool_count() -> Iterator[list[int]]:
-    """Connections checked out since entry, live, as `[n]`."""
+    """Connections checked out since entry and not yet returned, live, as
+    `[n]`. Tracked per connection, so a connection checked out BEFORE entry
+    and returned during the block is not counted at all: in a full run an
+    earlier test's pooled connection can be returned mid-block, and a plain
+    counter then went negative (CI on #1365, `[-2, -2, ...]`)."""
     held = [0]
+    out: set[int] = set()
     lock = threading.Lock()
 
-    def _out(*_a) -> None:
+    def _out(_dbapi_conn, record, _proxy) -> None:
         with lock:
-            held[0] += 1
+            out.add(id(record))
+            held[0] = len(out)
 
-    def _in(*_a) -> None:
+    def _in(_dbapi_conn, record) -> None:
         with lock:
-            held[0] -= 1
+            out.discard(id(record))
+            held[0] = len(out)
 
     event.listen(Pool, "checkout", _out)
     event.listen(Pool, "checkin", _in)
