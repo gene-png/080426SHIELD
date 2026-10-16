@@ -151,7 +151,11 @@ reason, never forced.
 1. **EVERY check on the PR's head finished and green, required or not.** The
    required set alone is not enough: the merge-rule-text, compose and
    migration gates are deliberately not required. A green certificate is about
-   the head it ran on (see "READY is two claims").
+   the head it ran on (see "READY is two claims"). **These gates are
+   red by design:** "Merge rule text" and "compose content changed". Their red is
+   the extra-care trigger, not a defect. It always blocks an AGENT merge, and
+   the advisor clears it with an approval naming the head SHA; the advisor is
+   the reader those job names call "a human".
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
@@ -167,7 +171,7 @@ reason, never forced.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
-**Any red is reported, never merged. A PR failing condition 2 or 3 is fixed
+**Any red is reported, never merged by an agent. A PR failing condition 2 or 3 is fixed
 and re-checked. Any PR tripping 4, 5 or 6 is EXTRA CARE and goes to the
 advisor, which reviews it, approves it and merges it.**
 
@@ -183,8 +187,8 @@ advisor, which reviews it, approves it and merges it.**
   anything directly.
 
 **Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
-live-prompt clause needs a diff read. Conditions 2 and 6 are self-attested by
-the agent that wants to merge.** Condition 6 is a judgement call an agent can
+live-prompt and merge-rule-text clauses need a diff read. Conditions 2, 3 and
+6 are self-attested by the agent that wants to merge.** Condition 6 is a judgement call an agent can
 talk itself out of; when it is arguable, it has been tripped, and the PR is
 extra care.
 
@@ -192,9 +196,11 @@ extra care.
 
 These are the EXTRA-CARE paths, the ones where a green suite proves least.
 
-- `CLAUDE.md`'s `## The merge rule` section, `DECISIONS.md` entries that change
-  it, and `.claude/agents/**` — a PR must never clear itself under a rule it
-  rewrites (#572).
+- `CLAUDE.md`'s `## The merge rule` section, the Rules-of-the-road bullet on
+  the adversarial reviewer (it carries the exception to condition 2: who may
+  ship without it), `DECISIONS.md` entries that change either, and
+  `.claude/agents/**` — a PR must never clear itself under a rule it rewrites
+  (#572).
 
 - `apps/api/app/ai/` — the single egress path for all five services.
 - `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
