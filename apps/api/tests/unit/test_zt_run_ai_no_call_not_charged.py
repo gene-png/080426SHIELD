@@ -1,5 +1,6 @@
 """#1219: a LIVE ZT run that sent nothing made no provider call, so its run
-says "not charged" (`charged_likely` False), never "not known" (None).
+says "not charged" (`charged_likely` False) rather than "not known" (None).
+A run the reaper ends stays "not known": the reaper never sees the context.
 
 #1084 skips the call when every capability is blank. With no `llm_calls`
 row, the framework could only answer None for a live run, which the
