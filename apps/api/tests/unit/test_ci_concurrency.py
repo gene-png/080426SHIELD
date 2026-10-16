@@ -23,6 +23,8 @@ from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
+#: Only a pull request cancels a run in progress; a push never does.
+CANCEL = "${{ github.event_name == 'pull_request' }}"
 GROUP = (
     "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}"
 )
@@ -40,7 +42,7 @@ def _ci() -> dict:
 
 def test_a_push_to_main_has_a_group_of_its_own() -> None:
     concurrency = _ci().get("concurrency")
-    assert concurrency == {"group": GROUP, "cancel-in-progress": True}, concurrency
+    assert concurrency == {"group": GROUP, "cancel-in-progress": CANCEL}, concurrency
 
 
 def test_ci_runs_on_both_events_the_group_tells_apart() -> None:
@@ -50,7 +52,8 @@ def test_ci_runs_on_both_events_the_group_tells_apart() -> None:
     # trigger allowed, because each queue entry is its own temporary commit, so
     # the commit arm gives it a group of its own. Others are NOT safe there:
     # `pull_request_target`'s sha is the base tip (every PR would share one
-    # group), and `schedule` / `workflow_dispatch` on main would land in main's
-    # push group and cancel its run (review of 7c9d2535).
+    # group), and `schedule` / `workflow_dispatch` on main would share a push's
+    # group. Sharing a group serialises runs, and a newer PENDING run replaces
+    # an older pending one even without cancel-in-progress (review of 7c9d2535).
     assert {"push", "pull_request"} <= set(on) <= {"push", "pull_request", "merge_group"}, on
     assert on["push"] == {"branches": ["main"]}, on["push"]
