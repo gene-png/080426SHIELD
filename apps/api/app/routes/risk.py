@@ -45,6 +45,7 @@ from app.attack.rules import parents_computed, statuses_computed
 from app.audit import audit
 from app.csf.catalog import subcategory_by_code
 from app.csf.enterprise import enterprise_subcategories as csf_enterprise_subcategories
+from app.csf.levels import level_name as csf_level_name
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.db.session import get_db
 from app.dependencies import require_role
@@ -1403,9 +1404,11 @@ def _gather_findings(
                         "source": "questionnaire_response",
                         "source_id": e.subcategory_code,
                         "kind": "csf",
+                        # Levels by name (advisor, #736 6216024281 item 3c):
+                        # "CSF GV.OC-01: Developing, below target Defined".
                         "label": (
-                            f"CSF {e.subcategory_code}: level {e.enterprise_level} "
-                            f"of target {e.target_level}"
+                            f"CSF {e.subcategory_code}: {csf_level_name(e.enterprise_level)}, "
+                            f"below target {csf_level_name(e.target_level)}"
                         ),
                         "evidence": _csf_evidence(e, in_scope_rows[e.subcategory_code]),
                     }

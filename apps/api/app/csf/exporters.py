@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.csf.catalog import FUNCTIONS, SUBCATEGORIES, FunctionCode, Subcategory
-from app.csf.gap import GapAnalysis
+from app.csf.gap import Gap, GapAnalysis
 from app.csf.maturity import tier_label
 from app.csf.retired import answers_sentence
 from app.csf.scoring import ScoreResult
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
 from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
-from app.models.csf_assessment import CsfAnswer, CsfAssessment
+from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
 
 
 @dataclass(frozen=True)
@@ -124,11 +124,13 @@ def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
     # it, so the number and its provenance are read together.
     note = f" {target_note}" if target_note else ""
     if shown >= total:
-        listed = f"All {total} gap{'' if total == 1 else 's'} at target T{gap.target_tier}."
+        listed = (
+            f"All {total} gap{'' if total == 1 else 's'} at target {_tier_name(gap.target_tier)}."
+        )
     else:
         listed = (
             f"Showing the {shown} highest-priority of {total} gaps at target "
-            f"T{gap.target_tier}; {remaining} further gap"
+            f"{_tier_name(gap.target_tier)}; {remaining} further gap"
             f"{'' if remaining == 1 else 's'} not listed."
         )
     return listed + note + _unscored_sentence(len(gap.unscored_codes))
@@ -159,6 +161,48 @@ def _unscored_sentence(unscored: int) -> str:
     if unscored == 1:
         return " 1 subcategory was not scored and is not in this plan."
     return f" {unscored} subcategories were not scored and are not in this plan."
+
+
+def _tier_name(tier: int) -> str:
+    """A tier by name (advisor, #736 6216024281 item 3c: levels as words in
+    this deliverable). A tier outside 1..4 is a defect upstream, so it raises
+    rather than print "Unknown"."""
+    if not 1 <= tier <= 4:
+        raise ValueError(f"CSF tier {tier!r} has no name")
+    return tier_label(tier)
+
+
+def _tier_change(g: Gap) -> str:
+    """W5's form, as the gap list has it: "Partial → Adaptive"."""
+    return f"{_tier_name(g.current_tier)} → {_tier_name(g.target_tier)}"
+
+
+def _released(ctx: CsfDeliverableContext) -> bool:
+    """A re-export of a released assessment keeps the numbers it was delivered
+    with (advisor, #736 6216024281 item 3c); only an unreleased deliverable
+    takes the one-decimal priority."""
+    return ctx.assessment.status == CsfAssessmentStatus.RELEASED
+
+
+def _floored_priority(g: Gap) -> float:
+    """The priority to one decimal, ROUNDED DOWN, as W6 shows it on the gap
+    list (`lib/csf/ratingCopy.ts::priorityWorking`). In integer hundredths of
+    the weight, because a float 3 x 1.2 is 3.5999..., which floors to 3.5."""
+    tenths = (g.gap_size * round(g.weight * 100)) // 10
+    return tenths / 10
+
+
+def _priority_value(ctx: CsfDeliverableContext, g: Gap) -> float:
+    """The XLSX Priority cell: as delivered when released, else floored."""
+    return g.priority_score if _released(ctx) else _floored_priority(g)
+
+
+def _priority_text(ctx: CsfDeliverableContext, g: Gap) -> str:
+    """The PDF/DOCX Priority cell: `3.45` as delivered when released, else
+    one decimal (`3.4`)."""
+    if _released(ctx):
+        return f"{g.priority_score:.2f}"
+    return f"{_floored_priority(g):.1f}"
 
 
 def _fmt_tier(value: float | None) -> str:
@@ -300,7 +344,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 g.current_tier,
                 g.target_tier,
                 g.gap_size,
-                g.priority_score,
+                _priority_value(ctx, g),
                 g.notes or "",
             ],
         )
@@ -379,7 +423,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
         ],
     )
 
-    add_heading(doc, f"Top remediation gaps (target T{ctx.gap.target_tier})")
+    add_heading(doc, f"Top remediation gaps (target {_tier_name(ctx.gap.target_tier)})")
     add_paragraphs(doc, [_gap_plan_caption(ctx.gap, _target_note(ctx))])
     if not ctx.gap.gaps:
         add_paragraphs(
@@ -395,8 +439,8 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
                     g.code,
                     g.function.value,
                     g.name,
-                    f"T{g.current_tier} → T{g.target_tier}",
-                    f"{g.priority_score:.2f}",
+                    _tier_change(g),
+                    _priority_text(ctx, g),
                 ]
                 for g in ctx.gap.gaps
             ],
@@ -475,7 +519,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
 
     story.append(PageBreak())
 
-    story.append(Paragraph(f"Top remediation gaps (target T{ctx.gap.target_tier})", h2))
+    story.append(Paragraph(f"Top remediation gaps (target {_tier_name(ctx.gap.target_tier)})", h2))
     story.append(Paragraph(_gap_plan_caption(ctx.gap, _target_note(ctx)), body))
     if not ctx.gap.gaps:
         story.append(
@@ -494,8 +538,8 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
                     g.code,
                     g.function.value,
                     g.name,
-                    f"T{g.current_tier} → T{g.target_tier}",
-                    f"{g.priority_score:.2f}",
+                    _tier_change(g),
+                    _priority_text(ctx, g),
                 ]
             )
         gap_table = Table(
