@@ -12,6 +12,8 @@ own per-string redactor, because "the same forms as the egress" is the claim.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import func, select
 
@@ -324,3 +326,98 @@ def test_the_what_if_run_asks_the_child_nothing_after_its_answers_arrive(
     assert answered, "setup: the batches were answered"
     assert after == [], after
     assert body["run_status"] == "completed", body["run_error"]
+
+
+# --- review of 8c3c85e0, F2: an index build is not a payload sent -------------------
+
+#: The budget refusal as it reads when NOTHING of the run was sent
+#: (`isolation.budget_message`, sent_before False), written out.
+_NOTHING_SENT_TAIL = "so the check was stopped and nothing was sent to the AI provider."
+
+
+def test_a_call_that_does_not_say_egress_still_counts_as_cleared() -> None:
+    """The default is unchanged for every existing caller: a payload redacted
+    for sending counts as cleared; one marked `egress=False` does not."""
+    from app.ai.run_context import ai_run_id_var
+
+    run_id = uuid.uuid4()
+    token = ai_run_id_var.set(run_id)
+    try:
+        isolation.redact_payload_isolated(
+            ["Plain Tool"], mode="strict", client_org_name=None, name_hints=HINTS, egress=False
+        )
+        assert isolation._places[("run", run_id)].cleared == 0
+        isolation.redact_payload_isolated(
+            {"text": "Plain text"}, mode="strict", client_org_name=None, name_hints=HINTS
+        )
+        assert isolation._places[("run", run_id)].cleared == 1
+    finally:
+        ai_run_id_var.reset(token)
+        isolation.release_run(run_id)
+
+
+def _egress_over_budget(monkeypatch) -> None:
+    """Every payload the egress sends (a dict) runs over the budget; the
+    index builds (`shown_forms`, a list) are redacted for real. The place's
+    own bookkeeping then decides what the refusal says."""
+    real = isolation._run_child
+
+    def run_child(target_ref, payload, *args):
+        if isinstance(payload, dict):
+            return "timeout", None
+        return real(target_ref, payload, *args)
+
+    monkeypatch.setattr(isolation, "_run_child", run_child)
+
+
+def test_a_mitre_map_run_refused_at_its_first_batch_says_nothing_was_sent(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """The run's resolver is built with the tenant's hints, in the child,
+    BEFORE any batch. The first batch is then refused: the run must say that
+    nothing was sent, not "stopped part-way"."""
+    from app.ai.llm import LLMResponse
+    from tests._ai_runs import defer_runs, get_run, start_run
+    from tests.unit.test_ai_runs_attack import _world as _mitre_world
+
+    w = _mitre_world(app_parts)
+    runner = defer_runs(w.app)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    built: list[list[str]] = []
+    real = isolation.redact_payload_isolated
+
+    def spy(payload, **kwargs):
+        built.append(list(payload))
+        return real(payload, **kwargs)
+
+    monkeypatch.setattr(shown_module, "redact_payload_isolated", spy)
+    w.provider.register("mitre_map", lambda _p: LLMResponse('{"techniques": []}'))
+    _egress_over_budget(monkeypatch)
+    started = start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+    assert built, "setup: the resolver was built in the child before the batches"
+    assert (run["status"], run["error_reason"]) == ("failed", "redaction_budget_exceeded"), run
+    assert run["error_message"].endswith(_NOTHING_SENT_TAIL), run["error_message"]
+    assert run["charged_likely"] is False, run
+
+
+def test_a_what_if_run_refused_at_its_first_batch_says_nothing_was_sent(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """The what-if job checks its added tools and decides its removal
+    spellings in the child BEFORE any batch; the first batch is refused, and
+    the run says nothing was sent."""
+    from tests.unit.test_attack_scenario_routes import EDR, _run_to_completion
+
+    w = _world(app_parts)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    r = w.create([EDR])
+    assert r.status_code == 201, r.text
+    _egress_over_budget(monkeypatch)
+    body = _run_to_completion(w, r.json()["id"])
+    assert body["run_status"] == "failed", body
+    assert body["run_error"]["reason"] == "redaction_budget_exceeded", body["run_error"]
+    assert body["run_error"]["message"].endswith(_NOTHING_SENT_TAIL), body["run_error"]

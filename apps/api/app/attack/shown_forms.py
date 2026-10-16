@@ -56,8 +56,10 @@ def shown_forms(
         return {n: n for n in unique}
     org = client_org_name or None
     if hints:
+        # Not egress: these forms are indexed, never sent, so they must not
+        # make a later refusal of the same run read "sent before" (#1080 F2).
         shown, _counts = redact_payload_isolated(
-            unique, mode=mode, client_org_name=org, name_hints=hints
+            unique, mode=mode, client_org_name=org, name_hints=hints, egress=False
         )
         if not isinstance(shown, list) or len(shown) != len(unique):
             raise RuntimeError(
