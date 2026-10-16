@@ -46,6 +46,13 @@ class ExtractRequest(BaseModel):
     serves: str | None = None
 
 
+class CostEstimateRequest(BaseModel):
+    """TD-5 (for #1060): "Let AI estimate". Only the acknowledged AI status;
+    the rows asked are the server's rule (`cost_estimate.estimate_targets`)."""
+
+    serves: str | None = None
+
+
 class CapabilityItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -71,6 +78,11 @@ class CapabilityItemResponse(BaseModel):
     security_related: bool | None = None
     security_functions: list[SecurityFunction] = []
     security_class_confirmed: bool = False
+    # TD-5 (for #1060), migration 0074: where `annual_cost_usd` came from.
+    # "ai_estimate" is labelled "AI estimate" wherever the cost appears; None is
+    # "not recorded" (an uploaded cost), never an estimate.
+    cost_source: Literal["ai_estimate", "consultant"] | None = None
+    cost_estimate_basis: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
