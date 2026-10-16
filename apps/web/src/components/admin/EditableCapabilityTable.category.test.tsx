@@ -82,6 +82,8 @@ describe("the category dropdown (#1176)", () => {
     );
     expect(optionLabels()).toEqual(["Uncategorized", "EDR/XDR", "SIEM/SOAR"]);
     expect(cell().value).toBe("SIEM/SOAR");
+    // Titled with its value, as the free-text cells are, so a long one reads.
+    expect(cell()).toHaveAttribute("title", "SIEM/SOAR");
   });
 
   it("shows a stored value outside the list, selected, and does not remap it", () => {
