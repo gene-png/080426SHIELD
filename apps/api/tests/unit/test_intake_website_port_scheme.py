@@ -1,13 +1,12 @@
-"""#1116: a website whose text before the first colon is literally "http" or
-"https" is REFUSED, whatever follows the colon.
+"""#1116: a website the client typed as a bare number, or as "http"/"https" and
+a colon followed by a number, is REFUSED.
 
-`_ATTEMPTED_SCHEME` reads a colon followed by a digit as a port
-("example.com:8080"). When the word before that colon is itself the scheme
-name, the reading is wrong: "https:8080" got the `https://` prefix and was
-stored with host "https", and the wizard said Saved. Left to `HttpUrl` alone
-it is no better: it reads "https:8080" as an IPv4 address. A typed scheme with
-no "//" is a typo, not a host, so it is refused with the schema 422 the wizard
-shows as "This value was not accepted, so it was not saved.".
+"https:8080" got the `https://` prefix (the colon-digit reads as a port) and
+was stored with host "https". And `HttpUrl` turns a bare number into an
+address, so "8080", "https:/8080", a percent-encoded or full-width "8080" all
+land on host 0.0.31.144 (review of 2a4f17eb). Refused with the schema 422 the
+wizard shows as "This value was not accepted, so it was not saved.". A typed
+dotted quad names its host and is kept, as are hosts with ports.
 
 Through the real endpoint, asserted on the response and the stored column.
 """
@@ -36,7 +35,18 @@ def _patch_website(client, bearer: str, website: str):
 
 @pytest.mark.parametrize(
     "typed",
-    ["https:8080", "http:443/x", "HTTPS:8080", "https:8080/about", " http:80 "],
+    [
+        "https:8080",
+        "http:443/x",
+        "HTTPS:8080",
+        "https:8080/about",
+        " http:80 ",
+        "8080",
+        "https:/8080",
+        "https:\\8080",
+        "https:%38080",
+        "https:\uff18\uff10\uff18\uff10",  # full-width "8080"
+    ],
 )
 def test_a_bare_scheme_and_a_port_is_refused(app_client, typed) -> None:  # noqa: F811
     client, TestSession = app_client
@@ -56,6 +66,10 @@ def test_a_bare_scheme_and_a_port_is_refused(app_client, typed) -> None:  # noqa
         ("example.com:8080", "https://example.com:8080/"),
         ("httpbin.org:8080", "https://httpbin.org:8080/"),
         ("https://kentro.com:8443", "https://kentro.com:8443/"),
+        # A dotted quad the client typed names its own host (review of
+        # 2a4f17eb: the widened rule must not refuse a real address).
+        ("https://1.2.3.4", "https://1.2.3.4/"),
+        ("1.2.3.4:8080", "https://1.2.3.4:8080/"),
     ],
 )
 def test_a_host_with_a_port_is_still_accepted(app_client, typed, stored) -> None:  # noqa: F811
