@@ -870,7 +870,9 @@ export function CsfPlaybookPanel({
           ) : null}
           {/* E3: only where evidence labels a level. Under a frozen
               assessment's cap it limits the level instead (`evidence_cap`). */}
-          {seeded && enterprise?.coverage && enterprise.evidence_cap === false ? (
+          {seeded &&
+          enterprise?.coverage &&
+          enterprise.evidence_cap === false ? (
             <p
               className="text-sm text-ink-secondary"
               data-testid="csf-evidence-coverage"
