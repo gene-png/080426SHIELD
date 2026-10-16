@@ -1,11 +1,11 @@
 """CSF Options 1 and 3 in the Playbook files, through the export route.
 
 - The cap sentences stay ONLY on a frozen assessment (Q2); every other export
-  says evidence does not change a level (C8, as proposed in #736 6204461502).
-- A subcategory with no scored tier is "Not scored", never "L1", and is in no
-  average: one subcategory scored at level 3 beside 105 nobody scored
-  averages Level 3. Before, the 105 seed rows read level 1 and the average
-  rounded to 1.
+  says evidence does not change a level (C8, approved in #736 6205956728).
+- A subcategory with no scored tier is "Not scored", never "Ad hoc", and is in
+  no average: one subcategory scored at level 3 beside 105 nobody scored
+  averages 3.0 of 5 (Defined). Before, the 105 seed rows read level 1 and the
+  average rounded to 1.
 - The C3 coverage line is stated on the files.
 
 Every expected string is typed here, never imported from the renderer.
@@ -67,10 +67,18 @@ def test_a_draft_export_has_no_cap_and_states_not_scored(app_client) -> None:  #
     files = _export(c, h, svc)
     sheets = _sheets(files["xlsx"])
     scored = _table_row(sheets["Enterprise Profile"], CODE)
-    assert scored["Enterprise"] == "L3", scored  # positive first
+    # W4, C8 and C13 (#736 6205956728): the level by name, the evidence by
+    # tier, the roll-up rule in words.
+    assert scored["Enterprise"] == "Defined", scored  # positive first
+    assert scored["Evidence"] == "Neither (High)", scored
+    assert scored["Roll-up rule"] == "All tiers equal", scored
     other = _table_row(sheets["Enterprise Profile"], OTHER)
     # An empty cell reads back as None.
-    assert (other["Enterprise"], other["Rule"]) == ("Not scored", None), other
+    assert (other["Enterprise"], other["Evidence"], other["Roll-up rule"]) == (
+        "Not scored",
+        "Not scored",
+        None,
+    ), other
     total = len(sheets["Enterprise Profile"]) - 2  # banner and header rows
     cover = _cover_text(sheets)
     assert (
@@ -89,7 +97,8 @@ def test_a_draft_export_has_no_cap_and_states_not_scored(app_client) -> None:  #
     full = _flat_text("full_pdf", files["full_pdf"])
     assert NO_CAP_SENTENCE in full
     assert CAP_SENTENCE not in full
-    assert "averages Level 3 of 5." in full, full[:2000]
+    assert "averages 3.0 of 5 (Defined)." in full, full[:2000]
+    assert "Rule" not in _flat_text("full_docx", files["full_docx"]).split("Appendix")[-1]
     for kind in ("full_docx", "exec_docx", "exec_pdf"):
         assert CAP_SENTENCE not in _flat_text(kind, files[kind]), kind
 
