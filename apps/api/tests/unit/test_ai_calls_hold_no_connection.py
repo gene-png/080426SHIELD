@@ -310,3 +310,62 @@ def test_a_failed_call_from_a_caller_with_no_transaction_is_recorded_failed(
         rows = other.execute(select(LLMCall.status, LLMCall.error_message)).all()
     assert [r.status for r in rows] == [LLMCallStatus.FAILED], rows
     assert "provider closed the connection" in rows[0].error_message
+
+
+def test_a_run_reaped_mid_call_leaves_no_ledger_row_running(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """A batch worker's RUNNING row is committed before egress, so a process
+    that dies mid-call would leave it RUNNING for ever. The reap that ends the
+    run ends its RUNNING calls too, FAILED, in the same transaction.
+
+    The death is simulated inside the provider call: the run is dropped from
+    the live set, as a restart would leave it, and the run is reaped from a
+    session of its own, as the next status read would. The ledger is read
+    straight after the reap, before the worker returns."""
+    from app.ai import runs
+    from app.ai.run_context import ai_run_id_var
+    from app.routes import attack as attack_routes
+    from tests._ai_runs import get_run, start_run
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Tool A"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    assert c.post(f"/attack/services/{svc_id}/assessments", headers=h).status_code == 201
+
+    after_reap: list[tuple[int, int]] = []
+
+    def _answer(payload: dict) -> LLMResponse:
+        if not after_reap:
+            run_id = ai_run_id_var.get()
+            assert run_id is not None, "setup: the call is inside a run"
+            assert _visible_running(TestSession) == 1, "setup: the row is committed"
+            runs._mark_done(run_id)
+            with TestSession() as db:
+                runs.reap(db, service_id=uuid.UUID(svc_id))
+            with TestSession() as db:
+                running = db.execute(
+                    select(func.count())
+                    .select_from(LLMCall)
+                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == LLMCallStatus.RUNNING)
+                ).scalar_one()
+                failed = db.execute(
+                    select(func.count())
+                    .select_from(LLMCall)
+                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == LLMCallStatus.FAILED)
+                ).scalar_one()
+            after_reap.append((running, failed))
+        return LLMResponse(json.dumps({"techniques": []}))
+
+    provider.register("mitre_map", _answer)
+    started = start_run(c, f"/attack/services/{svc_id}/run-ai", h)
+    run = get_run(c, started["run_id"], h)
+    assert run["status"] == "failed", run
+    assert after_reap == [(0, 1)], after_reap

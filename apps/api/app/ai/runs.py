@@ -56,7 +56,7 @@ from app.ai.run_limits import REAP_MARGIN, RUN_DEADLINE
 from app.logging import correlation_id_var, get_logger
 from app.models._common import utcnow
 from app.models.ai_run import AiRun, AiRunStatus
-from app.models.llm_call import LLMCall, LLMCallMode
+from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
 from app.schemas.ai_runs import AiRunResponse, AiRunStarted, Serves
 
 _log = get_logger(__name__)
@@ -223,6 +223,24 @@ def _fail_if_running(
     return res.rowcount == 1
 
 
+def _end_running_calls(db: Session, run_id: uuid.UUID, *, reason: str) -> int:
+    """#1025: the run's `llm_calls` rows still RUNNING, ended FAILED by its
+    reap. Returns how many."""
+    res = db.execute(
+        update(LLMCall)
+        .where(LLMCall.ai_run_id == run_id, LLMCall.status == LLMCallStatus.RUNNING)
+        .values(
+            status=LLMCallStatus.FAILED,
+            error_message=f"run_reaped: {reason}",
+            completed_at=utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount:
+        _log.warning("ai_runs.reap_ended_calls", run_id=str(run_id), calls=res.rowcount)
+    return res.rowcount
+
+
 def _orphan_cause(run: AiRun, now: datetime) -> tuple[str, str] | None:
     """Why a RUNNING run has no job that will finish it, or None if one will.
 
@@ -279,6 +297,15 @@ def reap(db: Session, *, service_id: uuid.UUID, purpose: str | None = None) -> N
             charged_likely=_charged_likely(db, run.id, run.mode),
         ):
             reaped += 1
+            # #1025: since `invoke` commits a batch worker's RUNNING ledger row
+            # from its own session, a row whose process died mid-call outlives
+            # it, and would claim a call in progress for ever. The reap ends
+            # them with the run, in the same transaction. FAILED, not a guess at
+            # an outcome: the worker had reached the provider call, which is
+            # why the run reads charged-likely above. A call still in flight in
+            # this process (a run past its deadline) may finalise its own row
+            # later, with what actually happened.
+            _end_running_calls(db, run.id, reason=reason)
             # #552: the run's redaction place comes back at the reap, not when
             # its job finally returns: a job stuck in a call would otherwise
             # hold a place for as long as it is stuck. Its later calls are
