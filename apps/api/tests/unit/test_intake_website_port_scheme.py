@@ -72,7 +72,7 @@ _NEEDS_SLASHES = 'A website address needs "//" after "http:" or "https:".'
     "typed",
     ["https:8080", "http:443/x", "HTTPS:8080", "https:8080/about", " http:80 ", "https:1.2.3.4"],
 )
-def test_a_bare_scheme_then_digit_is_refused_by_its_own_guard(app_client, typed) -> None:  # noqa: F811
+def test_scheme_then_digit_names_its_guard(app_client, typed) -> None:  # noqa: F811
     client, _ = app_client
     bearer = _register_and_bearer(client)
     r = _patch_website(client, bearer, typed)
