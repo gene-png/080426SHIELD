@@ -1471,7 +1471,15 @@ def _gather_findings(
         # #915: the rows whose target the #839 cap lowered, in row order, kept
         # beside this source's target in the audit row. Empty when none were.
         lowered: list[str] = []
-        # #1343: the one predicate the ZT deliverable and dashboard use.
+        # #1343: the one predicate the ZT deliverable and dashboard use. It
+        # lists a code only when `capability_target_override` accepts the
+        # stored target, while the loop below applies the stored target RAW
+        # (the exemption recorded there). The two agree on every value the
+        # writers store today (`patch_answer` 422s anything else), so the
+        # register discloses exactly the findings whose target an unrecorded
+        # origin set. A stored bool or out-of-range target -- no current writer
+        # -- would be applied here and not disclosed; closing the raw read
+        # closes that too.
         no_origin = set(zt_target_origin_codes(zt_fw, zt_rows))
         unrecorded: list[str] = []
         for r in zt_rows:
