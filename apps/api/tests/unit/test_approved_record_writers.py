@@ -190,6 +190,10 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
         "REFUSED",
         "tests/unit/test_approved_writes_refused.py::test_tech_debt_discard_capability_list_refuses_approved",
     ),
+    "app/routes/tech_debt.py::estimate_missing_costs": (
+        "EXCLUDED",
+        "A1: a Tech Debt APPROVED list stays editable; an edit makes the approval stale and release refuses it in the flip (#640, #657; ruled #736 6136101129)",
+    ),
     "app/routes/tech_debt.py::extract_capability_list": (
         "NEW RECORD",
         "NEW RECORD: writes a new record (reuses an open DRAFT or inserts the next version), never into an existing one: the job inserts the next list version",
