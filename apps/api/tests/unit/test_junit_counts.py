@@ -141,7 +141,11 @@ COUNT_CMD = (
 
 def _python_steps() -> list[dict]:
     wf = find_workflows_dir(Path(__file__).resolve())
-    assert wf is not None, "no .github/workflows above this file: run from a full checkout"
+    if wf is None:
+        # The api container mounts only apps/api. On a full checkout (CI) this
+        # cannot fire: ci.yml's "the audit-gate tests must not skip on a full
+        # checkout" step fails if find_workflows_dir returns None there.
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
     jobs = yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))["jobs"]
     found = [j for j in jobs.values() if j.get("name") == "Python (ruff + black + pytest + bandit)"]
     assert len(found) == 1, f"expected one job with the required Python name, found {len(found)}"
