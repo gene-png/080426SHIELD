@@ -50,6 +50,10 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
         "REFUSED",
         "tests/unit/test_approved_writes_refused.py::test_attack_discard_assessment_refuses_approved",
     ),
+    "app/routes/attack.py::draft_dashboard": (
+        "NOT A WRITE",
+        "NOT A WRITE: an over-match; _row_as_the_run_left_it builds AttackCoverage rows in memory from a stored run result and never adds them to a session (#1178, pinned by test_attack_draft_dashboard.py::test_reading_the_draft_writes_nothing)",
+    ),
     "app/routes/attack.py::finalize_attack_deliverable": (
         "EXCLUDED",
         "D: clears documents_stale only, a staleness flag, not content (A4)",
