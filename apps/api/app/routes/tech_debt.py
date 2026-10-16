@@ -1536,26 +1536,41 @@ def bulk_set_disposition(
                 ),
             },
         )
-    decided = [i for i in items if i.disposition is not None]
-    if body.only_if_undecided and decided:
-        # TD-11 (for #1055): all or nothing, like the refusal above, so the
-        # consultant's "Set {n} rows to Keep." is never a partial truth.
-        _log.warning(
-            "tech_debt.bulk_disposition_refused",
-            capability_list_id=str(cap_list.id),
-            selected=len(wanted),
-            already_decided=len(decided),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "reason": "capability_items_already_decided",
-                "message": _already_decided_message(len(decided), len(wanted)),
-            },
-        )
-    for item in items:
-        item.disposition = body.disposition
-        item.confidence_pct = None
+    if body.only_if_undecided:
+        # TD-11 (for #1055): ONE conditional UPDATE, so the check and the write
+        # are atomic -- a decision committed after the rows were read above is
+        # still seen. All or nothing, like the refusal above: a short count
+        # rolls back every row, so "Set {n} rows to Keep." is never partial.
+        written = db.execute(
+            update(CapabilityItem)
+            .where(
+                CapabilityItem.capability_list_id == cap_list.id,
+                CapabilityItem.id.in_(wanted),
+                CapabilityItem.disposition.is_(None),
+            )
+            .values(disposition=body.disposition, confidence_pct=None)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if written != len(wanted):
+            db.rollback()
+            decided = len(wanted) - written
+            _log.warning(
+                "tech_debt.bulk_disposition_refused",
+                capability_list_id=str(cap_list.id),
+                selected=len(wanted),
+                already_decided=decided,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "capability_items_already_decided",
+                    "message": _already_decided_message(decided, len(wanted)),
+                },
+            )
+    else:
+        for item in items:
+            item.disposition = body.disposition
+            item.confidence_pct = None
     item_ids = sorted(str(i.id) for i in items)
     _record_edit(db, cap_list.id)
     audit(

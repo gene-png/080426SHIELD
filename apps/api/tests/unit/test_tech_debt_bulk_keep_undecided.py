@@ -71,6 +71,42 @@ def test_one_decided_row_refuses_the_whole_request_and_writes_nothing(
         assert len(s.execute(select(AuditEntry)).scalars().all()) == audits_before
 
 
+def test_a_decision_landing_just_before_the_write_is_not_overwritten(
+    app_client, monkeypatch  # noqa: F811
+) -> None:
+    """The race the flag exists for. A consultant's decision commits after the
+    route read the rows and immediately before it writes, from its own
+    session, as a concurrent PATCH would. The route's single conditional
+    UPDATE sees it, rolls back and refuses; the decision stands."""
+    import uuid
+
+    import sqlalchemy as sa
+
+    import app.routes.tech_debt as td
+    from app.models.capability import CapabilityDisposition, CapabilityItem
+
+    c, sessions, bearer, svc_id, list_id, item_ids = _world(app_client)
+    real_update = sa.update
+
+    def decide_then_update(*args, **kwargs):
+        with sessions() as s:
+            s.get(CapabilityItem, uuid.UUID(item_ids[1])).disposition = CapabilityDisposition.CUT
+            s.commit()
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(td, "update", decide_then_update)
+    r = _bulk(
+        c,
+        bearer,
+        list_id,
+        {"item_ids": item_ids, "disposition": "keep", "only_if_undecided": True},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "capability_items_already_decided"
+    plan = _plan(c, bearer, svc_id)
+    assert (plan["cut_count"], plan["keep_count"], plan["undecided_count"]) == (1, 0, 2)
+
+
 def test_without_the_flag_the_route_still_overwrites_as_before(app_client) -> None:  # noqa: F811
     """The flag is opt-in: #641's select-and-set keeps its meaning."""
     c, _s, bearer, svc_id, list_id, item_ids = _world(app_client)
