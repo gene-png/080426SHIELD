@@ -136,6 +136,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.cost_estimate import is_ai_estimate
 from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
@@ -1787,6 +1788,9 @@ def tech_debt_dashboard(
     # so the count and "partial" cannot disagree.
     no_cost_count = len(no_cost_items(items))
     spend_cost_known = no_cost_count == 0
+    # TD-5 (for #1060): costs the AI estimated. E7 (#736 6206818759): any one
+    # makes spend "partial" -- an estimate is not a recorded cost.
+    ai_estimate_count = sum(1 for it in items if is_ai_estimate(it))
     # category -> {"total": float, "items": [CapabilityItem]}; "count" is
     # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
@@ -1868,7 +1872,9 @@ def tech_debt_dashboard(
     exclusion_state = exclusion_count_state(cl)
     if source_rows_total is None:
         spend_completeness = "unknown"
-    elif excluded_count or not spend_cost_known or exclusion_state == "unknown":
+    elif (
+        excluded_count or not spend_cost_known or ai_estimate_count or exclusion_state == "unknown"
+    ):
         # An unknown exclusion count is never "complete": a row may have been
         # excluded that the arithmetic floors to zero (#193).
         spend_completeness = "partial"
@@ -1919,6 +1925,7 @@ def tech_debt_dashboard(
         included_count=included_count,
         excluded_count=excluded_count,
         no_cost_count=no_cost_count,
+        ai_estimate_count=ai_estimate_count,
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,

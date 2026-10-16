@@ -691,6 +691,10 @@ class TechDebtDashboardResponse(BaseModel):
     # A recorded $0 is a cost. REQUIRED: a default of 0 would claim every tool
     # was costed.
     no_cost_count: int
+    # TD-5 (for #1060): source items whose cost is an AI estimate
+    # (`cost_estimate.is_ai_estimate`), which `annual_spend_usd` INCLUDES. Any
+    # one makes `spend_completeness` "partial" (E7). REQUIRED, like the above.
+    ai_estimate_count: int
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]

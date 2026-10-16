@@ -25,8 +25,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.models.capability import CapabilityItem
+from app.models.capability import COST_SOURCE_AI_ESTIMATE, CapabilityItem
 from app.tech_debt.bounds import cost_problem
+from app.tech_debt.components import is_component
 from app.tech_debt.overlap import no_cost_items
 
 #: The job's registry name and its `llm_calls.purpose` / fixture key.
@@ -79,6 +80,17 @@ PROMPT = (
     "no other keys:\n"
     '{"estimates": [{"ref": "T1", "annual_cost_usd": 12000, "basis": "One sentence."}]}'
 )
+
+
+def is_ai_estimate(item: CapabilityItem) -> bool:
+    """THE ONE RULE for "this cost is an AI estimate": a source item whose cost
+    the estimate wrote and nobody has overridden since. Read by the workspace
+    count, the client dashboard and every deliverable file."""
+    return (
+        getattr(item, "cost_source", None) == COST_SOURCE_AI_ESTIMATE
+        and item.annual_cost_usd is not None
+        and not is_component(item)
+    )
 
 
 def estimate_targets(items: Iterable[CapabilityItem]) -> list[CapabilityItem]:
