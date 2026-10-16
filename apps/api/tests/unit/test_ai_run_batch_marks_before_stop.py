@@ -55,6 +55,7 @@ def test_a_batch_held_past_its_stop_check_leaves_the_run_not_known(
     monkeypatch.setattr(batching, "run_job", _held_run_job)
     world.suggest(2)
 
+    body_passed = False
     try:
         started = start_run(world.c, world.run_url, world.h, serves="live")
         assert held.is_set(), "no batch reached the point between its stop check and the call"
@@ -63,12 +64,16 @@ def test_a_batch_held_past_its_stop_check_leaves_the_run_not_known(
         assert (run["status"], run["error_reason"]) == ("failed", "run_deadline_exceeded"), run
         # Recorded while every batch was still held, before any call.
         assert run["charged_likely"] is None, run
+        body_passed = True
     finally:
         gate.set()
-
-    # Let the released batches finish before the fixture tears the database
-    # down. The run has ended, so the redaction gate turns them away. Only the
-    # threads this test held are waited for, and one still running is a fault.
-    for t in held_threads:
-        t.join(timeout=30)
-    assert not [t.name for t in held_threads if t.is_alive()], "a released batch never finished"
+        # Let the released batches finish before the fixture tears the
+        # database down, on the failing path too. The run has ended, so the
+        # redaction gate turns them away. Only the threads this test held are
+        # waited for; one still running is a fault, reported only when the
+        # body passed so it never hides the assertion that failed.
+        for t in held_threads:
+            t.join(timeout=30)
+        if body_passed:
+            alive = [t.name for t in held_threads if t.is_alive()]
+            assert not alive, f"a released batch never finished: {alive}"
