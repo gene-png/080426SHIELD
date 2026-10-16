@@ -125,7 +125,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
    prod runs Postgres. New persisted analysis fields are additive/optional so
    older rows parse unchanged (the C0 pattern).
 
-## The merge rule: when an agent may merge without checking back
+## The merge rule: who merges a PR
 
 **This sits at the top of the file because everything past a reader's size
 limit is cut away silently.** For at least three days it sat at byte 192,494 of
@@ -133,27 +133,81 @@ a 210,958-byte file, so agents read that a PR "tripping condition 5" comes back
 and could not read WHICH PATHS trip it. Keep it here; D-079 records how that
 happened.
 
-**An agent merges on green WITHOUT checking back, when all six hold.**
+**Since 2026-10-16 UTC (Gene, D-113): a PR whose checks pass is merged by an
+agent; an EXTRA-CARE PR (condition 4, 5 or 6) needs the advisor's merge
+approval first.** Who the advisor and coordinator are is the `## Current
+roles` table at the top of the description of #736 (`gh api
+repos/gene-png/080426SHIELD/issues/736 --jq .body`). That table wins over any
+other copy. No session id is written here, because ids change at every
+handover.
 
-1. **Every required check green, by the name branch protection requires.**
-   From `ci.yml`: `Python (ruff + black + pytest + bandit)`,
+**An agent merges a plain PR when conditions 1 to 6 hold**, and an
+extra-care PR is merged by the COORDINATOR once conditions 1 to 3 hold AND
+the advisor has approved it (the advisor decides; it cannot run merges itself).
+Every merge is pinned to the head that was checked:
+
+    gh pr merge <n> --squash --auto --match-head-commit <head sha>
+
+- **Auto-merge, with the head guard (Gene, 2026-10-16).** Gene turned the
+  repository's "Allow auto-merge" setting on that day: "allow auto merge if
+  all checks are passed and the adversarial review also passed". Enable it on
+  a plain PR only once the reviewer has run at that head and every
+  NON-required gate on it has finished green, except the red-by-design gates
+  that condition 1 lets an advisor approval clear; auto-merge then waits for
+  the required checks itself. On an extra-care PR, enable it only after the
+  advisor's "merge approved at <sha>", at exactly that SHA. Read the head
+  from `gh pr view <n> --json headRefOid`, never type it.
+- **If a commit is pushed after auto-merge is enabled,** disable it
+  (`gh pr merge <n> --disable-auto`) at once: the new head has not been
+  reviewed or approved. Re-review it, and re-enable only at the new head (an
+  extra-care PR needs a fresh advisor approval naming it, or rule 0's
+  patch-id carry).
+- **If a PR's body is edited after auto-merge is enabled,** disable it
+  (`gh pr merge <n> --disable-auto`) and re-enable only once the body-reading
+  gates have finished green again; the head guard cannot see a body edit.
+- **When a main run goes red, merging pauses** until the cause is named and
+  fixed: no merge by hand, and every pending auto-merge request is disabled
+  with `--disable-auto` until then.
+- **Never** `--admin`, never bypass branch protection, never edit the
+  required checks.
+- A PR that cannot merge (a red check, a conflict, BLOCKED) is reported on
+  #736 with its reason, never forced.
+- The advisor audits every merge afterwards.
+
+1. **Every check on the PR's head has finished green, required or not.** The
+   required set, by the name branch protection requires, is: from `ci.yml`,
+   `Python (ruff + black + pytest + bandit)`,
    `Web (prettier + eslint + typecheck + build)`, `Secret scan (gitleaks)`,
-   `E2E (Playwright smoke suite)` and `Demo (hosted-demo reset + journey spec)`.
-   From `audit-gate.yml`: `Adversarial audit recorded` and
+   `E2E (Playwright smoke suite)` and `Demo (hosted-demo reset + journey spec)`;
+   from `audit-gate.yml`, `Adversarial audit recorded` and
    `No accidental issue closes`. The E2E name is an aggregate job that fails
    unless every shard and the session job succeeded and the shard lists
    partition the suite; the jobs it waits on are not themselves required.
-   `mutation-sweep.yml` is schedule-only and excluded. **Re-derive
-   this list when a required check is added**, from branch protection
+   `mutation-sweep.yml` is schedule-only and excluded. **Re-derive this list
+   when a required check is added**, from branch protection
    (`gh api repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks`),
-   not from this paragraph.
+   not from this paragraph. The required set alone is not enough: the
+   merge-rule-text, compose and migration gates are deliberately not
+   required. A green certificate is about the head it ran on (see "READY is
+   two claims").
+   - **The exception: these gates are red by design** when they report a
+     CHANGE (exit 1): "Merge rule text" and "compose content changed". That
+     red is the extra-care trigger. It blocks a plain merge, and only an
+     advisor approval naming the head SHA clears it. The advisor is the
+     reader those job names call "a human".
+   - **A red that means the gate could not look (exit 2) is a defect** like
+     any other. Nobody clears it.
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
    first. The gate checks only that `Findings:` and `Disposition:` exist; it
    does not read `Scope:` and cannot tell whether the reviewer ran at all.
-3. **`DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated in the
-   landing commit**, with any counts read live rather than carried forward.
+   **Every edit to an existing test, every user-facing string and every
+   prompt in the PR carries an advisor approval** naming its hash or its
+   text.
+3. **The status documents** (`DELIVERY_PLAN.md`, `CONTEXT.md`,
+   `context/<name>.md`) **are updated in a batched docs-only PR, not in every
+   PR** (#736 6202079854). A PR may still update them.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
@@ -162,16 +216,37 @@ happened.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
-**Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
+**Conditions 4, 5 and 6 no longer mean "comes back to the human". They mean
+"needs a recorded advisor merge approval before merge":**
 
-**Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
-live-prompt clause needs a diff read. Conditions 2, 3 and 6 are self-attested
-by the agent that wants to merge** — three checkable conditions and three
-honest ones, not "a file-path check plus two facts". Condition 6 is a
-judgement call an agent can talk itself out of; when it is arguable, it has
-been tripped.
+- **The approval:** an advisor comment on #736 that names the PR and its exact
+  head SHA, posted after the advisor's own review of that head.
+- **Who merges:** the coordinator, at exactly that head, with
+  `--match-head-commit`, then it posts the merge SHA.
+- **If the head moves after approval,** the approval lapses, unless every
+  later commit is a merge of main and `git patch-id --stable` over
+  `git diff -U0 <merge-base> <head> -- . ':!*.md'` equals that of the approved
+  head (rule 0, #736 6216024281).
+- **No self-approval:** the agent that built a PR never approves it.
+- **Limit, stated plainly:** sessions can share a GitHub account, so a header
+  is a convention, not proof of identity. Gene may approve and merge anything
+  directly.
+
+**Conditions 4 and 5 are mostly mechanical; 5's live-prompt and merge-rule
+clauses need a diff read. Condition 1 needs one judgement: which kind of red
+it is. Conditions 2, 3 and 6 are self-attested by the agent that wants to
+merge.** Condition 6 is a judgement call an agent can talk itself out of. When
+it is arguable, it has been tripped, and the PR is extra care.
 
 ### Condition 5: the paths
+
+These are the EXTRA-CARE paths, the ones where a green suite proves least.
+
+- `CLAUDE.md`'s `## The merge rule` section, the Rules-of-the-road bullet on
+  the adversarial reviewer (it carries the exception to condition 2: who may
+  ship without it), `DECISIONS.md` entries that change either, and
+  `.claude/agents/**` — a PR must never clear itself under a rule it rewrites
+  (#572).
 
 - `apps/api/app/ai/` — the single egress path for all five services.
 - `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
@@ -232,6 +307,9 @@ wrong, and the command is the one that will go on reporting clean.
 
 ### Re-derive the measurement whenever condition 5 changes
 
+("Came back" below meant "back to the human"; since D-113 it means "needs an
+advisor merge approval". The measurements are unchanged by that.)
+
 What the rule actually clears is documentation PRs. Code comes back, and so does
 anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
@@ -263,16 +341,20 @@ A STALE worked example is worse than none, because it ends the check with the
 wrong answer in the place a reader looks first. These are phrased from the
 conditions rather than from an issue number for that reason.
 
-- **Anything shipping an endpoint or a panel comes back.** It ships with tests,
-  or condition 1 proves nothing about it, so it trips `apps/api/tests/**`.
-  Whether the surface is admin-only is not a question condition 5 asks.
-- **A PR that repairs the gates comes back**, tripping condition 5 on both
+- **Anything shipping an endpoint or a panel is extra care.** It ships with
+  tests, or condition 1 proves nothing about it, so it trips
+  `apps/api/tests/**`. Whether the surface is admin-only is not a question
+  condition 5 asks.
+- **A PR that repairs the gates is extra care**, tripping condition 5 on both
   `check_*.py` and `apps/api/tests/**` at once. That such a commit is
-  *repairing* the harness this rule depends on argues for a human reading it,
-  not against.
+  *repairing* the harness this rule depends on argues for the advisor reading
+  it, not against.
 - **Anything whose fix changes what a client's dashboard or deliverable shows
-  comes back** under condition 6 — that is what condition 6 says, and it is
+  is extra care** under condition 6 — that is what condition 6 says, and it is
   the clause most often talked past.
+- **A dependency bump is merged by an agent only if it trips none of
+  conditions 4, 5 and 6.** A GitHub Actions bump edits `.github/workflows/**`,
+  so it is extra care.
 
 ## Real commands (use these, not generic equivalents)
 
@@ -1368,10 +1450,10 @@ because it is long. Load-bearing rules stay at any length:
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 says to re-derive its required-check list when a required check
-  is added, and D-059 says to re-derive its measurement whenever condition 5
-  changes. Never leave a known gap in it because a budget said not to grow.
-  What to resist is growth
+  condition 1 reads every check on the head and says to re-derive its
+  required-check list when a required check is added, and D-059 says to
+  re-derive its measurement whenever condition 5 changes. Never leave a
+  known gap in it because a budget said not to grow. What to resist is growth
   in KIND — another condition, another worked example. If it becomes
   unholdable, restructure the presentation rather than freeze a rule whose own
   conditions mandate re-derivation.

@@ -20,7 +20,7 @@ import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
  * item 1: the seeded service has released work, so a plain create over it is
  * refused), opens a fresh DRAFT on it, then walks the Playbook:
  *   1. Seed Working Profiles -> ~106 subcategories x 3 tiers.
- *   2. Run AI (csf_score) drafts the five dimensions + narrative (fixture-mode
+ *   2. Run AI drafts the five dimensions + narrative (fixture-mode
  *      LLM, T6b); the panel accounts for every suggestion — "AI applied X of Y
  *      suggested score values" — so a drop can never pass as agreement (W1,
  *      #44). The wording is "score values", not "values": the counts cover
@@ -29,9 +29,10 @@ import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
  *      subcategory scores 0 everywhere, the defaults, so one answer's notes are
  *      recorded first, and shown on screen, for the run to have something to
  *      score.
- *   3. Dimension editor: the five 0/1/2 scores + the Evidence toggle update
- *      total/level/cap LIVE, and the no-evidence cap clamps the level to <= 2
- *      (and Implementation to <= 1, hence total 9 not 10).
+ *   3. Dimension editor: the five 0/1/2 scores update total/level LIVE, and
+ *      the Evidence choice changes neither on a draft (CSF Options 1 and 3,
+ *      D-114: the evidence cap applies only to an assessment approved before
+ *      it), so all 2s read total 10, level Optimized, with any evidence value.
  *   4. Enterprise roll-up: tier levels, enterprise level, rule #, target, gap,
  *      P1/P2/P3 priority.
  *   5. Export produces 5 files (XLSX, exec PDF/Word, full PDF/Word) whose
@@ -143,7 +144,7 @@ async function poamSaved(
   await done;
 }
 
-test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative, editor math is live with the evidence cap", async ({
+test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative, editor math is live and evidence does not cap a draft", async ({
   page,
   request,
 }) => {
@@ -156,7 +157,7 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   // --- Seed Working Profiles -> 106 subcategories across 3 tiers -----------
   // A fresh draft is always unseeded (the branch guards a crashed re-entry).
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
-  const runBtn = page.getByRole("button", { name: "Run AI (csf_score)" });
+  const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
   await expect(seedBtn.or(runBtn)).toBeVisible({ timeout: 30000 });
   if (await seedBtn.isVisible()) {
     // Seeding writes 318 Working-Profile rows (106 subcategories x 3 tiers).
@@ -282,7 +283,7 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
     "subcategories",
   );
 
-  // --- Run AI (csf_score): dimensions + narrative ---------------------------
+  // --- Run AI: dimensions + narrative ---------------------------
   const runDone = page.waitForResponse(
     (r) =>
       r.url().includes("/csf/services/") &&
@@ -343,27 +344,25 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
     await expect(two).toHaveAttribute("aria-checked", "true");
   }
 
-  // Make sure "Evidence on file" is OFF so the cap applies. NOTE: click(),
-  // not check()/uncheck() — the checkbox is React-controlled and only flips
-  // after the auto-save PATCH round-trips, so check()'s immediate post-click
-  // state verification fails under load.
-  const evidence = page.getByRole("checkbox", { name: "Evidence on file" });
-  if (await evidence.isChecked()) {
-    await patched(page, () => evidence.click());
-  }
-  // No evidence: Implementation is clamped to 1 (total 9, not 10) AND the
-  // level is capped at L2 even though a total of 9 would otherwise be L4.
+  // CSF Options 1 and 3 (D-114): on a draft, evidence labels a level and
+  // never caps it. Run AI never sets evidence, so the row reads "neither",
+  // and all five 2s are total 10, level Optimized (5), with no cap note.
+  const evidence = page.getByRole("combobox", {
+    name: "Evidence",
+    exact: true,
+  });
+  await expect(evidence).toHaveValue("neither", { timeout: 30000 });
   const totalLine = (re: RegExp) =>
     page.locator("span", { hasText: re }).first();
-  await expect(totalLine(/Total\s*9\s*·\s*Level\s*L2/)).toBeVisible({
+  await expect(totalLine(/Total\s*10\s*·\s*Level\s*Optimized/)).toBeVisible({
     timeout: 30000,
   });
-  await expect(page.getByText(/capped .* no evidence/)).toBeVisible();
+  await expect(page.getByText(/capped .* no evidence/)).toBeHidden();
 
-  // Toggle Evidence ON: the cap lifts live -> total 10, level L5.
-  await patched(page, () => evidence.click());
-  await expect(evidence).toBeChecked({ timeout: 30000 });
-  await expect(totalLine(/Total\s*10\s*·\s*Level\s*L5/)).toBeVisible({
+  // Evidence on file: the choice saves, and the total and level do not move.
+  await patched(page, () => evidence.selectOption("on_file"));
+  await expect(evidence).toHaveValue("on_file", { timeout: 30000 });
+  await expect(totalLine(/Total\s*10\s*·\s*Level\s*Optimized/)).toBeVisible({
     timeout: 30000,
   });
   await expect(page.getByText(/capped .* no evidence/)).toBeHidden();
@@ -379,7 +378,7 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   await openWorkspaceOnDraft(page, request);
 
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
-  const runBtn = page.getByRole("button", { name: "Run AI (csf_score)" });
+  const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
   await expect(seedBtn.or(runBtn)).toBeVisible({ timeout: 30000 });
   if (await seedBtn.isVisible()) {
     const enterpriseLoaded = page.waitForResponse(
@@ -406,6 +405,32 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
     .getAttribute("value");
   expect(code).toBeTruthy();
   await subcatSelect.selectOption(code!);
+
+  // CSF Option 1 (D-114): a subcategory with no scored tier has no level, no
+  // target and no gap, and only the noted subcategory was sent to Run AI. So
+  // score this one on every tier (governance 1: total 1, level L1), through
+  // the API the editor saves to, for the roll-up below to have three tiers.
+  const csfServiceId = await atlasServiceId(page, "nist_csf");
+  for (const tier of ["high", "moderate", "low"]) {
+    const profileRes = await page.request.get(
+      `/api/proxy/csf/services/${csfServiceId}/profile/${tier}`,
+    );
+    expect(profileRes.ok(), `profile ${tier}`).toBeTruthy();
+    const tierRow = (
+      (await profileRes.json()) as {
+        rows: Array<{ id: string; subcategory_code: string }>;
+      }
+    ).rows.find((r) => r.subcategory_code === code);
+    expect(tierRow, `no ${tier} row for ${code}`).toBeTruthy();
+    const scoredRes = await page.request.patch(
+      `/api/proxy/csf/dimension-scores/${tierRow!.id}`,
+      { data: { governance: 1 } },
+    );
+    expect(
+      scoredRes.ok(),
+      `score ${tier} (${scoredRes.status()})`,
+    ).toBeTruthy();
+  }
 
   // Content-aware wait: match the enterprise-profile response that actually
   // reflects the committed L5 target, not whichever response lands first.
@@ -449,8 +474,8 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   };
 
   // Server truth for the edited row: 3 tier levels, an enterprise level, a
-  // roll-up rule #, our L5 target, a gap, and a computed priority. The row has
-  // no evidence, so its level caps at <= 2 -> the L5 target guarantees a gap.
+  // roll-up rule #, our L5 target, a gap, and a computed priority. Every tier
+  // was scored total 1 above, level L1, so the L5 target guarantees a gap.
   // Priority: HIGH tier is always in play here (3 tiers), so gap_priority
   // never yields P3 - it's P1 when this subcategory maps to a Core IG metric
   // (Core + HIGH tier + multi-system), else P2. Before T5 the route hard-coded
@@ -472,12 +497,20 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   expect(row!.gap).toBe(true);
   expect(["P1", "P2"]).toContain(row!.priority);
 
-  // And the roll-up table renders that row: rule # + the server's priority pill.
+  // And the roll-up table renders that row: the server's priority pill and
+  // its level by name (C14, #736 6205956728). The panel has no Rule column
+  // since C13; the XLSX keeps it.
+  const LEVEL_NAMES = [
+    "Ad hoc",
+    "Developing",
+    "Defined",
+    "Managed",
+    "Optimized",
+  ];
   const tableRow = page.getByRole("row").filter({ hasText: code! }).first();
   await expect(tableRow).toBeVisible({ timeout: 30000 });
-  await expect(tableRow).toContainText(`#${row!.rollup_rule}`);
   await expect(tableRow).toContainText(row!.priority!);
-  await expect(tableRow).toContainText(`L${row!.enterprise_level}`);
+  await expect(tableRow).toContainText(LEVEL_NAMES[row!.enterprise_level - 1]);
 
   // --- T5 POA&M: annotate the gap, autosave, survive a reload ---------------
   // The Action Plan editor renders one card per enterprise gap; `code` is the

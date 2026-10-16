@@ -271,7 +271,9 @@ def test_a_pre_0068_artifact_and_profile_row_read_unchanged(tmp_path) -> None:
             sa.select(CsfDimensionScore).options(sa.orm.undefer_group("evidence_basis"))
         ).scalar_one()
         assert (score.governance, score.policy, score.implementation) == (2, 1, 2)
-        assert score.has_evidence is True
+        # Migration 0075 replaced `has_evidence` with `evidence_status`, which
+        # this schema does not have, so the tick is read from the raw row.
+        assert after_score["has_evidence"] in (True, 1), after_score
         assert str(score.evidence_artifact_id) == p["artifact"]
         assert score.evidence_basis is None
 
@@ -349,9 +351,19 @@ def _seed_at_0066(tmp_path, name: str, statuses: set[str]) -> tuple[str, sa.Engi
                         client_id=client.id,
                         tier="moderate",
                         subcategory_code="GV.OC-01" if ticked else "GV.OC-02",
-                        has_evidence=ticked,
                     )
                 )
+        db.flush()
+        # The tick, written raw: since migration 0075 the model maps
+        # `evidence_status` in its place, which this schema does not have.
+        ticks = db.execute(
+            sa.text(
+                "UPDATE csf_dimension_scores SET has_evidence = :t "
+                "WHERE subcategory_code = 'GV.OC-01'"
+            ),
+            {"t": True},
+        ).rowcount
+        assert ticks == len(statuses), ticks
         db.commit()
     return url, engine
 

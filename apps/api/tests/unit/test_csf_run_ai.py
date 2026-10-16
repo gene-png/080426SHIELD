@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch, run_ai_expecting_failure
+from tests._csf_notes import note_every_answer
 
 
 @pytest.fixture()
@@ -59,7 +60,12 @@ def app_client(tmp_path) -> Iterator[tuple[TestClient, FixtureProvider]]:
         yield c, provider
 
 
-def _bootstrap(c: TestClient) -> tuple[dict, str]:
+def _bootstrap(c: TestClient, *, notes: bool = True) -> tuple[dict, str]:
+    """A seeded HIGH-tier Working Profile. `notes` gives every answer notes
+    (`tests/_csf_notes.py`): since CSF Option 1 (D-114) a subcategory without
+    them is left out of the payload, and these tests are about what the run
+    does with rows it SENDS. A test about the payload's own contents passes
+    False and records the notes it needs."""
     r = c.post(
         "/auth/register",
         json={
@@ -74,6 +80,8 @@ def _bootstrap(c: TestClient) -> tuple[dict, str]:
     ]
     c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    if notes:
+        note_every_answer(svc_id)
     return h, svc_id
 
 
@@ -127,7 +135,7 @@ def test_csf_run_ai_payload_carries_interview_answers(app_client) -> None:
     """Sprint 3 T0(b): the job payload must ground the model in the client's
     interview answers/evidence (not just tier/subcategory codes)."""
     c, provider = app_client
-    h, svc_id = _bootstrap(c)
+    h, svc_id = _bootstrap(c, notes=False)
     code = SUBCATEGORIES[0].code
     # Capture what actually reaches the provider (post-redaction send payload).
     captured: dict = {}

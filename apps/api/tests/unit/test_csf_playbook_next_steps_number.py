@@ -79,7 +79,7 @@ def test_the_overview_is_singular_for_one_subcategory() -> None:
 
     assert _overview_sentences(_scored(1, 1)) == [
         "This assessment covers 1 in-scope NIST CSF 2.0 subcategory. Enterprise "
-        "maturity, rolled up across the impact tiers in use, averages Level 2 of 5.",
+        "maturity, rolled up across the impact tiers in use, averages 2.0 of 5 (Developing).",
         "1 subcategory falls short of its target maturity — 1 Priority 1 (critical), "
         "0 Priority 2, and 0 Priority 3.",
     ]
@@ -91,7 +91,7 @@ def test_the_overview_is_plural_for_several_subcategories() -> None:
 
     assert _overview_sentences(_scored(3, 2)) == [
         "This assessment covers 3 in-scope NIST CSF 2.0 subcategories. Enterprise "
-        "maturity, rolled up across the impact tiers in use, averages Level 2 of 5.",
+        "maturity, rolled up across the impact tiers in use, averages 2.0 of 5 (Developing).",
         "2 subcategories fall short of their target maturity — 2 Priority 1 "
         "(critical), 0 Priority 2, and 0 Priority 3.",
     ]
@@ -116,10 +116,10 @@ def test_the_overview_counts_subcategories_and_gaps_separately() -> None:
 @pytest.mark.parametrize(
     ("n", "gaps", "expected"),
     [
-        (1, 1, "1 subcategory · average Level 2 · 1 gap."),
-        (3, 2, "3 subcategories · average Level 2 · 2 gaps."),
-        (3, 1, "3 subcategories · average Level 2 · 1 gap."),
-        (1, 0, "1 subcategory · average Level 2 · 0 gaps."),
+        (1, 1, "1 subcategory · average 2.0 of 5 (Developing) · 1 gap."),
+        (3, 2, "3 subcategories · average 2.0 of 5 (Developing) · 2 gaps."),
+        (3, 1, "3 subcategories · average 2.0 of 5 (Developing) · 1 gap."),
+        (1, 0, "1 subcategory · average 2.0 of 5 (Developing) · 0 gaps."),
     ],
 )
 def test_the_function_detail_line_agrees_in_number(n, gaps, expected) -> None:
@@ -145,8 +145,8 @@ def test_both_full_deliverables_print_the_singular_function_line() -> None:
     args = {"client_name": "Client", "version": 1, "approved": False}
     rows = _enterprise_rows()
     paragraphs = _docx_paragraphs(render_full_docx(enterprise_rows=rows, **args))
-    assert "1 subcategory · average Level 2 · 1 gap." in paragraphs
-    assert "1 subcategory · average Level 5 · 0 gaps." in paragraphs
+    assert "1 subcategory · average 2.0 of 5 (Developing) · 1 gap." in paragraphs
+    assert "1 subcategory · average 5.0 of 5 (Optimized) · 0 gaps." in paragraphs
     pdf = " ".join(_pdf_text(render_full_pdf(enterprise_rows=rows, **args)).split())
-    assert "1 subcategory · average Level 2 · 1 gap." in pdf
+    assert "1 subcategory · average 2.0 of 5 (Developing) · 1 gap." in pdf
     assert "1 subcategories" not in pdf and "gap(s)" not in pdf

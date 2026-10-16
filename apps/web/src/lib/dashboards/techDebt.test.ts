@@ -11,9 +11,9 @@ import {
 } from "./techDebt";
 
 const SPEND: CategorySpend[] = [
-  { category: "SIEM", total_usd: 380000, count: 1 },
-  { category: "EDR", total_usd: 195000, count: 2 },
-  { category: "PAM", total_usd: 133000, count: 2 },
+  { category: "SIEM", total_usd: 380000, count: 1, no_cost_count: 0 },
+  { category: "EDR", total_usd: 195000, count: 2, no_cost_count: 0 },
+  { category: "PAM", total_usd: 133000, count: 2, no_cost_count: 0 },
 ];
 
 function item(p: Partial<TechDebtItem>): TechDebtItem {
@@ -51,8 +51,8 @@ describe("tech debt dashboard transforms", () => {
 
   it("sprawlDonut: category (count) labels", () => {
     const d = sprawlDonut([
-      { category: "EDR", total_usd: 195000, count: 2 },
-      { category: "PAM", total_usd: 133000, count: 3 },
+      { category: "EDR", total_usd: 195000, count: 2, no_cost_count: 0 },
+      { category: "PAM", total_usd: 133000, count: 3, no_cost_count: 0 },
     ]);
     expect(d.labels).toEqual(["EDR (2)", "PAM (3)"]);
     expect(d.values).toEqual([2, 3]);

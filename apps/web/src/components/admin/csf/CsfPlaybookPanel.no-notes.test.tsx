@@ -167,7 +167,7 @@ describe("CsfPlaybookPanel, rows a live run did not assess (#1000)", () => {
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
     expect(screen.getByTestId("csf-run-no-notes")).toHaveTextContent(
-      "Not assessed by AI (no notes): 7 rows. They keep the scores they had.",
+      "7 rows have no notes, so the AI did not score them. Rows a consultant scored keep their scores.",
     );
   });
 
@@ -176,7 +176,7 @@ describe("CsfPlaybookPanel, rows a live run did not assess (#1000)", () => {
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
     expect(screen.getByTestId("csf-run-no-notes")).toHaveTextContent(
-      "Not assessed by AI (no notes): 1 row. It keeps the score it had.",
+      "1 row has no notes, so the AI did not score it. A row a consultant scored keeps its scores.",
     );
   });
 
@@ -185,16 +185,18 @@ describe("CsfPlaybookPanel, rows a live run did not assess (#1000)", () => {
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
     expect(screen.getByTestId("csf-run-no-notes")).toHaveTextContent(
-      "Not assessed by AI (no notes): 0 rows. They keep the scores they had.",
+      "0 rows have no notes, so the AI did not score them. Rows a consultant scored keep their scores.",
     );
   });
 
-  it("says nothing when the run counted nothing (an offline run)", async () => {
+  // Since CSF Option 1 every mode counts (C4, #736 6205956728); `null` is a
+  // result stored before #1000.
+  it("says nothing when the run counted nothing (a result from before #1000)", async () => {
     showCompleted(result({ no_notes_count: null }));
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     expect(await screen.findByText(/AI applied/)).toBeInTheDocument();
     expect(screen.queryByTestId("csf-run-no-notes")).toBeNull();
-    expect(screen.queryByText(/Not assessed by AI/)).toBeNull();
+    expect(screen.queryByText(/no notes, so the AI did not score/)).toBeNull();
   });
 
   it("states the count when the AI returned nothing at all", async () => {
@@ -211,7 +213,7 @@ describe("CsfPlaybookPanel, rows a live run did not assess (#1000)", () => {
       await screen.findByText(/The AI returned no suggestions at all/),
     ).toBeInTheDocument();
     expect(screen.getByTestId("csf-run-no-notes")).toHaveTextContent(
-      "Not assessed by AI (no notes): 12 rows. They keep the scores they had.",
+      "12 rows have no notes, so the AI did not score them. Rows a consultant scored keep their scores.",
     );
   });
 

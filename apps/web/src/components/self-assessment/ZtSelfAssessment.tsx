@@ -530,6 +530,7 @@ export function ZtSelfAssessment({
                           <ZtStagePicker
                             value={ans.maturity_stage}
                             stages={catalog.stages}
+                            maxStage={cap.max_stage}
                             ariaLabel={`Maturity stage for ${cap.code}`}
                             // #758 review: read-only while Submit is out. Submit
                             // cannot start while a save is out, but a save
