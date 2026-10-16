@@ -1,13 +1,14 @@
 """Where an item's annual cost came from, on `capability_items` (TD-5, for #1060).
 
 Revision ID: 0074
-Revises: 0075
+Revises: 0076
 
 The number 0074 is the advisor's (#736 6206818759, item 5). Its parent was
 main's single head when written, 0072; CSF's 0075 (#1203) landed first with the
-same parent, so by the coordinator's sequencing call 0074 now chains after
-0075, main's head when this PR merged main (`test_alembic_single_head` reads
-the chain, never filenames).
+same parent, and ZT's 0076 (#1347) then chained after 0075. By the advisor's
+ruling (#736 issuecomment-6225076633) 0074 chains after 0076, main's head when
+this PR merged main (`test_alembic_single_head` reads the chain, never
+filenames).
 
 Two nullable columns:
 
@@ -39,7 +40,7 @@ survive its label, so this clears the estimated costs too:
     UPDATE capability_items SET annual_cost_usd = NULL WHERE cost_source = 'ai_estimate'
     UPDATE capability_items SET cost_source = NULL, cost_estimate_basis = NULL
 
-then `alembic downgrade 0075`.
+then `alembic downgrade 0076`.
 
 That first statement matches every list's rows, RELEASED ones included, so a
 released deliverable's re-export would then show those tools with no cost.
@@ -55,7 +56,7 @@ from alembic import op
 from sqlalchemy.sql.elements import conv
 
 revision: str = "0074"
-down_revision: str | Sequence[str] | None = "0075"
+down_revision: str | Sequence[str] | None = "0076"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

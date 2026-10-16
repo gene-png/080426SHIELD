@@ -38,16 +38,16 @@ def _cfg(url: str) -> Config:
 
 @pytest.fixture(autouse=True)
 def _template_parent(tmp_path_factory) -> None:
-    """0074's parent is 0075 (CSF, #1203), which chains after 0072."""
-    if "0075" not in _TEMPLATE:
-        path = tmp_path_factory.mktemp("tpl0074") / "0075.db"
-        command.upgrade(_cfg(f"sqlite:///{path}"), "0075")
-        _TEMPLATE["0075"] = path
+    """0074's parent is 0076 (ZT, #1347), which chains after 0075 and 0072."""
+    if "0076" not in _TEMPLATE:
+        path = tmp_path_factory.mktemp("tpl0074") / "0076.db"
+        command.upgrade(_cfg(f"sqlite:///{path}"), "0076")
+        _TEMPLATE["0076"] = path
 
 
 def _at_parent(tmp_path) -> tuple[str, sa.Engine]:
     target = tmp_path / "db.sqlite"
-    shutil.copyfile(_TEMPLATE["0075"], target)
+    shutil.copyfile(_TEMPLATE["0076"], target)
     url = f"sqlite:///{target}"
     return url, sa.create_engine(url, future=True)
 
@@ -165,7 +165,7 @@ def test_the_downgrade_refuses_while_a_row_holds_a_value_0074_added(tmp_path, va
     command.upgrade(_cfg(url), "0074")
     _set(engine, item, **values)
     with pytest.raises(RuntimeError, match=r"Refusing to downgrade 0074: 1 capability item holds"):
-        command.downgrade(_cfg(url), "0075")
+        command.downgrade(_cfg(url), "0076")
     assert _head(engine) == "0074"
     assert set(_columns(engine)) >= NEW_COLUMNS
 
@@ -178,7 +178,7 @@ def test_the_refusal_names_the_clearing_statements_and_they_let_the_downgrade_th
     command.upgrade(_cfg(url), "0074")
     _set(engine, item, cost_source="ai_estimate", cost_estimate_basis="List price.")
     with pytest.raises(RuntimeError) as refused:
-        command.downgrade(_cfg(url), "0075")
+        command.downgrade(_cfg(url), "0076")
     message = str(refused.value)
     clear_estimates = (
         "UPDATE capability_items SET annual_cost_usd = NULL WHERE cost_source = 'ai_estimate'"
@@ -189,8 +189,8 @@ def test_the_refusal_names_the_clearing_statements_and_they_let_the_downgrade_th
     with engine.begin() as conn:
         conn.execute(sa.text(clear_estimates))
         conn.execute(sa.text(clear_labels))
-    command.downgrade(_cfg(url), "0075")
-    assert _head(engine) == "0075"
+    command.downgrade(_cfg(url), "0076")
+    assert _head(engine) == "0076"
     assert NEW_COLUMNS.isdisjoint(_columns(engine))
     with engine.connect() as conn:
         cost = conn.execute(
@@ -204,6 +204,6 @@ def test_an_empty_downgrade_goes_through(tmp_path) -> None:
     url, engine = _at_parent(tmp_path)
     _item(engine)
     command.upgrade(_cfg(url), "0074")
-    command.downgrade(_cfg(url), "0075")
-    assert _head(engine) == "0075"
+    command.downgrade(_cfg(url), "0076")
+    assert _head(engine) == "0076"
     assert NEW_COLUMNS.isdisjoint(_columns(engine))
