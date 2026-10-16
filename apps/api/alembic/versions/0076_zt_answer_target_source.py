@@ -1,11 +1,11 @@
 """ZT per-capability target provenance (#982, option (A)).
 
 Revision ID: 0076
-Revises: 0072
+Revises: 0075
 
 Numbered 0076 by the advisor's ruling (#736 6217663777). `down_revision` is
-the single head on main today (0072); it is re-derived whichever of 0074
-(Tech Debt, #1060) and 0075 (CSF, #1203) lands first, so main has one head at
+the single head on main when this was last merged (0075, CSF, #1203). It is
+re-derived if 0074 (Tech Debt, #1060) lands first, so main has one head at
 every merge.
 
 The AI stopped writing targets with #981 (2026-10-13), and the advisor ruled
@@ -39,7 +39,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0076"
-down_revision: str | Sequence[str] | None = "0072"
+down_revision: str | Sequence[str] | None = "0075"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
