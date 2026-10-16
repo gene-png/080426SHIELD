@@ -214,4 +214,6 @@ def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
         assert leaked not in cleaned, f"{leaked!r} survived"
     # And no more than the window went: Dana, Thanks, the title and the first
     # two appendix lines are its five non-blank lines.
-    assert "Appendix line 2 lists" in cleaned and "Appendix line 1 lists" not in cleaned
+    assert "Appendix line 1 lists" not in cleaned
+    for kept in ("Appendix line 2 lists", "Appendix line 3 lists", "Appendix line 4 lists"):
+        assert kept in cleaned, f"{kept!r} was cut, past the window"
