@@ -97,7 +97,12 @@ export function Step6Review({
     let cancelled = false;
     listArtifacts()
       .then((res) => {
-        if (!cancelled) setArtifacts(res.items ?? []);
+        if (cancelled) return;
+        // A 200 with no item list is a failed load, never an empty one
+        // (review of 8a60a50a): `?? []` turned it into "No documents
+        // uploaded".
+        if (Array.isArray(res.items)) setArtifacts(res.items);
+        else setListError("Failed to load uploads.");
       })
       .catch((err) => {
         // Non-blocking: the list is confirmation, not a submit gate. But say
