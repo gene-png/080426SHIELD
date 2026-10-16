@@ -41,6 +41,7 @@ from app.csf.catalog import SUBCATEGORIES
 # instance 1 of #72, recorded in CLAUDE.md.
 from app.routes.csf import _DIM_FIELDS
 from tests._ai_runs import csf_run_ai
+from tests._csf_notes import note_every_answer
 
 # The exact keys routes/csf.py:run_ai depends on when parsing the response.
 _PARSER_TOP_LEVEL_KEY = "scores"
@@ -113,6 +114,8 @@ def _bootstrap(c: TestClient) -> tuple[dict, str]:
     ]
     c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    # CSF Option 1 (D-113): only rows whose answer has notes are sent.
+    note_every_answer(svc_id)
     return h, svc_id
 
 

@@ -108,6 +108,19 @@ test.describe("s20 /admin/audit — read-only audit viewer", () => {
     );
     expect(seedRes.ok(), `seed profiles (${seedRes.status()})`).toBeTruthy();
 
+    // CSF Option 1 (D-113): only a subcategory whose answer has notes is sent
+    // to the AI, and with none there is no csf_score call to list. One answer
+    // gets notes, so the run makes its call.
+    const answers = (
+      (await assessRes.json()) as { answers: Array<{ id: string }> }
+    ).answers;
+    expect(answers.length, "the assessment has answer rows").toBeGreaterThan(0);
+    const notesRes = await request.patch(
+      `${API_BASE}/csf/answers/${answers[0].id}`,
+      { headers, data: { notes: "Access reviews are run every quarter." } },
+    );
+    expect(notesRes.ok(), `record notes (${notesRes.status()})`).toBeTruthy();
+
     const runRes = await request.post(
       `${API_BASE}/csf/services/${serviceId}/run-ai`,
       { headers, data: { serves: "offline" } },

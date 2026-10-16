@@ -76,7 +76,10 @@ def _row(c: TestClient, h: dict, svc_id: str, tier: str, code: str) -> dict:
 
 
 @pytest.mark.unit
-def test_seed_and_evidence_cap(app_client) -> None:
+def test_seed_and_no_evidence_cap_on_a_draft(app_client) -> None:
+    """CSF Option 3 (D-113): on an assessment not approved under rules 1 or 2,
+    evidence labels a level and never caps it. The frozen cap is pinned in
+    `test_csf_self_reported_and_uncapped.py` (`test_a_frozen_assessment_keeps_the_cap`)."""
     c = app_client
     h, svc_id = _bootstrap(c)
     seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
@@ -85,7 +88,7 @@ def test_seed_and_evidence_cap(app_client) -> None:
     assert len(rows) == len(SUBCATEGORIES)
 
     sid = rows[0]["id"]
-    # Full marks, NO evidence -> Implementation capped to 1, level capped to 2.
+    # Full marks, NO evidence: total 10, level 5, nothing capped.
     r = c.patch(
         f"/csf/dimension-scores/{sid}",
         headers=h,
@@ -100,13 +103,14 @@ def test_seed_and_evidence_cap(app_client) -> None:
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["total"] == 9  # 2+2+1+2+2
-    assert body["level"] == 2
-    assert body["evidence_capped"] is True
+    assert body["total"] == 10
+    assert body["level"] == 5
+    assert body["evidence_capped"] is False
 
-    # Same scores WITH evidence -> total 10, level 5.
+    # Same scores WITH evidence: the same total and level.
     r2 = c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"has_evidence": True})
     assert r2.json()["total"] == 10 and r2.json()["level"] == 5
+    assert r2.json()["evidence_status"] == "on_file"
 
 
 @pytest.mark.unit

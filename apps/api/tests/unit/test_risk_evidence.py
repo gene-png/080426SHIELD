@@ -163,7 +163,12 @@ def _seed_csf(c, h: dict) -> None:
     Both tiers at 2, so the Enterprise level is 2, below the target of 3.
 
     The questionnaire note on CSF_A is set too: ruling 3 says it is no longer
-    sent, and the Playbook does not read it."""
+    sent, and the Playbook does not read it.
+
+    Since CSF Options 1 and 3 (D-113) only an assessment approved under rules
+    1 or 2 is capped, so this one is recorded as approved under 2 after its
+    approve, which now stamps 3: ruling 2's `evidence_capped` is about such an
+    assessment."""
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()
     a = c.post(f"/csf/services/{svc['id']}/assessments", headers=h).json()
     seeded = c.post(
@@ -199,6 +204,23 @@ def _seed_csf(c, h: dict) -> None:
     assert r.status_code == 200, r.text
     r = c.post(f"/csf/assessments/{a['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
+    _approved_before_option_3(a["id"])
+
+
+def _approved_before_option_3(assessment_id: str) -> None:
+    """Setup only: the rules value an assessment approved under #1031, before
+    Options 1 and 3, carries (`app/csf/rules.py`, 2)."""
+    from app.models.csf_assessment import CsfAssessment
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        n = db.execute(
+            update(CsfAssessment)
+            .where(CsfAssessment.id == uuid.UUID(assessment_id))
+            .values(rollup_rules=2)
+        ).rowcount
+        db.commit()
+    assert n == 1, n
 
 
 def _seed_zt(c, h: dict) -> None:

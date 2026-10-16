@@ -29,6 +29,7 @@ import pytest
 from app.ai.llm import LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch
+from tests._csf_notes import note_every_answer
 from tests.unit.test_risk_baseline_disclosure import _client_dashboard, _latest
 from tests.unit.test_risk_per_service import _export_texts
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
@@ -91,6 +92,8 @@ def _world(
         from app.routes.csf import _llm_dep as csf_llm_dep
 
         c.app.dependency_overrides[csf_llm_dep] = lambda: LLMClient(provider)
+        # CSF Option 1 (D-113): only rows whose answer has notes are sent.
+        note_every_answer(sid)
         provider.register(
             "csf_score",
             csf_scores_by_batch(

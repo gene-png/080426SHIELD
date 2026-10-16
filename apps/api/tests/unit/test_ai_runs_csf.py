@@ -26,6 +26,7 @@ from app.ai.llm import FixtureProvider, LLMClient
 from app.models.csf_profile import CsfDimensionScore
 from app.storage.local import LocalFilesystemStorage
 from tests._ai_runs import DeferringRunner, csf_scores_by_batch, defer_runs, get_run, start_run
+from tests._csf_notes import note_every_answer
 
 
 @dataclass
@@ -127,6 +128,8 @@ def world(tmp_path) -> Iterator[World]:
             f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]}
         )
         assert seeded.status_code in (200, 201), seeded.text
+        # CSF Option 1 (D-113): only rows whose answer has notes are sent.
+        note_every_answer(svc_id)
         rows = c.get(f"/csf/services/{svc_id}/profile/high", headers=h).json()["rows"]
         assert len(rows) >= 3
         yield World(c, app, sessions, provider, h, svc_id, a.json()["id"], rows)

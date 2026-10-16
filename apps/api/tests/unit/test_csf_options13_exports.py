@@ -69,7 +69,8 @@ def test_a_draft_export_has_no_cap_and_states_not_scored(app_client) -> None:  #
     scored = _table_row(sheets["Enterprise Profile"], CODE)
     assert scored["Enterprise"] == "L3", scored  # positive first
     other = _table_row(sheets["Enterprise Profile"], OTHER)
-    assert (other["Enterprise"], other["Rule"]) == ("Not scored", ""), other
+    # An empty cell reads back as None.
+    assert (other["Enterprise"], other["Rule"]) == ("Not scored", None), other
     total = len(sheets["Enterprise Profile"]) - 2  # banner and header rows
     cover = _cover_text(sheets)
     assert (

@@ -81,7 +81,7 @@ def has_recorded_value_besides_target(row: Any) -> bool:
         or row.evidence_artifact_id is not None
         # Migration 0074: any recorded evidence value, `confirmed_in_discussion`
         # included, is something a consultant wrote.
-        or row.evidence_status != CsfEvidenceStatus.NEITHER
+        or row.evidence_status not in (None, CsfEvidenceStatus.NEITHER)
         or not row.in_scope
     )
 

@@ -198,7 +198,9 @@ def _profile(engine, assessment_id) -> dict[tuple[str, str], tuple]:
                 r.monitoring,
                 r.improvement,
                 r.in_scope,
-                r.has_evidence,
+                # No `has_evidence`: since migration 0074 the model maps
+                # `evidence_status` in its place, which this schema lacks. No
+                # row here sets it, so it read False on every row before.
                 r.locked,
                 r.target_level,
                 r.answer_source,
