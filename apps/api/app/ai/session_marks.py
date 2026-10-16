@@ -17,7 +17,10 @@ outermost transaction ends (commit, rollback or close):
   INSERT / UPDATE / DELETE statement;
 * `_FOR_UPDATE`: an ORM SELECT carrying `with_for_update()`.
 
-RESIDUAL: a raw `text("... FOR UPDATE")` or a Core statement run on the
+RESIDUAL: the flush mark is taken in `before_flush`, so an object that a
+`before_flush` listener registered AFTER this one adds or changes is not seen
+(#1362 review); today the only other one, `_block_audit_mutations`, only
+raises. And a raw `text("... FOR UPDATE")` or a Core statement run on the
 connection is not seen. No AI caller does either today (the #1025 lock sweep,
 #736 6210729795); the marks are a floor, not a census.
 """
@@ -69,7 +72,7 @@ def end_read_transaction(db: Session, *, where: str) -> None:
     pooled connection while the provider answers.
 
     Refuses, loudly and naming `where`, a transaction that has written --
-    pending objects, a flush, or a DML statement -- because committing it here
+    pending objects, a flush with a net change, or a DML statement -- because committing it here
     would make a run's partial writes durable before the run knows it
     succeeded, and rolling it back would lose them. A caller that must write
     first has to be reshaped, not passed through.

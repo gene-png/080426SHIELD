@@ -38,3 +38,26 @@ def test_a_real_change_beside_it_is_still_refused(app_client) -> None:  # noqa: 
         with pytest.raises(RuntimeError, match=r"^test: the session has written"):
             end_read_transaction(db, where="test")
         db.rollback()
+
+
+@pytest.mark.parametrize("what", ["insert", "delete"])
+def test_a_flushed_insert_or_delete_is_still_refused(app_client, what: str) -> None:  # noqa: F811
+    """The other two branches of the flush mark (review of a6720311): after the
+    flush nothing is pending, so only the mark can refuse."""
+    TestSession, _provider, _llm, _uid, cid, Client = _invoke_world(app_client)
+    with TestSession() as setup:
+        doomed = Client(legal_name="To be deleted")
+        setup.add(doomed)
+        setup.commit()
+        doomed_id = doomed.id
+    with TestSession() as db:
+        db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        if what == "insert":
+            db.add(Client(legal_name="Added mid-read"))
+        else:
+            db.delete(db.get(Client, doomed_id))
+        db.flush()
+        assert (len(db.new), len(db.deleted)) == (0, 0), "setup: nothing is pending"
+        with pytest.raises(RuntimeError, match=r"^test: the session has written"):
+            end_read_transaction(db, where="test")
+        db.rollback()
