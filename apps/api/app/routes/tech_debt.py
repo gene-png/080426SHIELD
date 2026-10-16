@@ -1903,6 +1903,9 @@ def _cost_estimate_run_work(
             item.cost_estimate_basis = estimate.basis
             estimated += 1
     counts = {
+        # The list this run wrote: how the #646 stamp (`mode_stamp`) ties an
+        # estimate run to the list, as it does an extraction run.
+        "capability_list_id": str(cap_list.id),
         "asked": len(asked),
         "estimated": estimated,
         "declined": declined,

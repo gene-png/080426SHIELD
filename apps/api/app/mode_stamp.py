@@ -234,7 +234,7 @@ def ai_mode_for_capability_list(
     candidates = db.execute(
         select(AiRun).where(
             AiRun.service_id == service_id,
-            AiRun.purpose == run_purpose,
+            AiRun.purpose.in_((run_purpose, *_TECH_DEBT_EXTRA_RUN_PURPOSES)),
             AiRun.status == AiRunStatus.COMPLETED,
         )
     ).scalars()
@@ -272,6 +272,12 @@ _PURPOSES: dict[ServiceKind, tuple[str, str]] = {
     ServiceKind.ZERO_TRUST_DOD: ("zt_score", "zt_score"),
     ServiceKind.TECH_DEBT: ("tech_debt_extract", "extract.capabilities"),
 }
+
+#: TD-5 (for #1060): Tech Debt's OTHER run that writes AI values into a list,
+#: the opt-in cost estimate (`tech_debt/cost_estimate.py` PURPOSE). Counted
+#: with the extraction, so a fixture-mode estimate under a live extraction
+#: stamps "mixed", never "live". Its result names the list it wrote.
+_TECH_DEBT_EXTRA_RUN_PURPOSES: tuple[str, ...] = ("tech_debt.cost_estimate",)
 
 
 def ai_mode_for(db: Session, service: Service, subject: Any) -> AiModeStamp:
