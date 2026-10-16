@@ -622,66 +622,164 @@ def _count_replacements(pattern: re.Pattern[str], text: str) -> int:
     return sum(1 for _ in pattern.finditer(text))
 
 
-def _redact_signature_blocks(text: str) -> tuple[str, int, int]:
-    """Strip everything from a signature opener line to end of input.
+SignatureScope = Literal["to_end", "block"]
+
+
+def _next_nonblank(lines: list[str], idx: int) -> list[tuple[int, str]]:
+    """The first `_SIGNATURE_LOOKAHEAD_LINES` non-blank lines after `idx`, with
+    their indices.
+
+    BOUNDED, and that is the point (#1108): the rule used to copy and strip
+    EVERY remaining line for every opener that did not lead to a cut, then read
+    five of them. O(openers x lines), quadratic on a document of "Best" /
+    sentence pairs. Only blank lines are walked past without counting, and the
+    next opener is itself non-blank, so the walk is bounded by the next few
+    openers.
+    """
+    found: list[tuple[int, str]] = []
+    for j in range(idx + 1, len(lines)):
+        if lines[j].strip():
+            found.append((j, lines[j]))
+            if len(found) == _SIGNATURE_LOOKAHEAD_LINES:
+                break
+    return found
+
+
+def _block_end(lines: list[str], idx: int) -> int:
+    """The last line of the sign-off block that starts at `idx` (`block` scope).
+
+    THE LOOKAHEAD WINDOW, as ruled (#736 6128447366 item 2: "bound the signature
+    cut for documents to its lookahead window"): every line up to and including
+    the `_SIGNATURE_LOOKAHEAD_LINES`-th non-blank line after the opener, blank
+    lines and sentences inside it included. It stops early only at a line
+    that starts a block of its own (`_starts_block`), which the scan then cuts.
+
+    It does NOT stop at a blank line or at a sentence, and both were tried: a
+    blank line between the name and the title, and a title ending in an
+    abbreviation ("... Solutions Inc.", which `_looks_like_prose` calls a
+    sentence), each left the title, org and contact lines in the text (review
+    of 3c82777d). Inside the window this errs toward removing, as the rest of
+    this rule does; past it, a document's text is kept.
+    """
+    end = idx
+    seen = 0
+    for j in range(idx + 1, len(lines)):
+        stripped = lines[j].strip()
+        if not stripped:
+            continue
+        # Only a line that STARTS a block of its own ends this one. A bare
+        # opener word that starts nothing ("Thanks" over a long title line) is
+        # part of this window, or the title after it would survive (review of
+        # 578e42b6).
+        if _starts_block(lines, j):
+            break
+        seen += 1
+        end = j
+        if seen == _SIGNATURE_LOOKAHEAD_LINES:
+            break
+    return end
+
+
+def _redact_signature_blocks(text: str, scope: SignatureScope = "to_end") -> tuple[str, int, int]:
+    """Strip a signature block: from its opener line to end of input (`to_end`),
+    or the block alone (`block`).
+
+    `to_end` is every chat-sized field's rule and is unchanged: there the
+    sign-off IS the end. `block` is for a DOCUMENT (#736 6128447366 item 2),
+    where one "Sincerely," near the top deleted everything after it: each block
+    is replaced on its own -- the opener (or inline sign-off) line through its
+    lookahead window, see `_block_end` -- and the scan continues after it, so a
+    second letter's sign-off is cut too. Text past a window is KEPT; a
+    signature longer than the window keeps its tail, which the other rules
+    (email, phone, address, names) still see.
 
     Returns ``(cleaned, count, removed_chars)``. The third value exists because
-    this rule DELETES an arbitrary suffix: `signature_block: 1` said only "it
-    fired", which is not the question an audit row answers for a destructive
-    rule. A four-line sign-off and two thirds of a truncated document produced
-    identical ledger entries (#135).
+    this rule DELETES text: `signature_block: 1` said only "it fired", which is
+    not the question an audit row answers for a destructive rule. A four-line
+    sign-off and two thirds of a truncated document produced identical ledger
+    entries (#135). `count` is the number of blocks cut (at most 1 for `to_end`).
 
     An opener only counts when the next NON-BLANK line looks like a signatory --
     see `_looks_like_a_signatory` and the note above the opener list. Blank lines
     are skipped, because "Regards," followed by a blank line and then a name is
     the ordinary shape of a real sign-off.
     """
+    if scope not in ("to_end", "block"):
+        raise ValueError(f"signature_scope must be 'to_end' or 'block', not {scope!r}")
     lines = text.splitlines(keepends=True)
-    cut: int | None = None
-    for idx, raw in enumerate(lines):
-        # B6: the opener and the signatory can share a line.
-        if _split_inline_signoff(raw):
-            cut = idx
+    if scope == "to_end":
+        cut = _first_signature_cut(lines, 0)
+        if cut is None:
+            return text, 0, 0
+        head = "".join(lines[:cut])
+        removed = len(text) - len(head)
+        return head + PLACEHOLDER_SIGNATURE + "\n", 1, removed
+    out: list[str] = []
+    count = removed = 0
+    start = 0
+    while True:
+        cut = _first_signature_cut(lines, start)
+        if cut is None:
+            out.extend(lines[start:])
             break
-        if raw.strip().lower().rstrip(",.!") not in _SIGNATURE_OPENERS:
-            continue
-        following = [nxt for nxt in lines[idx + 1 :] if nxt.strip()]
-        if not following:
-            continue
-        # Walk forward line by line and STOP AT THE FIRST SENTENCE.
-        #
-        # The previous version asked whether ANY of the next five lines was
-        # contact-shaped, independently of what lay between -- and
-        # `_RE_CONTACT_HINT` fires on any IP address, any date, and any run of
-        # seven digits. Zero Trust findings are made of IP addresses and Tech
-        # Debt notes are made of dates and spend figures, so a wrapped `Best`
-        # or `Thanks` anywhere near ordinary technical content deleted the rest
-        # of the input and recorded a successful redaction (#135, reintroduced
-        # by its own fix).
-        #
-        # The contact hint is still needed -- "Regards," followed by a phone
-        # number or an email is a real layout the name test alone rejects. What
-        # it must not do is reach ACROSS prose to find its evidence.
-        for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]:
-            candidate = nxt.strip()
-            # PROSE IS CHECKED FIRST, and the order is load-bearing. A
-            # sentence is still a sentence when it contains an IP address, and
-            # the contact hint matches any dotted quad -- so testing the hint
-            # first put `10.20.30.40 remains reachable.` back in the cut path,
-            # which is B1 wearing different clothes. Caught by the truth table
-            # in the round that introduced it.
-            if _looks_like_prose(candidate):
-                break
-            if _looks_like_a_signatory(candidate) or _RE_CONTACT_HINT.search(candidate):
-                cut = idx
-                break
-        if cut is not None:
-            break
-    if cut is None:
-        return text, 0, 0
-    head = "".join(lines[:cut])
-    removed = len(text) - len(head)
-    return head + PLACEHOLDER_SIGNATURE + "\n", 1, removed
+        end = _block_end(lines, cut)
+        out.extend(lines[start:cut])
+        out.append(PLACEHOLDER_SIGNATURE + "\n")
+        removed += sum(len(line) for line in lines[cut : end + 1])
+        count += 1
+        start = end + 1
+    return "".join(out), count, removed
+
+
+def _first_signature_cut(lines: list[str], start: int) -> int | None:
+    """The index of the first line at or after `start` that begins a sign-off
+    block, or None."""
+    for idx in range(start, len(lines)):
+        if _starts_block(lines, idx):
+            return idx
+    return None
+
+
+def _starts_block(lines: list[str], idx: int) -> bool:
+    """Whether line `idx` begins a sign-off block: an inline sign-off, or an
+    opener whose lookahead finds a signatory or contact line before a sentence.
+    Bounded by the lookahead window, so asking it of any line is cheap."""
+    raw = lines[idx]
+    # B6: the opener and the signatory can share a line.
+    if _split_inline_signoff(raw):
+        return True
+    if raw.strip().lower().rstrip(",.!") not in _SIGNATURE_OPENERS:
+        return False
+    following = [nxt for _j, nxt in _next_nonblank(lines, idx)]
+    if not following:
+        return False
+    # Walk forward line by line and STOP AT THE FIRST SENTENCE.
+    #
+    # The previous version asked whether ANY of the next five lines was
+    # contact-shaped, independently of what lay between -- and
+    # `_RE_CONTACT_HINT` fires on any IP address, any date, and any run of
+    # seven digits. Zero Trust findings are made of IP addresses and Tech
+    # Debt notes are made of dates and spend figures, so a wrapped `Best`
+    # or `Thanks` anywhere near ordinary technical content deleted the rest
+    # of the input and recorded a successful redaction (#135, reintroduced
+    # by its own fix).
+    #
+    # The contact hint is still needed -- "Regards," followed by a phone
+    # number or an email is a real layout the name test alone rejects. What
+    # it must not do is reach ACROSS prose to find its evidence.
+    for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]:
+        candidate = nxt.strip()
+        # PROSE IS CHECKED FIRST, and the order is load-bearing. A
+        # sentence is still a sentence when it contains an IP address, and
+        # the contact hint matches any dotted quad -- so testing the hint
+        # first put `10.20.30.40 remains reachable.` back in the cut path,
+        # which is B1 wearing different clothes. Caught by the truth table
+        # in the round that introduced it.
+        if _looks_like_prose(candidate):
+            return False
+        if _looks_like_a_signatory(candidate) or _RE_CONTACT_HINT.search(candidate):
+            return True
+    return False
 
 
 _STREET_WORDS = (
@@ -1393,19 +1491,29 @@ def redact_for_ai(
     mode: RedactionMode = "strict",
     client_org_name: str | None = None,
     name_hints: Iterable[str] = (),
+    signature_scope: SignatureScope = "to_end",
 ) -> tuple[str, dict[str, int]]:
     """Redact PII from `text`. Returns the cleaned text + a counts dict.
 
     `mode="off"` returns the original text and an empty counts dict.
     Production refuses `off` via `Settings.assert_safe_for_runtime`.
+
+    `signature_scope` is "to_end" (the default: a sign-off ends a chat-sized
+    field, so everything from it is cut) or "block" (a DOCUMENT: each sign-off
+    block is cut on its own, from the sign-off through its five-line lookahead
+    window, and the text after the window kept, #1108). `counts` says how many
+    blocks were cut (`signature_block`), not how much went. An unknown value
+    raises ValueError, in every mode.
     """
+    if signature_scope not in ("to_end", "block"):
+        raise ValueError(f"signature_scope must be 'to_end' or 'block', not {signature_scope!r}")
     counts: dict[str, int] = {}
     if mode == "off":
         return text, counts
 
     # Signature blocks first: they hide tail content from being redacted
     # twice when the block contains names + phones + emails.
-    cleaned, c, removed_chars = _redact_signature_blocks(text)
+    cleaned, c, removed_chars = _redact_signature_blocks(text, signature_scope)
     if c:
         counts["signature_block"] = c
         # NOT the character count. `removed_chars` is computed and deliberately

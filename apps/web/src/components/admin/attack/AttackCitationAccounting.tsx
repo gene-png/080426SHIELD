@@ -105,7 +105,11 @@ function OmittedItems<T extends AttackOmittedTechnique>({
  * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
  *
  * Not a refusal: an entry that names a technique and is refused is an answer,
- * not an omission. Only the N/A and forbidden-reason refusals are counted in
+ * not an omission. One exception since #1047: a technique the first pass left
+ * out whose RE-ASK answer is refused stays here (nothing applied it), so it
+ * can be counted both here and on the N/A or forbidden-reason line below; each
+ * line is true of it, and they are not to be added up. Only the N/A and
+ * forbidden-reason refusals are counted in
  * this panel, on their own lines further down (`not_applicable_refused`,
  * `forbidden_reason_refused`); the rest are only in the audit row's `details`
  * and reach no screen (#859). A failed batch's techniques are the failed-batch
@@ -177,6 +181,33 @@ function AttackOmittedBlock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * #1047: the run asked a second time about the techniques a successful batch
+ * left out. The omitted block above already counts what is STILL missing
+ * after that; this line says the second ask happened, and how many of its
+ * requests failed. Copy R-1047-1, approved verbatim (#736 comment 6206422365),
+ * counts comma-formatted.
+ *
+ * Absent (a run stored before #1047) or 0 renders nothing.
+ */
+function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
+  const asked = result.reasked_count ?? 0;
+  if (asked === 0) return null;
+  const total = result.reask_batches_total ?? 0;
+  const failed = result.reask_batches_failed ?? 0;
+  const count = (n: number) => n.toLocaleString("en-US");
+  return (
+    <p className="text-ink-secondary" data-testid="attack-reask">
+      {asked === 1
+        ? "1 technique the AI left out was asked about again."
+        : `${count(asked)} techniques the AI left out were asked about again.`}
+      {failed > 0
+        ? ` ${count(failed)} of ${count(total)} of those follow-up requests failed, so those techniques are still listed above as left out.`
+        : null}
+    </p>
   );
 }
 
@@ -286,6 +317,7 @@ export function AttackCitationAccounting({
         result={result}
         otherAlert={runIncomplete || rejected > 0}
       />
+      <AttackReaskLine result={result} />
 
       {pendingRows > 0 ? (
         <p
