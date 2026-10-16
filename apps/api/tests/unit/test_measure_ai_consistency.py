@@ -409,8 +409,15 @@ def test_reopening_a_released_assessment_measures_its_answers_and_says_so(world)
 
 
 def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
+    from app.models.zt_assessment import ZtAnswer
+
     c, TestSession, provider = world
     code = _zt_assessment(c)
+    # #1084: a capability is sent, and its answer measured, only with notes.
+    with TestSession() as db:
+        row = db.execute(select(ZtAnswer).where(ZtAnswer.capability_code == code)).scalar_one()
+        row.notes = "MFA everywhere."
+        db.commit()
     provider.register_static(
         "zt_score",
         LLMResponse(

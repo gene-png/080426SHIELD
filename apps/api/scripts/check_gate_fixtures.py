@@ -160,6 +160,21 @@ DEFERRED: dict[str, str] = {
         "143 with no probe left. Red-on-revert, 2026-09-24: four mutations, each "
         "red on its named failure."
     ),
+    "preflight_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Drives the REAL `scripts/preflight.sh` and the REAL planner over a fixture "
+        "repository, with a stub `docker` that prints one status line per planned "
+        "step: every step 0 must PASS (exit 0); a planned step with no status line "
+        "must be COULD-NOT-LOOK (2); a failed step FAIL (1); an advisory failure "
+        "still PASS; usage errors and a dirty tree 2; the summary says NARROW by "
+        "default and FULL when asked; prettier or the web checks failing is FAIL, "
+        "their could-not-look is 2, and a NARROW skip of them is stated; a gate "
+        "only the base has runs (the base is merged in), and a conflicting base "
+        "is 2. Red-on-revert, 2026-10-16: a missing status read as 0, the "
+        "dirty-tree check, the grep that ended the script early under pipefail, "
+        "prettier's and the web checks' status ignored, and the merge removed "
+        "each red their cases."
+    ),
     "unit_in_worktree_status.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally with REAL RUNS of "

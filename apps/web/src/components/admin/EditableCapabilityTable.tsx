@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn, StatusPill } from "@shield/design-system";
 
 import { patchCapabilityItem, proxyMessage } from "@/lib/tech_debt/client";
+import type { TechDebtCategories } from "@/lib/tech_debt/client";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
@@ -20,6 +21,12 @@ import type { JSX } from "react";
 export interface EditableCapabilityTableProps {
   items: CapabilityItem[];
   onItemUpdate: (next: CapabilityItem) => void;
+  /**
+   * #1176: the category dropdown's options (`GET /tech-debt/categories`).
+   * Absent or null while loading or after a failed load: the category control
+   * is then disabled and shows only the stored value.
+   */
+  categories?: TechDebtCategories | null;
   /**
    * Name the capabilities inside a bundled licence (UX finding 5). Omitted on
    * read-only lists.
@@ -83,6 +90,11 @@ const UNDECIDED = "undecided";
 const cellInputClasses = cn(inputClasses, "w-full min-w-0");
 const cellSelectClasses = cn(selectClasses, "w-full min-w-0");
 
+/** #1175: the category a sort or filter reads; null is "Uncategorized". */
+function categoryOf(item: CapabilityItem): string {
+  return item.category ?? "Uncategorized";
+}
+
 function fmtCurrency(value: number | null): string {
   if (value === null) return "";
   return value.toLocaleString();
@@ -117,6 +129,68 @@ function parseInt32(raw: string): number | null {
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
+/**
+ * #1176: the category cell, a dropdown of the API's closed list plus
+ * "Uncategorized" (stored as null). A stored value outside the list is shown
+ * as "{value} (not on the list)" and kept until the consultant picks another,
+ * never remapped. Without a list (still loading, or it failed and the table
+ * says so) the control is disabled and shows only the current value, rather
+ * than falling back to free text.
+ */
+function CategorySelect({
+  value,
+  categories,
+  readOnly,
+  className,
+  onChange,
+}: {
+  value: string | null;
+  categories: TechDebtCategories | null | undefined;
+  readOnly: boolean;
+  className: string;
+  onChange: (next: string | null) => void;
+}): JSX.Element {
+  const uncategorized = categories?.uncategorized_label ?? "Uncategorized";
+  if (!categories) {
+    return (
+      <select
+        disabled
+        value={value ?? ""}
+        onChange={() => undefined}
+        className={className}
+        aria-label="Category"
+        title={value ?? uncategorized}
+      >
+        <option value={value ?? ""}>{value ?? uncategorized}</option>
+      </select>
+    );
+  }
+  const offList = value !== null && !categories.categories.includes(value);
+  return (
+    <select
+      value={value ?? ""}
+      disabled={readOnly}
+      onChange={(e) => {
+        const next = e.target.value === "" ? null : e.target.value;
+        if (next !== value) onChange(next);
+      }}
+      className={className}
+      aria-label="Category"
+      title={value ?? uncategorized}
+    >
+      <option value="">{uncategorized}</option>
+      {offList ? (
+        <option value={value ?? ""}>{`${value} (not on the list)`}</option>
+      ) : null}
+      {categories.categories.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** AI Prompt §6.2: AI output renders as a real editable table, NOT as raw JSON. */
 export function EditableCapabilityTable({
   items,
@@ -124,6 +198,7 @@ export function EditableCapabilityTable({
   onSplitBundle,
   readOnly = false,
   onBulkDisposition,
+  categories,
 }: EditableCapabilityTableProps): JSX.Element {
   const [saveState, setSaveState] = React.useState<SaveStateById>({});
   /** #879: the API's reason for the last refused save, per row. */
@@ -139,6 +214,32 @@ export function EditableCapabilityTable({
 
   // Each bundle is immediately followed by the components named inside it, so
   // the relationship is readable without a tree widget (UX finding 5).
+  //
+  // #1175: sort and filter by category. A sort moves whole groups by the
+  // bundle's category, so a part never leaves its bundle; a filter matches each
+  // row on its own category (a part shown alone keeps its "in bundle" marker).
+  // "Uncategorized" is a null category.
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc" | null>(null);
+  const [filterCats, setFilterCats] = React.useState<string[]>([]);
+  const presentCategories = React.useMemo(
+    () =>
+      Array.from(new Set(items.map(categoryOf))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [items],
+  );
+  // DERIVED for this render: a chosen category no row has any more (an edit
+  // moved its last row) drops out of the filter, so a stale choice can never
+  // hide every row behind a filter that shows nothing selected.
+  const activeFilter = React.useMemo(
+    () => filterCats.filter((c) => presentCategories.includes(c)),
+    [filterCats, presentCategories],
+  );
+  // ...and dropped from state too, so a later edit bringing the category back
+  // cannot switch on a filter the user has seen as off.
+  React.useEffect(() => {
+    if (activeFilter.length !== filterCats.length) setFilterCats(activeFilter);
+  }, [activeFilter, filterCats]);
   const ordered = React.useMemo(() => {
     const children = new Map<string, CapabilityItem[]>();
     for (const it of items) {
@@ -147,10 +248,25 @@ export function EditableCapabilityTable({
       list.push(it);
       children.set(it.parent_item_id, list);
     }
-    return items
-      .filter((it) => !it.parent_item_id)
-      .flatMap((parent) => [parent, ...(children.get(parent.id) ?? [])]);
-  }, [items]);
+    const parents = items.filter((it) => !it.parent_item_id);
+    if (sortDir !== null) {
+      // A stable sort, so rows sharing a category keep their list order.
+      parents.sort(
+        (a, b) =>
+          categoryOf(a).localeCompare(categoryOf(b)) *
+          (sortDir === "asc" ? 1 : -1),
+      );
+    }
+    const grouped = parents.flatMap((parent) => [
+      parent,
+      ...(children.get(parent.id) ?? []),
+    ]);
+    return activeFilter.length === 0
+      ? grouped
+      : grouped.filter((it) => activeFilter.includes(categoryOf(it)));
+  }, [items, sortDir, activeFilter]);
+  // The selection is over the rows SHOWN, so a bulk action never reaches a
+  // row a filter hides (`useRowSelection` derives from the current ids).
   const orderedIds = React.useMemo(() => ordered.map((i) => i.id), [ordered]);
   const selection = useRowSelection(orderedIds);
   const [bulkChoice, setBulkChoice] = React.useState("");
@@ -273,8 +389,40 @@ export function EditableCapabilityTable({
                     col.numeric ? "text-right" : "text-left",
                   )}
                   style={{ width: `${col.rem}rem` }}
+                  // The header's own name, so each cell announces "Category"
+                  // rather than the sort button's "Sort by category".
+                  aria-label={col.label === "Category" ? "Category" : undefined}
+                  aria-sort={
+                    col.label === "Category" && sortDir !== null
+                      ? sortDir === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : undefined
+                  }
                 >
-                  {col.label}
+                  {col.label === "Category" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSortDir((d) =>
+                          d === null ? "asc" : d === "asc" ? "desc" : null,
+                        )
+                      }
+                      aria-label="Sort by category"
+                      className="uppercase tracking-wider hover:text-ink-primary"
+                    >
+                      {col.label}
+                      <span aria-hidden="true">
+                        {sortDir === "asc"
+                          ? " ▲"
+                          : sortDir === "desc"
+                            ? " ▼"
+                            : ""}
+                      </span>
+                    </button>
+                  ) : (
+                    col.label
+                  )}
                 </th>
               ),
             )}
@@ -423,19 +571,12 @@ export function EditableCapabilityTable({
                     />
                   </td>
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
-                    <input
-                      type="text"
-                      defaultValue={item.category ?? ""}
-                      title={item.category ?? ""}
+                    <CategorySelect
+                      value={item.category}
+                      categories={categories}
                       readOnly={readOnly}
-                      onBlur={(e) => {
-                        const v = e.target.value || undefined;
-                        if (v !== item.category) {
-                          void save(item, { category: v }, e.currentTarget);
-                        }
-                      }}
                       className={cellInputClasses}
-                      aria-label="Category"
+                      onChange={(next) => void save(item, { category: next })}
                     />
                   </td>
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
@@ -536,7 +677,52 @@ export function EditableCapabilityTable({
     </div>
   );
 
-  if (!selectable) return table;
+  // #1175 copy, approved on #736 (6206818759 item 7).
+  const filterBar =
+    items.length === 0 ? null : (
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2">
+          <span>Filter by category</span>
+          <select
+            multiple
+            value={activeFilter}
+            onChange={(e) =>
+              setFilterCats(
+                Array.from(e.target.selectedOptions, (o) => o.value),
+              )
+            }
+            className={selectClasses}
+            aria-label="Filter by category"
+          >
+            {presentCategories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        {activeFilter.length > 0 ? (
+          <>
+            <span role="status">{`Showing ${ordered.length} of ${items.length} rows`}</span>
+            <button
+              type="button"
+              onClick={() => setFilterCats([])}
+              className="text-ink-tertiary underline hover:text-ink-secondary"
+            >
+              Clear filter
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+
+  if (!selectable)
+    return (
+      <div className="flex flex-col gap-2">
+        {filterBar}
+        {table}
+      </div>
+    );
   const count = selection.selected.length;
   return (
     <div className="flex flex-col gap-2">
@@ -587,6 +773,7 @@ export function EditableCapabilityTable({
           </span>
         ) : null}
       </div>
+      {filterBar}
       {table}
     </div>
   );

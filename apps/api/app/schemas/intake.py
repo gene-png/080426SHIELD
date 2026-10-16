@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.models.service_request import CsfProfile, ServiceType
 from app.schemas._numeric import IntNotBool
@@ -50,6 +50,19 @@ class ClientProfilePatch(BaseModel):
     legal_name: str | None = Field(default=None, max_length=255)
     dba_name: str | None = Field(default=None, max_length=255)
     website: HttpUrl | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_strings_clear(cls, data: Any) -> Any:
+        """#1093: an emptied or whitespace-only string is None, so the client
+        can clear a field, as the class docstring says. Before this a blank
+        website stripped to "" and `HttpUrl` refused it with a 422, and every
+        other text field stored the blanks. Blanks only: a real value is left
+        exactly as typed. Runs before the field validators, so the website
+        prefixing never sees a blank."""
+        if not isinstance(data, dict):
+            return data
+        return {k: (None if isinstance(v, str) and not v.strip() else v) for k, v in data.items()}
 
     @field_validator("website", mode="before")
     @classmethod

@@ -21,9 +21,10 @@ per-run places, whole-run refusal and every release path in
 NO WALL-CLOCK ASSERTION ANYWHERE. Every outcome here is decided by state: which
 reason the run ended with, whether the provider was called, whether a PID
 exists. The one timeout (`post_within`) is a hang guard with a 60 s limit over
-work stopped by a budget well under it (0.5 s, `rw.OVER_BUDGET_S`, where a test
-only needs a child stopped; 5 or 10 s where it must hold one first), so it
-fails only when the budget is gone.
+work stopped by a budget well under it (`rw.SPIN_BUDGET_S`, 5 s, where a
+spinning child must first write its PID; 5 or 10 s where it must hold one), so
+it fails only when the budget is gone. No test here uses the 0.5 s
+`rw.OVER_BUDGET_S` (#1132).
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ def test_extract_redacts_in_a_child_process_not_the_api(world, monkeypatch) -> N
 def test_child_over_budget_is_killed_and_its_pid_is_gone(world, monkeypatch) -> None:
     import app.ai.isolation as isolation
 
-    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
+    rw.set_budget(monkeypatch, rw.SPIN_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
     pid_file = world["tmp"] / "child.pid"
     svc_id, artifact_id = rw.service_and_artifact(
@@ -300,7 +301,7 @@ def test_a_child_that_survives_sigkill_fails_closed_typed(world, monkeypatch) ->
         real_kill(child)
         raise RuntimeError(f"redaction child {child.pid} survived SIGKILL")
 
-    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
+    rw.set_budget(monkeypatch, rw.SPIN_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
     monkeypatch.setattr(isolation, "_kill", _kill_then_report_a_survivor)
     pid_file = world["tmp"] / "survivor.pid"
