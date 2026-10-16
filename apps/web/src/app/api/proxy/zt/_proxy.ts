@@ -61,7 +61,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream ZT call");
+    return upstreamOutcomeUnknown(err, "Upstream ZT call", init.method);
   }
 }
 

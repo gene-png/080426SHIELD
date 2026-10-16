@@ -13,6 +13,8 @@ import { NextResponse } from "next/server";
 import {
   UPSTREAM_OUTCOME_UNKNOWN,
   UPSTREAM_OUTCOME_UNKNOWN_MESSAGE,
+  UPSTREAM_READ_FAILED,
+  UPSTREAM_READ_FAILED_MESSAGE,
 } from "@/lib/upstream-outcome";
 
 /** Node's `fetch` puts the reason it gave up on `cause.code`. */
@@ -21,13 +23,23 @@ function causeCode(err: unknown): string | undefined {
   return typeof cause?.code === "string" ? cause.code : undefined;
 }
 
+/** A read cannot have done anything, so its missing answer is not "unknown". */
+function isRead(method: string): boolean {
+  const m = method.toUpperCase();
+  return m === "GET" || m === "HEAD";
+}
+
 /**
- * @param err   what the upstream call threw
- * @param where which proxy call it was, for the log line only
+ * @param err    what the upstream call threw
+ * @param where  which proxy call it was, for the log line only
+ * @param method the UPSTREAM call's method (#1130). Required, so every caller
+ *               states it: a GET answers `upstream_read_failed`, anything
+ *               else the #550 body.
  */
 export function upstreamOutcomeUnknown(
   err: unknown,
   where: string,
+  method: string,
 ): NextResponse {
   // Logged, not swallowed: the browser is told only that the outcome is
   // unknown, so the cause has to be on record somewhere. `String(err)` and
@@ -35,11 +47,24 @@ export function upstreamOutcomeUnknown(
   // string.test.ts` scans `lib/` for that read, and this is a server log line,
   // not copy, so it takes the spelling that gate does not have to judge.
   const code = causeCode(err);
+  const read = isRead(method);
   console.error(
-    `[proxy] ${where}: no answer from the api, outcome unknown (${String(err)}${
-      code ? `, ${code}` : ""
-    })`,
+    `[proxy] ${where}: no answer from the api, ${
+      read ? "read failed" : "outcome unknown"
+    } (${method} ${String(err)}${code ? `, ${code}` : ""})`,
   );
+  if (read) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 504,
+          reason: UPSTREAM_READ_FAILED,
+          message: UPSTREAM_READ_FAILED_MESSAGE,
+        },
+      },
+      { status: 504 },
+    );
+  }
   return NextResponse.json(
     {
       error: {

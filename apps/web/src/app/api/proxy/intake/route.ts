@@ -31,7 +31,7 @@ export async function GET(): Promise<NextResponse> {
     const result = await apiFetch<unknown>("/intake", { bearer });
     return NextResponse.json(result);
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "GET");
   }
 }
 
@@ -55,15 +55,15 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     });
     return NextResponse.json(result);
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "PATCH");
   }
 }
 
-function mapError(err: unknown): NextResponse {
+function mapError(err: unknown, method: string): NextResponse {
   if (err instanceof ApiError) {
     return NextResponse.json(err.payload ?? { error: { code: err.status } }, {
       status: err.status,
     });
   }
-  return upstreamOutcomeUnknown(err, "Upstream intake call");
+  return upstreamOutcomeUnknown(err, "Upstream intake call", method);
 }
