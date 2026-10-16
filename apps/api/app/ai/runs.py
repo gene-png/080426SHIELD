@@ -711,16 +711,25 @@ def start_run(
         llm=llm,
         extra=extra or {},
     )
+    # #1025 holder 1: build the answer now, then end the transaction its reads
+    # opened, so this request's session holds no pooled connection while the
+    # job runs. `get_db` closes only after a background task finishes (fastapi
+    # 0.143), so without this the request kept a connection for the whole run.
+    # Nothing is pending: the run row was committed above. Nothing below
+    # reads an ORM attribute, which would open a new transaction.
+    started = _started(run, joined=False)
+    bind = db.get_bind()
+    db.rollback()
     job_context = contextvars.copy_context()
-    runner(functools.partial(job_context.run, _execute, db.get_bind(), ctx, work))
+    runner(functools.partial(job_context.run, _execute, bind, ctx, work))
     _log.info(
         "ai_runs.started",
-        run_id=str(run.id),
+        run_id=str(ctx.run_id),
         service_id=str(service_id),
         purpose=purpose,
         serves=actual,
     )
-    return _started(run, joined=False)
+    return started
 
 
 def to_response(run: AiRun) -> AiRunResponse:
