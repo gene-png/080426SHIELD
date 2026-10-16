@@ -321,8 +321,9 @@ def test_csf_export_and_home_card_agree_with_the_dashboard_on_the_target(app_cli
     # summary reads "106/106 subcategories scored; 0 gap(s) at target T3" with
     # the fix reverted — and "106" is in it, via the coverage fraction. It stayed
     # green either way, which is the #72 shape in the test written to close #79.
+    # Tier 4 by name since #736 6216024281 item 3c.
     assert (
-        f"{dash['total_gap_count']} gap(s) at target T4" in doc_summary
+        f"{dash['total_gap_count']} gap(s) at target Adaptive" in doc_summary
     ), f"the released document disagrees with the dashboard: {doc_summary!r}"
 
 
@@ -611,8 +612,9 @@ def test_csf_finalize_does_not_build_a_document_against_a_stored_tier_1(app_clie
 
     summary, details = _finalize_csf_and_read(c, h, svc_id)
 
-    assert "at target T1" not in summary, summary
-    assert "at target T3" in summary, summary
+    # Tiers 1 and 3 by name since #736 6216024281 item 3c.
+    assert "at target Partial" not in summary, summary
+    assert "at target Repeatable" in summary, summary
     assert "0 gap(s) at target" not in summary, summary
     assert details["target_tier_source"] == "client_below_floor", details
     assert details["target_tier"] == 3, details

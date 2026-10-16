@@ -51,10 +51,64 @@ class ParentGuard:
     misses while the parent is still APPROVED, the guard is why, and
     `refusal(db, parent_id)` is raised: the release is REFUSED, not logged,
     because the caller has not committed and nothing it wrote survives.
+
+    `repair_refusal`, when set, replaces `refusal` on the REPAIR re-release of
+    a deliverable already with the client, where a "nothing was released"
+    message would be false (#1123). ZT sets it; ATT&CK's and Tech Debt's
+    repair wording is #1304, so they leave it unset for now.
     """
 
     condition: Callable[[uuid.UUID], ColumnElement[bool]]
     refusal: Callable[[Session, uuid.UUID], HTTPException]
+    repair_refusal: Callable[[Session, uuid.UUID], HTTPException] | None = None
+
+
+#: #1123, approved verbatim at #736 comment 6216024281 (one sentence for every
+#: service): the parent changed between the release's read and its flip.
+PARENT_CHANGED_DURING_RELEASE = (
+    "This assessment changed while the report was being released, so nothing "
+    "was released. Reload the page, check the assessment, and release again."
+)
+
+
+#: #1123, PENDING the advisor's approval as seen in the PR (proposed verbatim
+#: at #736 comment 6220094031 item 6): the repair re-release of a report the
+#: client already has, whose parent did not flip to RELEASED.
+PARENT_CHANGED_AFTER_RELEASE = (
+    "This report is already with the client, but its assessment changed after "
+    "the report was built, so the assessment's status was not updated. Generate "
+    "a new version to release the change."
+)
+
+
+def refuse_parent_changed_during_release() -> HTTPException:
+    """The typed refusal (D-016) for a parent that moved under the release flip
+    (#1123). Raised only on a FIRST release, before the caller commits, so
+    nothing the release wrote survives and "nothing was released" is true. The
+    repair re-release of an already-released deliverable raises
+    `refuse_parent_changed_after_release` instead."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "parent_changed_during_release",
+            "message": PARENT_CHANGED_DURING_RELEASE,
+        },
+    )
+
+
+def refuse_parent_changed_after_release() -> HTTPException:
+    """The typed refusal (D-016) for the REPAIR re-release of a deliverable the
+    client already has, when its parent did not flip to RELEASED (#1123, ruled
+    at #736 6220094031 item 6). The earlier release stands: the caller has not
+    committed this request, and the deliverable's release was committed before.
+    A log line alone would be silent, so this refuses."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "parent_changed_after_release",
+            "message": PARENT_CHANGED_AFTER_RELEASE,
+        },
+    )
 
 
 # Which parent record each service kind releases. There was no such map before
@@ -76,6 +130,7 @@ def _release_parent(
     svc: Service,
     action: str,
     guard: ParentGuard | None = None,
+    repair: bool = False,
 ) -> bool:
     """Flip the parent this deliverable was built from to RELEASED (W4).
 
@@ -97,7 +152,10 @@ def _release_parent(
     * `parent_version` is NULL — finalized before 0041. Guessing is the thing the
       column exists to prevent, so it does not guess.
     * the parent is not APPROVED — flipping a DRAFT would skip APPROVED entirely
-      and lock work in progress; anything else is already terminal.
+      and lock work in progress; anything else is already terminal. On the
+      REPAIR re-release this one IS fatal (#1123): the report is with the
+      client and its parent left APPROVED, so it raises
+      `refuse_parent_changed_after_release` rather than logging only.
 
     THE FLIP IS A CONDITIONAL UPDATE (#657 round 3), `status = APPROVED` plus the
     caller's `guard` if any, with a rowcount check -- the approve route's shape.
@@ -105,9 +163,18 @@ def _release_parent(
     had checked could change before it landed. It is the ONE writer of a
     released parent, so a guard here covers every path through it: the first
     release and the repair re-release alike. Tech Debt passes a guard (#657), and
-    so does ATT&CK (#622, `attack/release_readiness.py`); CSF and ZT pass none,
-    and for them the only difference is that a status changed concurrently is
-    logged instead of overwritten.
+    so does ATT&CK (#622, `attack/release_readiness.py`) and ZT (#1123).
+
+    A MISSED FLIP (#1123) has three causes, judged on the row as it is now:
+    still APPROVED, so the caller's guard stopped holding (its own refusal);
+    RELEASED, so a sibling release flipped it first (benign: logged, and the
+    release stands); anything else, so the status moved under the release (an
+    unlock, say), which is REFUSED for every service, guard or not. A FIRST
+    release raises `refuse_parent_changed_during_release` ("nothing was
+    released"). The REPAIR re-release raises `refuse_parent_changed_after_release`
+    instead, because the report is already with the client; the earlier release
+    stands. A guard miss on a repair raises the guard's `repair_refusal` where
+    it has one. Both used to be logged and committed.
 
     Returns True only when it flipped the parent. The flip is a bulk UPDATE, so
     it leaves nothing dirty in the session, and a caller that commits only when
@@ -171,6 +238,12 @@ def _release_parent(
             parent_version=deliv.parent_version,
             parent_status=row.status.value,
         )
+        if repair:
+            # The same state as a parent that moves inside the flip window,
+            # reached before the request: the report is with the client and its
+            # parent is no longer APPROVED. Refused, never log-only (#1123,
+            # #736 6221187740 item 5); the earlier release stands.
+            raise refuse_parent_changed_after_release()
         return False
 
     conditions = [parent.model.id == row.id, parent.model.status == parent.status_enum.APPROVED]
@@ -185,7 +258,40 @@ def _release_parent(
     db.refresh(row)
     if flipped != 1:
         if guard is not None and row.status == parent.status_enum.APPROVED:
+            if repair and guard.repair_refusal is not None:
+                _log.warning(
+                    "deliverable.release_repair_refused_by_guard",
+                    deliverable_id=str(deliv.id),
+                    action=action,
+                    service_kind=svc.kind.value,
+                    parent_version=deliv.parent_version,
+                )
+                raise guard.repair_refusal(db, row.id)
             raise guard.refusal(db, row.id)
+        if row.status != parent.status_enum.RELEASED and repair:
+            # The REPAIR re-release (`release_deliverable`'s already-released
+            # branch): the report is already with the client, so "nothing was
+            # released" would be false, and a log line alone would be silent.
+            # Refused with the repair message; the earlier release stands.
+            _log.warning(
+                "deliverable.release_repair_parent_changed",
+                deliverable_id=str(deliv.id),
+                action=action,
+                service_kind=svc.kind.value,
+                parent_version=deliv.parent_version,
+                parent_status=row.status.value,
+            )
+            raise refuse_parent_changed_after_release()
+        if row.status != parent.status_enum.RELEASED:
+            _log.warning(
+                "deliverable.release_refused_parent_changed",
+                deliverable_id=str(deliv.id),
+                action=action,
+                service_kind=svc.kind.value,
+                parent_version=deliv.parent_version,
+                parent_status=row.status.value,
+            )
+            raise refuse_parent_changed_during_release()
         _log.warning(
             "deliverable.release_parent_changed_concurrently",
             deliverable_id=str(deliv.id),
@@ -227,14 +333,21 @@ def release_deliverable(
 ) -> Deliverable:
     """Release a finalized deliverable to the client.
 
-    Tenant-enforced (404 on mismatch, never 403), kind-checked so a service's
-    route only releases its own deliverables (`kinds` is the set the calling
-    router serves — one for csf/attack/tech_debt, two for zt), and idempotent:
-    re-releasing an already-released deliverable is a logged no-op, not an error.
+    Tenant-enforced (404 on mismatch, never 403), and kind-checked so a
+    service's route only releases its own deliverables (`kinds` is the set the
+    calling router serves — one for csf/attack/tech_debt, two for zt).
+    Re-releasing an already-released deliverable never releases it again; it is
+    the REPAIR path, which retries the parent flip and is refused when the
+    parent did not flip (#1123). The earlier release stands either way.
 
     Raises:
         HTTPException 404: unknown / cross-tenant / wrong-kind deliverable.
         HTTPException 409: deliverable was never finalized (typed `not_finalized`).
+        HTTPException 409: the parent moved, on a first release (typed
+            `parent_changed_during_release`) or on a repair (typed
+            `parent_changed_after_release`).
+        HTTPException 409: the caller's `parent_guard` refusal, when its
+            condition misses (on a repair, its `repair_refusal` if it has one).
     """
     deliv = require_deliverable_in_tenant(db, deliverable_id, tenant_client_id)
     svc = db.get(Service, deliv.service_id)
@@ -254,8 +367,8 @@ def release_deliverable(
         )
 
     if deliv.released_at is not None:
-        # Idempotent: already released. Loud no-op so a re-release is auditable
-        # in the logs without a second audit row or a lie that it "changed".
+        # Already released: never released twice, so no second audit row or
+        # email. Logged, then the repair below, which may still refuse.
         _log.info(
             "deliverable.release noop (already released)",
             deliverable_id=str(deliv.id),
@@ -269,7 +382,9 @@ def release_deliverable(
         # consultant a delivered report still needs releasing. Without this, the
         # only fix was direct SQL: the release is idempotent, so re-releasing
         # changed nothing, forever. Re-releasing now repairs it.
-        repaired = _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
+        repaired = _release_parent(
+            db, deliv=deliv, svc=svc, action=action, guard=parent_guard, repair=True
+        )
         if repaired or db.is_modified(deliv) or db.dirty:
             db.commit()
         return deliv

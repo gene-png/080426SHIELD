@@ -129,6 +129,7 @@ CARRIED: dict[str, frozenset[str]] = {
             "locked",
             "maturity_stage",
             "notes",
+            "target_source",
             "target_stage",
         }
     ),

@@ -331,7 +331,14 @@ def _cut_and_approve_next_version(c: TestClient, bearer: str, svc_id: str, *, co
     a PREREQUISITE for finalizing v2, so it happens on every re-assessment long
     before anything is delivered. Returns the new version number."""
     h = {"Authorization": f"Bearer {bearer}"}
-    nxt = c.post(f"/attack/services/{svc_id}/assessments", headers=h)
+    # #1123 item 1: a plain create over released work is refused; a revision
+    # is the way to open the next version.
+    v1 = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()["id"]
+    nxt = c.post(
+        f"/attack/services/{svc_id}/assessments/{v1}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
     assert nxt.status_code == 201, nxt.text
     nxt = nxt.json()
     for cov in standalone_rows(nxt["coverage"], covered) if covered else []:

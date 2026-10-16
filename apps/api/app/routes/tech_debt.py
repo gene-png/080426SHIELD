@@ -1330,7 +1330,7 @@ def bulk_confirm_security_classification(
 
 
 def _not_awaiting_message(not_awaiting: int, selected: int) -> str:
-    """#1174. PLACEHOLDER copy, pending approval on #736."""
+    """#1174. Copy approved on #736 (6216024281)."""
     return (
         f"{not_awaiting} of the {selected} selected rows do not need sign-off. "
         "Nothing was changed. Reload the list and try again."

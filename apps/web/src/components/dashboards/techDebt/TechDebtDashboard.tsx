@@ -71,7 +71,11 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  */
 export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
-    return "May not be complete - upload not reconciled";
+    // #1215: the files for the same list state the uncosted count, so the
+    // dashboard does too (approved on #736, 6216024281).
+    const noCost = noCostSentence(data.no_cost_count);
+    const note = "May not be complete - upload not reconciled";
+    return noCost === null ? note : `${note} · ${noCost}`;
   }
   if (data.spend_completeness === "partial") {
     // TD-10 (for #1048): the count of tools the total leaves out follows any

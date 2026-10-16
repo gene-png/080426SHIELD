@@ -651,16 +651,26 @@ def test_zt_dashboard_numbers_come_from_the_version_the_header_claims(app_client
 
     svc_id = _seed_release(c, bearer_admin, release=True)
 
-    v2 = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+    # #1123 item 1: a plain create over released work is refused; a revision
+    # is the way to open the next version.
+    v1 = c.get(f"/zt/services/{svc_id}/assessments/latest", headers=h).json()["id"]
+    v2 = c.post(
+        f"/zt/services/{svc_id}/assessments/{v1}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
     assert v2.status_code == 201, v2.text
     v2 = v2.json()
     assert v2["version"] == 2, "the preamble did not actually cut a second version"
     for ans in v2["answers"]:
-        c.patch(
+        # Asserted: a revision copies v1 forward, so a failed patch would leave
+        # v2 equal to v1 and the #114 check below could not fail.
+        r = c.patch(
             f"/zt/answers/{ans['id']}",
             headers=h,
             json={"maturity_stage": 4, "target_stage": 4},
         )
+        assert r.status_code == 200, r.text
     assert c.post(f"/zt/assessments/{v2['id']}/approve", headers=h).status_code == 200
 
     c.headers["X-Client-Id"] = client_id
