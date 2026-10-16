@@ -316,7 +316,8 @@ _LINE_CLASSES = [
         "Report Issues To Support, IT.",
     ),
 ]
-# Accepted residuals, recorded on #1256 rather than pinned either way:
+# Accepted residuals. The leaking ones are open as #1267; the rest are recorded
+# here (some pinned as rows above):
 #   - an all-Title-Case stopped line of four RAW words or fewer is not prose
 #     ("Next Steps Below.", pre-existing);
 #   - a name-shaped line with a name TAIL is counted without its
@@ -331,7 +332,7 @@ _LINE_CLASSES = [
 #   - a name with a designation and NO comma before it ("Lt. Col. Dana M.
 #     Whitfield USAF.", six raw words) has no tail and reads as a sentence: the
 #     comma is the only thing telling it from "U.S. Gov. Systems Report To
-#     CISA." (a leak, pre-existing on main; tracked on #1256).
+#     CISA." (a leak, pre-existing on main; open as #1267).
 
 
 @pytest.mark.parametrize(
