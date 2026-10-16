@@ -292,6 +292,9 @@ class GapItem(BaseModel):
     gap_size: int
     priority_score: float
     notes: str | None
+    #: The function weight `priority_score` multiplies `gap_size` by, as
+    #: stored (`csf/gap.py::FUNCTION_WEIGHTS`). W6 shows the working.
+    weight: float
 
 
 class GapAnalysisResponse(BaseModel):

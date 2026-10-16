@@ -1164,6 +1164,7 @@ def gap_analysis(
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
                 notes=g.notes,
+                weight=g.weight,
             )
             for g in analysis.gaps
         ],
