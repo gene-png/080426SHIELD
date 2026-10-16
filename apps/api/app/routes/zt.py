@@ -52,6 +52,7 @@ from app.audit import audit
 from app.db.session import get_db
 from app.deliverable_release import (
     ParentGuard,
+    refuse_parent_changed_after_release,
     refuse_parent_changed_during_release,
     release_deliverable,
 )
@@ -120,7 +121,6 @@ from app.tech_debt.filename import (
     deliverable_filename,
 )
 from app.tenant import (
-    require_deliverable_in_tenant,
     require_service_in_tenant,
     require_zt_assessment_in_tenant,
 )
@@ -2384,12 +2384,9 @@ def release_zt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
-    # #1123 (a) guards a FIRST release only: its refusal says nothing was
-    # released, which is false for the repair re-release of a delivered report.
-    # So a repair skips check (a) entirely: a version approved after its
-    # report was finalized would still be flipped to RELEASED. No writer can
-    # produce that state until #1120's unlock lands; revisit (a) then.
-    first_release = require_deliverable_in_tenant(db, deliverable_id, client.id).released_at is None
+    # #1123 (a) guards every release, the repair re-release included (#736
+    # 6220094031 item 6). On a repair its miss raises the repair refusal,
+    # which is true for a report the client already has.
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2397,7 +2394,7 @@ def release_zt_deliverable(
         user=user,
         kinds=(ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD),
         action="zt.deliverable.released",
-        parent_guard=_zt_release_guard(deliverable_id) if first_release else None,
+        parent_guard=_zt_release_guard(deliverable_id),
     )
     return _serialize_deliverable(db, deliv)
 
@@ -2415,6 +2412,7 @@ def _zt_release_guard(deliverable_id: uuid.UUID) -> ParentGuard:
     return ParentGuard(
         condition=lambda _parent_id: ZtAssessment.approved_at <= finalized_at,
         refusal=lambda _db, _parent_id: refuse_parent_changed_during_release(),
+        repair_refusal=lambda _db, _parent_id: refuse_parent_changed_after_release(),
     )
 
 
