@@ -60,8 +60,9 @@ export interface IntakeDocumentsPanelProps {
  * (during intake or otherwise) and a consultant's (the Tech Debt Dropzone posts
  * to the same upload route as the admin, #1054), so the consultant can review
  * them and extract a capability list straight from an inventory without
- * re-uploading. Relies on the active tenant being aligned to this service's
- * client (EnsureActiveClient) so the artifacts list is scoped correctly.
+ * re-uploading. Inside a workspace the list and its Download links name the
+ * client EnsureActiveClient resolved for it (#1129), never the shared cookie;
+ * outside one they fall back to the cookie.
  */
 export function IntakeDocumentsPanel({
   onExtract,
@@ -160,7 +161,13 @@ export function IntakeDocumentsPanel({
                       <StatusPill tone="info">Current draft</StatusPill>
                     ) : null}
                     <a
-                      href={`/api/proxy/artifacts/${a.id}/download`}
+                      // #1129: the workspace's client, as the list uses,
+                      // so a cookie another tab rewrote cannot 404 it.
+                      href={
+                        workspaceClientId
+                          ? `/api/proxy/artifacts/${a.id}/download?client_id=${encodeURIComponent(workspaceClientId)}`
+                          : `/api/proxy/artifacts/${a.id}/download`
+                      }
                       className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
                     >
                       Download

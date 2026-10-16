@@ -71,7 +71,7 @@ export function EnsureActiveClient({
         // The original claim was that the POST "throws into the catch at the
         // bottom and surfaces to the user". `fetch` rejects only on network
         // failure: a 403 or a 500 resolves, so the cookie stayed unset,
-        // `setReady(true)` rendered the children, and every tenant-scoped
+        // the children rendered anyway, and every tenant-scoped
         // call underneath 400'd or 404'd under a misleading per-workspace
         // error. The exemption rested on a check that did not exist, and the
         // sentence is what would have stopped the next reader adding it.
