@@ -20,6 +20,14 @@ import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
 import { readFailureReason } from "@/lib/describe-save-error";
 import { isNamedOrg } from "@/lib/org-name";
 
+/** #1225 item 2, approved on #736 (6216024281): Step 6's sentence for an
+ *  upload list that did not load. Not Step 5's "Failed to load uploads.",
+ *  which reads as "your uploads failed", and it keeps the "you can still
+ *  submit" the empty state carries, true because Submit does not wait on this
+ *  list. */
+const LIST_FAILED =
+  "We couldn't load your uploaded documents. Your uploads are not affected, and you can still submit.";
+
 /** Human-readable summary of the client-set targets for a service, if any. */
 function targetSummary(
   svc: ServiceType,
@@ -102,13 +110,13 @@ export function Step6Review({
         // (review of 8a60a50a): `?? []` turned it into "No documents
         // uploaded".
         if (Array.isArray(res.items)) setArtifacts(res.items);
-        else setListError("Failed to load uploads.");
+        else setListError(LIST_FAILED);
       })
       .catch((err) => {
         // Non-blocking: the list is confirmation, not a submit gate. But say
-        // that it failed, as Step 5 does for the same list: the read rule (RR-2), then its copy.
+        // that it failed: the read rule (RR-2), then Step 6's own copy (#1225).
         if (!cancelled) {
-          setListError(readFailureReason(err) ?? "Failed to load uploads.");
+          setListError(readFailureReason(err) ?? LIST_FAILED);
         }
       });
     return () => {
