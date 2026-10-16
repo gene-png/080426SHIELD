@@ -97,3 +97,55 @@ def test_each_format_counts_only_rows_with_a_status(
     text = _format_text(w, fin.json(), fmt)
     assert C1_ONE in text, text[:3000]
     assert C1_TWO not in text, text[:3000]
+
+
+def _status_world(app_parts, tmp_path, status_body: dict, *, stored_rules: bool):  # noqa: F811
+    """Row one carries `status_body` and credits LEGACY; row two is unscored and
+    credits LEGACY. `stored_rules` gives an assessment approved before R3
+    (`status_rules` 1, migration 0059's backfill), whose stored status is what
+    every surface reads -- the only way a Gap row keeps its tools here."""
+    import uuid as _uuid
+
+    from app.models.attack_assessment import AttackAssessment
+
+    _with_storage(app_parts, tmp_path)
+    w = _world(app_parts)
+    one, two = _codes(w)[:2]
+    r = w.patch(one, {**status_body, "detection_tools": [EDR, LEGACY]})
+    assert r.status_code == 200, r.text
+    r = w.patch(two, {"detection_tools": [LEGACY]})
+    assert r.status_code == 200, r.text
+    assert w.approve().status_code == 200
+    if stored_rules:
+        # After approve, which stamps the rule set: migration 0059's backfill
+        # shape for an assessment approved before R3.
+        with w.sessions() as db:
+            db.get(AttackAssessment, _uuid.UUID(w.assessment_id)).status_rules = 1
+            db.commit()
+    w.confirm_not_security(LEGACY)
+    fin = w.c.post(f"/attack/services/{w.svc_id}/deliverables/finalize", headers=w.h)
+    assert fin.status_code in (200, 201), fin.text
+    (row_one,) = [t for t in w.get()["coverage"] if t["technique_code"] == one]
+    return w, fin.json(), row_one
+
+
+@pytest.mark.parametrize(
+    ("status_body", "stored_rules"),
+    [
+        ({"status": "not_applicable", "reason_code": "platform_absent"}, False),
+        ({"status": "gap"}, True),
+    ],
+    ids=["not_applicable", "gap_before_r3"],
+)
+def test_a_judged_row_that_is_not_coverage_still_counts(
+    app_parts, tmp_path, status_body: dict, stored_rules: bool  # noqa: F811
+) -> None:
+    """Gap and N/A are judgements (#889): their rows still count. Only the
+    unscored row is out."""
+    w, fin, row_one = _status_world(app_parts, tmp_path, status_body, stored_rules=stored_rules)
+    assert row_one["status"] == status_body["status"], "setup: row one keeps its status"
+    # And it is the status every surface reads, computed or stored.
+    assert (row_one["computed_status"] or row_one["status"]) == status_body["status"], row_one
+    text = _format_text(w, fin, "summary")
+    assert C1_ONE in text, text
+    assert C1_TWO not in text, text
