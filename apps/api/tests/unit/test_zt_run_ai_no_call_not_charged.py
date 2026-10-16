@@ -40,6 +40,8 @@ def test_a_completed_live_run_that_sent_nothing_was_not_charged(
     started = start_run(c, f"/zt/services/{svc_id}/run-ai", h, serves="live")
     run = get_run(c, started["run_id"], h)
 
+    # Live, or False would be the offline answer and prove nothing.
+    assert run["serves"] == "live", run
     assert run["status"] == "completed", run
     assert run["result"]["capabilities_sent"] == 0, run["result"]
     assert run["charged_likely"] is False, run
@@ -66,6 +68,7 @@ def test_a_live_run_that_sent_nothing_and_then_failed_was_not_charged(
     started = start_run(c, f"/zt/services/{svc_id}/run-ai", h, serves="live")
     run = get_run(c, started["run_id"], h)
 
+    assert run["serves"] == "live", run
     assert run["status"] == "failed", run
     assert run["charged_likely"] is False, run
 

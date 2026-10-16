@@ -453,7 +453,10 @@ class RunContext:
     deadline_at: datetime
     llm: LLMClient
     extra: dict[str, Any] = field(default_factory=dict)
-    _no_call: _NoCallMark = field(default_factory=_NoCallMark, repr=False)
+    # Not a constructor argument and not part of equality: only the job sets it.
+    _no_call: _NoCallMark = field(
+        default_factory=_NoCallMark, init=False, compare=False, repr=False
+    )
 
     def declare_no_call(self) -> None:
         """The job decided, before any provider call, to make none (#1219):
