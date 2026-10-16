@@ -221,28 +221,45 @@ def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
 
 # --- #1256: a rank-and-name line ending in a full stop -----------------------
 #
-# The REDACT row is in test_redact_rules_matrix.py's _SIGNATURE_LEAKS. These pin
-# what the fix must NOT start cutting: only an all-capitalised line has its
-# ranks and suffixes left out of the word count.
+# The REDACT row for the issue's exact line is in test_redact_rules_matrix.py's
+# _SIGNATURE_LEAKS. Here: the same shape with other suffixes, which must be cut
+# too, and the sentences the fix must NOT start cutting -- Title-Case sentences
+# whose last word is short and ends in a stop (review of 96b41f97: dropping
+# every abbreviation-shaped token turned each into a "name" and cut the text
+# after it).
+
+_SUFFIXED_NAMES = [
+    "Lt. Col. Dana M. Whitfield 3rd.",
+    "Lt. Col. Dana M. Whitfield (Ret.).",
+]
+
+_TITLE_CASE_SENTENCES = [
+    "Phase Two Is Under Way.",
+    "Section A. Overview Of Findings.",
+    "U.S. Gov. Systems Are Affected.",
+    "All Systems Are Now Up.",
+    "Dr. Smith approved the change.",
+]
 
 
-@pytest.mark.parametrize(
-    ("shape", "text"),
-    [
-        # A sentence ends the lookahead (B1), so the name line after it must
-        # not be reached: the sentence has to stay a sentence.
-        (
-            "a sentence with an honorific",
-            "Findings follow.\nBest\nDr. Smith approved the change.\nDana Whitfield\n",
-        ),
-        (
-            "a capitalised sentence of five words",
-            "Findings follow.\nBest\nThe Quarterly Board Review Concluded.\n",
-        ),
-    ],
-)
+@pytest.mark.parametrize("name", _SUFFIXED_NAMES)
 @pytest.mark.parametrize("scope", ["to_end", "block"])
-def test_prose_after_an_opener_is_still_not_cut(shape: str, text: str, scope: str) -> None:
+def test_a_ranked_name_ending_in_a_suffix_is_cut(name: str, scope: str) -> None:
+    cleaned, counts = redact_for_ai(
+        "Findings follow.\nBest,\n" + name + "\n", mode="strict", signature_scope=scope
+    )
+    assert counts.get("signature_block") == 1, name
+    assert "Whitfield" not in cleaned and "Dana" not in cleaned, name
+
+
+@pytest.mark.parametrize("sentence", _TITLE_CASE_SENTENCES)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_a_sentence_after_an_opener_still_ends_the_lookahead(sentence: str, scope: str) -> None:
+    # The name line AFTER the sentence must not be reached (B1, #135): a
+    # sentence ends the lookahead, so nothing is cut and the text survives.
+    text = "Findings follow.\nBest\n" + sentence + "\nDana Whitfield\n"
     cleaned, counts = redact_for_ai(text, mode="strict", signature_scope=scope)
-    assert "signature_block" not in counts, shape
-    assert cleaned.endswith(text.splitlines()[-1] + "\n"), shape
+    assert "signature_block" not in counts, sentence
+    # Other rules may rewrite words of it ("Way" reads as a street), but the
+    # sign-off line and what follows it are not deleted.
+    assert "\nBest\n" in cleaned and cleaned.endswith("Dana Whitfield\n"), sentence

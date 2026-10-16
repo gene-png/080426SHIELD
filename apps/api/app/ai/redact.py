@@ -484,6 +484,11 @@ _RE_CONTACT_HINT = re.compile(
 
 _SIGNATURE_LOOKAHEAD_LINES = 5
 
+#: Name suffixes a signatory line can END with (#1256). Closed and short on
+#: purpose: a line ending in one of these, after a stop, is a name with its
+#: suffix, never a sentence's last word.
+_NAME_SUFFIXES = ("jr", "sr", "ii", "iii", "iv", "2nd", "3rd", "4th", "ret", "esq")
+
 
 def _is_abbreviation(token: str) -> bool:
     """An honorific, rank or initial: a short token ending in a full stop.
@@ -595,15 +600,17 @@ def _looks_like_prose(line: str) -> bool:
     if not stripped[0].isupper():
         return True
     words = stripped.split()
-    # A line in which EVERY token is capitalised is name-shaped, so it is
-    # measured as `_looks_like_a_signatory` measures it: ranks, initials and
-    # suffixes (`_is_abbreviation`) do not count. Counted raw, "Lt. Col. Dana M.
-    # Whitfield Jr." was six words ending in a full stop -- a "sentence" -- so
+    # A name that ENDS IN A GENERATIONAL OR RETIRED SUFFIX ends in a full stop
+    # because the suffix is an abbreviation, not because the line is a sentence:
+    # "Lt. Col. Dana M. Whitfield Jr." counted raw is six words and a stop, so
     # the signature cut stopped before it and the name went to the model
-    # (#1256). A line with any lowercase word is still counted raw: "Dr. Smith
-    # approved the change." stays a sentence.
-    if all(w[0].isupper() for w in words):
-        words = [w for w in words if not _is_abbreviation(w)]
+    # (#1256). Keyed on the LAST token being a suffix, not on the line having
+    # abbreviations: "Phase Two Is Under Way." ends in a short word with a stop
+    # too, and dropping every abbreviation-shaped token made it a "name" and
+    # cut the text after it (review of 96b41f97). With a suffix last, the line
+    # is measured as `_looks_like_a_signatory` measures it.
+    if words[-1].strip("().,").lower() in _NAME_SUFFIXES:
+        words = [w for w in words[:-1] if not _is_abbreviation(w.strip("()"))]
     return len(words) > _MAX_SIGNATORY_WORDS
 
 
