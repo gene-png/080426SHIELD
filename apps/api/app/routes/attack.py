@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -740,14 +741,18 @@ def latest_assessment(
 
 #: #1178, D-1: PLACEHOLDER copy until approved on #736.
 _NO_DRAFT_MESSAGE = "PLACEHOLDER D-1: no completed AI run yet, so there is no draft to show"
+#: #1178, D-4: PLACEHOLDER copy until approved on #736.
+_UNREADABLE_DRAFT_MESSAGE = (
+    "PLACEHOLDER D-4: the last AI run was stored in an older format, so its draft cannot be shown"
+)
 
 
 def _row_as_the_run_left_it(a: AttackAssessment, row: AttackCoverageResponse) -> AttackCoverage:
     """One coverage row rebuilt IN MEMORY from a run's stored result, never added
     to a session, so nothing is written. Carries every column the dashboard
     reads: status, reason, the three tool lists, rationale and the citation
-    record. `reviewed_status` is not in the stored result and stays NULL: the
-    draft is the state before review."""
+    record. `reviewed_status` is carried too, though the dashboard does not read
+    it."""
     return AttackCoverage(
         id=row.id,
         assessment_id=a.id,
@@ -768,6 +773,7 @@ def _row_as_the_run_left_it(a: AttackAssessment, row: AttackCoverageResponse) ->
         ),
         answered_by=row.answered_by,
         answered_at=row.answered_at,
+        reviewed_status=row.reviewed_status,
     )
 
 
@@ -816,7 +822,25 @@ def draft_dashboard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"reason": "attack_no_draft", "message": _NO_DRAFT_MESSAGE},
         )
-    stored = AttackRunAiResponse.model_validate(run.result)
+    # #556, as the heatmap and the client dashboard: never compute coverage over
+    # rows keyed to another catalog.
+    require_current_catalog(db, a)
+    try:
+        stored = AttackRunAiResponse.model_validate(run.result)
+    except ValidationError as exc:
+        # A run stored in a shape this build refuses (one older than a field the
+        # schema now requires). Refused with a reason, never a 500, and never
+        # read around: a draft built from a partial result would misstate it.
+        _log.error(
+            "attack.draft_dashboard.unreadable_result",
+            service_id=str(svc.id),
+            run_id=str(run.id),
+            errors=exc.error_count(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "attack_draft_unreadable", "message": _UNREADABLE_DRAFT_MESSAGE},
+        ) from exc
     body = attack_dashboard_content(
         db,
         client=client,

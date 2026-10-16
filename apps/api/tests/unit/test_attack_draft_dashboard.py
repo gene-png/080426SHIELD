@@ -99,19 +99,29 @@ def test_the_draft_shows_the_assessment_as_the_run_left_it(app_client) -> None: 
 
 
 def test_an_edit_after_the_run_does_not_move_the_draft(app_client) -> None:  # noqa: F811
-    """Kept for comparison: the draft is the run's output, not today's rows."""
+    """Kept for comparison: the draft is the run's output, not today's rows.
+
+    The edit is to the rationale, which the dashboard shows as stored. A status
+    edit would prove nothing here: these rows' statuses are computed from their
+    tool lists, which are empty, so any stored status reads as a gap."""
     c, provider, h, svc_id, rows = _setup(app_client)
     a, b = rows[0]["technique_code"], rows[1]["technique_code"]
     _answer_only(provider, {a: "gap", b: "gap"})
     _run(c, h, svc_id)
 
-    edit = c.patch(f"/attack/coverage/{rows[0]['id']}", headers=h, json={"status": "partial"})
+    edit = c.patch(
+        f"/attack/coverage/{rows[0]['id']}", headers=h, json={"rationale": "Edited after."}
+    )
     assert edit.status_code == 200, edit.text
     latest = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     (now,) = [t for t in latest["coverage"] if t["technique_code"] == a]
-    assert now["status"] == "partial", "setup: the edit must have landed"
+    assert now["rationale"] == "Edited after.", "setup: the edit must have landed"
 
-    assert _statuses(_draft(c, h, svc_id).json()) == {a: "gap", b: "gap"}
+    body = _draft(c, h, svc_id).json()
+    assert {t["code"]: t["rationale"] for t in body["techniques"]} == {
+        a: "From the run.",
+        b: "From the run.",
+    }
 
 
 def test_a_rerun_replaces_the_draft(app_client) -> None:  # noqa: F811
@@ -160,3 +170,58 @@ def test_a_client_user_cannot_read_the_draft(app_client) -> None:  # noqa: F811
     }
     r = c.get(f"/attack/services/{svc_id}/draft-dashboard", headers=ch)
     assert r.status_code == 403, r.text
+
+
+def test_a_draft_on_another_catalog_is_refused_as_the_heatmap_is(app_client) -> None:  # noqa: F811
+    """#556: never compute coverage over rows keyed to another ATT&CK catalog;
+    the twin routes (heatmap, the client dashboard) refuse it the same way."""
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, provider, h, svc_id, rows = _setup(app_client)
+    _answer_only(provider, {rows[0]["technique_code"]: "gap"})
+    _run(c, h, svc_id)
+    assert _draft(c, h, svc_id).status_code == 200, "setup: the draft reads before the change"
+
+    TestSession = app_client[1]
+    with TestSession() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(rows[0]["assessment_id"]))
+            .values(catalog_version=None)
+        )
+        db.commit()
+    r = _draft(c, h, svc_id)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "attack_catalog_mismatch"
+
+
+def test_a_stored_result_this_build_cannot_read_is_a_typed_refusal(
+    app_client,  # noqa: F811
+) -> None:
+    """A run stored in a shape the current schema refuses (for example one older
+    than a field it now requires) is refused with a reason, never a 500."""
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.models.ai_run import AiRun
+
+    c, provider, h, svc_id, rows = _setup(app_client)
+    _answer_only(provider, {rows[0]["technique_code"]: "gap"})
+    run = _run(c, h, svc_id)
+
+    TestSession = app_client[1]
+    with TestSession() as db:
+        db.execute(
+            update(AiRun)
+            .where(AiRun.id == uuid.UUID(run["id"]))
+            .values(result={"tools_available": 1, "changed": []})
+        )
+        db.commit()
+    r = _draft(c, h, svc_id)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "attack_draft_unreadable"
