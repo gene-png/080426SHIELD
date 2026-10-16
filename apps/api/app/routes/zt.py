@@ -50,7 +50,12 @@ from app.ai.runs import (
 from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import (
+    ParentGuard,
+    refuse_parent_changed_after_release,
+    refuse_parent_changed_during_release,
+    release_deliverable,
+)
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
@@ -2390,6 +2395,9 @@ def release_zt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    # #1123 (a) guards every release, the repair re-release included (#736
+    # 6220094031 item 6). On a repair its miss raises the repair refusal,
+    # which is true for a report the client already has.
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2397,8 +2405,26 @@ def release_zt_deliverable(
         user=user,
         kinds=(ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD),
         action="zt.deliverable.released",
+        parent_guard=_zt_release_guard(deliverable_id),
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _zt_release_guard(deliverable_id: uuid.UUID) -> ParentGuard:
+    """#1123 (a): the approval in force must predate the deliverable's
+    finalize, judged in the flip's own WHERE. A RATCHET: no product path fires
+    it today (an approved ZT version cannot be re-approved, and
+    `start_revision` makes a new version rather than reopening this one). It
+    would fire if #1120's unlock ever re-approves a version after its report
+    was built. CSF's twin is the CSF track's (#1123)."""
+    finalized_at = (
+        select(Deliverable.finalized_at).where(Deliverable.id == deliverable_id).scalar_subquery()
+    )
+    return ParentGuard(
+        condition=lambda _parent_id: ZtAssessment.approved_at <= finalized_at,
+        refusal=lambda _db, _parent_id: refuse_parent_changed_during_release(),
+        repair_refusal=lambda _db, _parent_id: refuse_parent_changed_after_release(),
+    )
 
 
 # ---------------------------------------------------------------------------
