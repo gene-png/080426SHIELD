@@ -55,9 +55,11 @@ beforeEach(() => {
 
 describe("service URL with no section", () => {
   it("goes to Overview, keeping the service id", async () => {
-    await expect(call(A, "tech-debt", { service: "td-a" })).rejects.toEqual(
+    await expect(
+      call(A, "tech-debt", { service: "5e000000-0000-4000-8000-0000000000a1" }),
+    ).rejects.toEqual(
       new RedirectSignal(
-        `/admin/clients/${A}/services/tech-debt/overview?service=td-a`,
+        `/admin/clients/${A}/services/tech-debt/overview?service=5e000000-0000-4000-8000-0000000000a1`,
       ),
     );
   });
@@ -97,7 +99,9 @@ describe("Risk Register", () => {
 
   it("refuses an unknown client", async () => {
     await expect(
-      call("client-z", "risk-register", { client: "client-z" }),
+      call("c1000000-0000-4000-8000-0000000000ff", "risk-register", {
+        client: "c1000000-0000-4000-8000-0000000000ff",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 });

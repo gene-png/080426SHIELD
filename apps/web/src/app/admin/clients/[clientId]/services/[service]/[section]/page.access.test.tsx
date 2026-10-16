@@ -29,7 +29,9 @@ vi.mock("@/lib/auth/options", () => ({ auth: async () => session.value }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) =>
-      name === "shield_active_client_id" ? { value: "client-b" } : undefined,
+      name === "shield_active_client_id"
+        ? { value: "c1000000-0000-4000-8000-00000000000b" }
+        : undefined,
   }),
 }));
 vi.mock("next/navigation", async () => {
@@ -98,8 +100,12 @@ beforeEach(() => {
 
 describe("section page: renders the right workspace", () => {
   it("mounts client A's Tech Debt workspace under the section bar", async () => {
-    await renderSection(A, "tech-debt", "review", { service: "td-a" });
-    expect(screen.getByTestId("workspace")).toHaveTextContent("tech_debt td-a");
+    await renderSection(A, "tech-debt", "review", {
+      service: "5e000000-0000-4000-8000-0000000000a1",
+    });
+    expect(screen.getByTestId("workspace")).toHaveTextContent(
+      "tech_debt 5e000000-0000-4000-8000-0000000000a1",
+    );
     const bar = screen.getByRole("navigation", { name: "Service sections" });
     expect(within(bar).getByRole("link", { name: "Review" })).toHaveAttribute(
       "aria-current",
@@ -107,19 +113,25 @@ describe("section page: renders the right workspace", () => {
     );
     expect(
       within(bar).getByRole("link", { name: "Inputs" }).getAttribute("href"),
-    ).toBe(`/admin/clients/${A}/services/tech-debt/inputs?service=td-a`);
+    ).toBe(
+      `/admin/clients/${A}/services/tech-debt/inputs?service=5e000000-0000-4000-8000-0000000000a1`,
+    );
     expect(within(bar).getAllByRole("link")).toHaveLength(9);
   });
 
   it("omits Inputs for CSF (page-plan decision 1)", async () => {
-    await renderSection(A, "csf", "ai-draft", { service: "csf-a" });
+    await renderSection(A, "csf", "ai-draft", {
+      service: "5e000000-0000-4000-8000-0000000000c1",
+    });
     const bar = screen.getByRole("navigation", { name: "Service sections" });
     expect(within(bar).queryByRole("link", { name: "Inputs" })).toBeNull();
     expect(within(bar).getAllByRole("link")).toHaveLength(8);
   });
 
   it("shows the service header from the stages read", async () => {
-    await renderSection(A, "tech-debt", "overview", { service: "td-a" });
+    await renderSection(A, "tech-debt", "overview", {
+      service: "5e000000-0000-4000-8000-0000000000a1",
+    });
     expect(screen.getByTestId("service-header-version")).toHaveTextContent(
       "v2",
     );
@@ -133,14 +145,16 @@ describe("section page: renders the right workspace", () => {
       screen.getByRole("link", { name: "Technical Debt Review" }),
     ).toHaveAttribute(
       "href",
-      `/admin/clients/${A}/services/tech-debt/overview?service=td-a`,
+      `/admin/clients/${A}/services/tech-debt/overview?service=5e000000-0000-4000-8000-0000000000a1`,
     );
   });
 
   it("still renders the workspace when the header read fails", async () => {
     calls = installFakeApi({ ...baseWorld(), stagesStatus: 500 });
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    await renderSection(A, "tech-debt", "overview", { service: "td-a" });
+    await renderSection(A, "tech-debt", "overview", {
+      service: "5e000000-0000-4000-8000-0000000000a1",
+    });
     expect(
       screen.getByText("The version, status and stage could not be loaded."),
     ).toBeInTheDocument();
@@ -153,58 +167,89 @@ describe("section page: renders the right workspace", () => {
     const world = baseWorld();
     world.services[0].status = "archived";
     calls = installFakeApi(world);
-    await renderSection(A, "tech-debt", "overview", { service: "td-a" });
-    expect(screen.getByTestId("workspace")).toHaveTextContent("td-a");
+    await renderSection(A, "tech-debt", "overview", {
+      service: "5e000000-0000-4000-8000-0000000000a1",
+    });
+    expect(screen.getByTestId("workspace")).toHaveTextContent(
+      "5e000000-0000-4000-8000-0000000000a1",
+    );
   });
 });
 
 describe("section page: access (the URL is not authorization)", () => {
   it("refuses client B's service under client A's URL", async () => {
     await expect(
-      call(A, "tech-debt", "overview", { service: "td-b" }),
+      call(A, "tech-debt", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000b1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses a service whose kind is not the URL's", async () => {
     await expect(
-      call(A, "csf", "overview", { service: "td-a" }),
+      call(A, "csf", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses Inputs for CSF", async () => {
     await expect(
-      call(A, "csf", "inputs", { service: "csf-a" }),
+      call(A, "csf", "inputs", {
+        service: "5e000000-0000-4000-8000-0000000000c1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses an unknown section and an unknown service slug", async () => {
     await expect(
-      call(A, "tech-debt", "settings", { service: "td-a" }),
+      call(A, "tech-debt", "settings", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
     await expect(
-      call(A, "bogus", "overview", { service: "td-a" }),
+      call(A, "bogus", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("refuses a client id that is not a UUID (the API's 422)", async () => {
+    await expect(
+      call("not-a-uuid", "tech-debt", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("refuses an unknown client", async () => {
     await expect(
-      call("client-z", "tech-debt", "overview", { service: "td-a" }),
+      call("c1000000-0000-4000-8000-0000000000ff", "tech-debt", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("makes no API call for a client-role session", async () => {
     session.value = { role: "client", accessToken: "tok" };
     await expect(
-      call(A, "tech-debt", "overview", { service: "td-a" }),
+      call(A, "tech-debt", "overview", {
+        service: "5e000000-0000-4000-8000-0000000000a1",
+      }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
     expect(calls).toEqual([]);
   });
 
   it("scopes every tenant read to the URL's client, never the cookie's", async () => {
-    await renderSection(A, "tech-debt", "overview", { service: "td-a" });
+    await renderSection(A, "tech-debt", "overview", {
+      service: "5e000000-0000-4000-8000-0000000000a1",
+    });
     const scoped = calls.filter((c) => c.clientId !== null);
     expect(scoped.map((c) => c.path)).toEqual(
-      expect.arrayContaining(["/intake/engagements", "/services/td-a/stages"]),
+      expect.arrayContaining([
+        "/intake/engagements",
+        "/services/5e000000-0000-4000-8000-0000000000a1/stages",
+      ]),
     );
     for (const c of scoped) expect(c.clientId).toBe(A);
   });
@@ -214,7 +259,7 @@ describe("section page: a URL without ?service", () => {
   it("redirects to the one service of that kind", async () => {
     await expect(call(A, "tech-debt", "review")).rejects.toEqual(
       new RedirectSignal(
-        `/admin/clients/${A}/services/tech-debt/review?service=td-a`,
+        `/admin/clients/${A}/services/tech-debt/review?service=5e000000-0000-4000-8000-0000000000a1`,
       ),
     );
   });
@@ -222,7 +267,7 @@ describe("section page: a URL without ?service", () => {
   it("lists the services to choose from when there are several", async () => {
     const world = baseWorld();
     world.services.push({
-      id: "td-a2",
+      id: "5e000000-0000-4000-8000-0000000000a2",
       client_id: A,
       kind: "tech_debt",
       status: "draft",
@@ -241,7 +286,9 @@ describe("section page: a URL without ?service", () => {
           name: "Technical Debt Review, started 2026-10-01",
         })
         .getAttribute("href"),
-    ).toBe(`/admin/clients/${A}/services/tech-debt/review?service=td-a2`);
+    ).toBe(
+      `/admin/clients/${A}/services/tech-debt/review?service=5e000000-0000-4000-8000-0000000000a2`,
+    );
     expect(screen.queryByTestId("workspace")).toBeNull();
   });
 

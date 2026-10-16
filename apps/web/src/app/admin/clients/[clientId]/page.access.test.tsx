@@ -13,6 +13,7 @@ import {
   NotFoundSignal,
   type FakeCall,
 } from "../fake-api.testkit";
+import type { FrameKind } from "@/components/service-shell/shellCopy";
 
 const session = vi.hoisted(() => ({
   value: { role: "admin", accessToken: "tok" } as Record<
@@ -24,7 +25,9 @@ vi.mock("@/lib/auth/options", () => ({ auth: async () => session.value }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) =>
-      name === "shield_active_client_id" ? { value: "client-b" } : undefined,
+      name === "shield_active_client_id"
+        ? { value: "c1000000-0000-4000-8000-00000000000b" }
+        : undefined,
   }),
 }));
 vi.mock("next/navigation", async () => {
@@ -36,7 +39,7 @@ vi.mock("next/navigation", async () => {
     redirect: (url: string) => {
       throw new kit.RedirectSignal(url);
     },
-    usePathname: () => `/admin/clients/client-a`,
+    usePathname: () => `/admin/clients/c1000000-0000-4000-8000-00000000000a`,
     useSearchParams: () => new URLSearchParams(),
     useRouter: () => ({ push: vi.fn() }),
   };
@@ -71,7 +74,9 @@ describe("client overview page", () => {
       within(list)
         .getByRole("link", { name: "Technical Debt Review" })
         .getAttribute("href"),
-    ).toBe(`/admin/clients/${A}/services/tech-debt/overview?service=td-a`);
+    ).toBe(
+      `/admin/clients/${A}/services/tech-debt/overview?service=5e000000-0000-4000-8000-0000000000a1`,
+    );
     expect(within(list).getByText("In progress")).toBeInTheDocument();
     expect(
       within(list).getByRole("link", { name: "NIST CSF 2.0" }),
@@ -113,8 +118,47 @@ describe("client overview page", () => {
     ).toHaveAttribute("href", `/admin/queue/${A}`);
   });
 
+  it("leaves out a consultation, which has no workspace", async () => {
+    const world = baseWorld();
+    world.services.push({
+      id: "5e000000-0000-4000-8000-0000000000aa",
+      client_id: A,
+      kind: "consultation" as FrameKind,
+      status: "draft",
+      created_at: "2026-09-05T10:00:00Z",
+    });
+    calls = installFakeApi(world);
+    render(await overview(A));
+    const list = screen.getByRole("list", { name: "Services" });
+    expect(
+      within(list).getByRole("link", { name: "NIST CSF 2.0" }),
+    ).toBeInTheDocument();
+    expect(within(list).getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("refuses loudly a service kind the frame does not know", async () => {
+    const world = baseWorld();
+    world.services.push({
+      id: "5e000000-0000-4000-8000-0000000000ab",
+      client_id: A,
+      kind: "some_new_kind" as FrameKind,
+      status: "draft",
+      created_at: "2026-09-05T10:00:00Z",
+    });
+    calls = installFakeApi(world);
+    await expect(overview(A)).rejects.toThrow(
+      'unknown service kind "some_new_kind"',
+    );
+  });
+
   it("refuses an unknown client", async () => {
-    await expect(overview("client-z")).rejects.toBeInstanceOf(NotFoundSignal);
+    await expect(
+      overview("c1000000-0000-4000-8000-0000000000ff"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("refuses a client id that is not a UUID (the API's 422)", async () => {
+    await expect(overview("not-a-uuid")).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("makes no API call for a client-role session", async () => {
@@ -148,8 +192,14 @@ describe("client layout (the rail)", () => {
     expect(screen.getByText("section body")).toBeInTheDocument();
   });
 
+  it("refuses a client id that is not a UUID (the API's 422)", async () => {
+    await expect(layout("not-a-uuid")).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
   it("refuses an unknown client before rendering anything", async () => {
-    await expect(layout("client-z")).rejects.toBeInstanceOf(NotFoundSignal);
+    await expect(
+      layout("c1000000-0000-4000-8000-0000000000ff"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
   });
 
   it("makes no API call for a client-role session", async () => {

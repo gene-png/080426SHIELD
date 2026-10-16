@@ -63,8 +63,12 @@ function parseServices(body: unknown): FrameService[] {
       typeof kind !== "string"
     )
       throw new Error("client_frame: an engagement row is malformed");
-    // `consultation` has no workspace, so no place in the frame.
-    if (!KIND_ORDER.includes(kind as FrameKind)) return [];
+    // `consultation` has no workspace, so no place in the frame. Any OTHER
+    // kind the frame does not know is refused loudly, never dropped: a new
+    // service kind must not vanish from the rail without a sign.
+    if (kind === "consultation") return [];
+    if (!KIND_ORDER.includes(kind as FrameKind))
+      throw new Error(`client_frame: unknown service kind "${kind}"`);
     return [
       {
         service_id: row.service_id,

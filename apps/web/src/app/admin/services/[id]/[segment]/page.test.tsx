@@ -50,21 +50,21 @@ beforeEach(() => {
   const world = baseWorld();
   world.services.push(
     {
-      id: "atk-a",
+      id: "5e000000-0000-4000-8000-0000000000d1",
       client_id: A,
       kind: "attack_coverage",
       status: "draft",
       created_at: "2026-09-04T10:00:00Z",
     },
     {
-      id: "ztc-a",
+      id: "5e000000-0000-4000-8000-0000000000e1",
       client_id: A,
       kind: "zero_trust_cisa",
       status: "draft",
       created_at: "2026-09-05T10:00:00Z",
     },
     {
-      id: "ztd-a",
+      id: "5e000000-0000-4000-8000-0000000000f1",
       client_id: A,
       kind: "zero_trust_dod",
       status: "draft",
@@ -76,11 +76,11 @@ beforeEach(() => {
 
 describe("old /admin/services/{id}/{segment} URLs", () => {
   it.each([
-    ["td-a", "tech-debt"],
-    ["atk-a", "attack-coverage"],
-    ["csf-a", "csf"],
-    ["ztc-a", "zero-trust-cisa"],
-    ["ztd-a", "zero-trust-dod"],
+    ["5e000000-0000-4000-8000-0000000000a1", "tech-debt"],
+    ["5e000000-0000-4000-8000-0000000000d1", "attack-coverage"],
+    ["5e000000-0000-4000-8000-0000000000c1", "csf"],
+    ["5e000000-0000-4000-8000-0000000000e1", "zero-trust-cisa"],
+    ["5e000000-0000-4000-8000-0000000000f1", "zero-trust-dod"],
   ])("%s at /%s redirects to its client's Overview", async (id, segment) => {
     await expect(call(id, segment)).rejects.toEqual(
       new RedirectSignal(
@@ -90,31 +90,39 @@ describe("old /admin/services/{id}/{segment} URLs", () => {
   });
 
   it("sends a service opened under the wrong segment to its real kind", async () => {
-    await expect(call("td-a", "csf")).rejects.toEqual(
+    await expect(
+      call("5e000000-0000-4000-8000-0000000000a1", "csf"),
+    ).rejects.toEqual(
       new RedirectSignal(
-        `/admin/clients/${A}/services/tech-debt/overview?service=td-a`,
+        `/admin/clients/${A}/services/tech-debt/overview?service=5e000000-0000-4000-8000-0000000000a1`,
       ),
     );
   });
 
   it("finds an unknown service id not found", async () => {
+    await expect(
+      call("5e000000-0000-4000-8000-0000000000ff", "tech-debt"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("finds a service id that is not a UUID not found (the API's 422)", async () => {
     await expect(call("nope", "tech-debt")).rejects.toBeInstanceOf(
       NotFoundSignal,
     );
   });
 
   it("finds an unknown segment not found without reading anything", async () => {
-    await expect(call("td-a", "settings")).rejects.toBeInstanceOf(
-      NotFoundSignal,
-    );
+    await expect(
+      call("5e000000-0000-4000-8000-0000000000a1", "settings"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
     expect(calls).toEqual([]);
   });
 
   it("makes no API call for a client-role session", async () => {
     session.value = { role: "client", accessToken: "tok" };
-    await expect(call("td-a", "tech-debt")).rejects.toBeInstanceOf(
-      NotFoundSignal,
-    );
+    await expect(
+      call("5e000000-0000-4000-8000-0000000000a1", "tech-debt"),
+    ).rejects.toBeInstanceOf(NotFoundSignal);
     expect(calls).toEqual([]);
   });
 });
