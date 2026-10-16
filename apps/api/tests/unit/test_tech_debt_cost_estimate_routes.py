@@ -148,6 +148,11 @@ def test_a_locked_uncosted_row_is_not_asked(app_client) -> None:  # noqa: F811
     )
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "no_costs_to_estimate"
+    # The locked case says why, not "every tool already has a cost", which is
+    # false here. Copy approved on #736 (6221187740), typed here.
+    assert r.json()["error"]["message"] == (
+        "Every tool without a cost is locked, so the AI will not estimate it."
+    )
 
 
 def test_a_declined_estimate_leaves_the_row_uncosted(app_client) -> None:  # noqa: F811

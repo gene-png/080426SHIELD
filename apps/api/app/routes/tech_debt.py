@@ -141,7 +141,7 @@ from app.tech_debt.filename import (
     SERVICE_SLUG_BY_KIND,
     deliverable_filename,
 )
-from app.tech_debt.overlap import analyze_overlap
+from app.tech_debt.overlap import analyze_overlap, no_cost_items
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusions
 from app.tech_debt.savings import estimated_savings
@@ -1792,6 +1792,9 @@ def bulk_set_disposition(
 #: TD-5 (for #1060). Copy approved on #736 (6218297098): the stale-tab case,
 #: where the button was shown but every uncosted row has since been costed.
 _NOTHING_TO_ESTIMATE = "Every tool already has a cost, so there is nothing to estimate."
+#: The same refusal when uncosted rows remain but every one is locked. Copy
+#: approved on #736 (6221187740).
+_ALL_UNCOSTED_LOCKED = "Every tool without a cost is locked, so the AI will not estimate it."
 #: Tools per call: 50 answers of about 50 tokens each, far inside the purpose's
 #: output budget, so no inventory is ever truncated.
 _ESTIMATE_BATCH = 50
@@ -1833,9 +1836,12 @@ def estimate_missing_costs(
     )
     targets = estimate_targets(items)
     if not targets:
+        # Uncosted rows that are all locked are not "every tool has a cost":
+        # the consultant locked them, and the message says so.
+        message = _ALL_UNCOSTED_LOCKED if no_cost_items(items) else _NOTHING_TO_ESTIMATE
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"reason": "no_costs_to_estimate", "message": _NOTHING_TO_ESTIMATE},
+            detail={"reason": "no_costs_to_estimate", "message": message},
         )
     _log.info(
         "tech_debt.cost_estimate_requested",
