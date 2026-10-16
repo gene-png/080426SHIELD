@@ -4,9 +4,9 @@ is counted as no-notes, never alerted as omitted (`_omitted_keys`'s
 `- no_notes`).
 
 Since Option 1 a blank-notes row is left out of the payload before egress, so
-the guard is reachable only under P1's literal reading
-(`LEAVE_OUT_EVERY_BLANK_NOTES = False`), which still sends a blank-notes
-subcategory a consultant scored. #1203's review found that, with the leave-out
+no current payload reaches the guard: it is a ratchet against a future
+loosening of the leave-out, and this test switches the leave-out off
+(`_without_the_leave_out`) to reach it. #1203's review found that, with the leave-out
 in place, `test_csf_run_ai_no_notes.py::
 test_an_omitted_row_with_no_notes_is_counted_not_alerted` passes through the
 leave-out and no longer exercises the subtraction. This test does. Red on
@@ -25,9 +25,9 @@ from tests.unit.test_csf_run_ai_no_notes import (  # noqa: F401  (app_client is 
     _go_live,
     _notes,
     _run,
-    _send_scored_blank_rows,
     _service,
     _type_score,
+    _without_the_leave_out,
     app_client,
 )
 
@@ -42,8 +42,8 @@ def test_a_sent_row_with_no_notes_left_out_by_the_model_is_counted_not_omitted(
     svc, answers, codes = _service(c, h)
     noted, bare = codes[0], codes[1]
     _notes(c, h, answers[noted], "Asset inventory is reconciled monthly.")
-    _type_score(c, h, svc, bare, governance=2)  # scored, no notes: sent under P1's literal reading
-    _send_scored_blank_rows(monkeypatch)
+    _type_score(c, h, svc, bare, governance=2)  # scored, no notes: sent with the leave-out off
+    _without_the_leave_out(monkeypatch)
     _go_live(provider, monkeypatch)
 
     body = _run(c, provider, h, svc, codes, [])  # the model answers nothing at all

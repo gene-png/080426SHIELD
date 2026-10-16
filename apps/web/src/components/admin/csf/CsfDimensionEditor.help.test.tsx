@@ -101,7 +101,7 @@ const H2_BANDS = [
 const H3 =
   'Choose "Evidence on file" only when evidence for this subcategory and tier is held, or "Confirmed in discussion" when the client confirmed it with you but nothing is held. Neither changes the scores or the level. With "Neither", the level is shown as not validated by evidence, and a Managed or Optimized level is shown as notional. Run AI never sets this, and a file the client attached to the questionnaire does not set it either: a consultant has to.';
 const H4 =
-  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, or every in-scope tier while none has been scored. It compares their rolled-up level, usually the lowest, with the highest target among them. Below the target is a gap. If none of them has a target, the subcategory is not checked for a gap: it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
+  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, compares their rolled-up level, usually the lowest, with the highest target among them, and reports a level below the target as a gap. A subcategory with no scored tier has no level, so it is not checked for a gap. If no scored tier has a target, it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
 const H5 =
   'Untick "In scope" when this subcategory does not apply to the systems in this tier. An out-of-scope row is left out of the Enterprise level, the gaps and their priorities. If every tier is out of scope, the subcategory leaves the Enterprise profile.';
 const H6 =
@@ -168,7 +168,7 @@ const RUBRIC: string[][] = [
 const S1 =
   "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above Developing.";
 const S2 =
-  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored, or if no tier has been scored yet.";
+  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored.";
 
 beforeEach(() => {
   vi.mocked(csfClient.fetchProfile).mockReset();

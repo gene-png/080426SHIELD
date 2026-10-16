@@ -3,13 +3,8 @@ subcategory whose current answer has blank notes is left out of the
 csf_score payload BEFORE egress, in every mode, so the preview is exactly
 what egresses.
 
-P1 (#736 6204461502) is Gene's, so both answers are pinned here through
-`LEAVE_OUT_EVERY_BLANK_NOTES`:
-
-- True: every blank-notes subcategory is left out, a consultant-scored one
-  included.
-- False (Q1 (a) read literally): a blank-notes subcategory with a recorded
-  value on an in-scope tier is still sent.
+P1 (Gene, #736 6205956728): every blank-notes subcategory is left out, a
+consultant-scored one included (`SCORED_BLANK` below).
 
 Red-on-revert: with the leave-out removed from `_csf_ai_request_for`, the
 first test sees all three codes egress and goes red.
@@ -98,19 +93,6 @@ def test_the_preview_shows_the_same_leave_out(app_client) -> None:  # noqa: F811
     assert payload["subcategories"] == [NOTED], payload["subcategories"]
     assert set(payload["answers"]) == {NOTED}
     assert set(payload["subcategory_definitions"]) == {NOTED}
-
-
-def test_the_literal_q1a_predicate_still_sends_a_scored_blank_subcategory(
-    app_client,  # noqa: F811
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("app.routes.csf.LEAVE_OUT_EVERY_BLANK_NOTES", False)
-    c, provider = app_client
-    h, svc = _world(c)
-    sent = _capture(provider)
-    csf_run_ai(c, svc, h)
-    assert _sent_codes(sent) == {NOTED, SCORED_BLANK}, _sent_codes(sent)
-    assert RATED_ONLY not in _answer_codes(sent)
 
 
 def test_nothing_to_send_makes_no_call(app_client) -> None:  # noqa: F811

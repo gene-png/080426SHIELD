@@ -12,11 +12,11 @@ not an "omitted" row (no re-run can give it an answer), and it is disclosed:
 
 Since CSF Option 1 (D-114) a subcategory with no notes is left out of the
 payload in every mode, before egress, so a row the guard here would drop is
-never sent. The `no_notes` drop stays as the SECOND guard, and it is still
-reachable under P1's other answer (`LEAVE_OUT_EVERY_BLANK_NOTES = False`,
-pending Gene), which sends a blank-notes subcategory a consultant scored. The
-tests of the guard set that, so they keep exercising it whichever way P1 is
-ruled; the leave-out is pinned in `test_csf_leave_out_before_egress.py`.
+never sent. The `no_notes` drop stays as the SECOND guard: a ratchet that no
+current payload can reach, kept against a future loosening of the leave-out
+(`routes/csf.py::_left_out_codes`). The tests of the guard switch the leave-out
+off (`_without_the_leave_out`), so they keep exercising it; the leave-out is
+pinned in `test_csf_leave_out_before_egress.py`.
 
 Every test drives the real routes. A live run is made deterministic the way
 `test_csf_run_ai.py` does it: the provider's `name` is patched to a live
@@ -136,11 +136,11 @@ def _type_score(c: TestClient, h: dict, svc: str, code: str, **fields: object) -
     assert r.status_code == 200, r.text
 
 
-def _send_scored_blank_rows(monkeypatch) -> None:
-    """P1's literal reading (`routes/csf.py::LEAVE_OUT_EVERY_BLANK_NOTES`): a
-    blank-notes subcategory with a recorded score is still sent, so the
-    `no_notes` guard is what keeps the model off it."""
-    monkeypatch.setattr("app.routes.csf.LEAVE_OUT_EVERY_BLANK_NOTES", False)
+def _without_the_leave_out(monkeypatch) -> None:
+    """The leave-out (`routes/csf.py::_left_out_codes`) keeps nothing back, so
+    every blank-notes row is sent and the `no_notes` guard is what keeps the
+    model off it: the regression the second guard is kept against."""
+    monkeypatch.setattr("app.routes.csf._left_out_codes", lambda _rows, _answers: frozenset())
 
 
 def _go_live(provider: FixtureProvider, monkeypatch) -> None:
@@ -204,7 +204,7 @@ def test_a_live_run_leaves_a_hand_typed_score_on_a_row_with_no_notes(
     svc, _answers, codes = _service(c, h)
     bare = codes[1]
     _type_score(c, h, svc, bare, governance=2)
-    _send_scored_blank_rows(monkeypatch)
+    _without_the_leave_out(monkeypatch)
     _go_live(provider, monkeypatch)
 
     body = _run(
@@ -233,7 +233,7 @@ def test_blank_notes_count_as_no_notes(app_client, monkeypatch) -> None:
     blank = codes[2]
     _notes(c, h, answers[blank], "  \n\t ")
     _type_score(c, h, svc, blank, governance=2)
-    _send_scored_blank_rows(monkeypatch)
+    _without_the_leave_out(monkeypatch)
     _go_live(provider, monkeypatch)
 
     body = _run(
@@ -299,10 +299,10 @@ def test_the_audit_row_carries_the_no_notes_count(app_client, monkeypatch) -> No
     c, provider, h = app_client
     svc, answers, codes = _service(c, h)
     _notes(c, h, answers[codes[0]], "Policies reviewed annually.")
-    # codes[1] has a recorded score and no notes: sent under P1's literal
-    # reading, and dropped by the guard, so the audit row has a drop to carry.
+    # codes[1] has a recorded score and no notes: sent with the leave-out off,
+    # and dropped by the guard, so the audit row has a drop to carry.
     _type_score(c, h, svc, codes[1], governance=2)
-    _send_scored_blank_rows(monkeypatch)
+    _without_the_leave_out(monkeypatch)
     _go_live(provider, monkeypatch)
     body = _run(
         c,
