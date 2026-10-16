@@ -13,6 +13,9 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
 
 const NOT_SAVED_KEPT =
   "This value was not saved. It is still in the form, so you can save it again.";
+/** S-1115-2, a PLACEHOLDER until approved: the same answer for a field the
+ *  wizard does not keep. */
+const NOT_SAVED_RETYPE = "This value was not saved. Enter it again to save it.";
 const OUTCOME_UNKNOWN =
   "We couldn't confirm whether this finished. It may still complete; check before trying again.";
 
@@ -64,6 +67,24 @@ describe("useIntakeAutoSave: which answers let the typed value go (#1115)", () =
       expect(refused).not.toHaveBeenCalled();
     },
   );
+
+  it("does not say the value is in the form when the caller does not keep it (review of 8b4f28a1)", async () => {
+    // Step 3's fields are re-read from the server when the step reopens, so
+    // "It is still in the form" would be false for them.
+    respondRaw(403, null);
+    const refused = vi.fn();
+    const { result } = renderHook(() =>
+      useIntakeAutoSave(undefined, refused, () => false),
+    );
+    await act(async () => {
+      await result.current.save({ phone: "555-0100" });
+    });
+    const state = result.current.saveState;
+    expect(state.kind === "error" ? state.message : undefined).toBe(
+      NOT_SAVED_RETYPE,
+    );
+    expect(refused).not.toHaveBeenCalled();
+  });
 
   it("keeps it on the proxy's own 401, and shows its sentence", async () => {
     respondRaw(
