@@ -931,6 +931,9 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             assessment_id=str(a.id),
             capabilities=len(rows),
         )
+        # #1219: so the run records "not charged" rather than "not known" (a
+        # run the reaper ends stays "not known": the reaper never sees ctx).
+        ctx.declare_no_call()
         data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while
