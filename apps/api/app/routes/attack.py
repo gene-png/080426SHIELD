@@ -124,6 +124,7 @@ from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -170,6 +171,7 @@ from app.schemas.attack import (
     CoverageChange,
     TacticHeatmapEntry,
 )
+from app.schemas.clients import AttackDraftDashboardResponse
 from app.schemas.revisions import RevisionStartRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
@@ -734,6 +736,104 @@ def latest_assessment(
             detail="ATT&CK assessments are admin-only.",
         )
     return _serialize_assessment(db, a, viewer=user)
+
+
+#: #1178, D-1: PLACEHOLDER copy until approved on #736.
+_NO_DRAFT_MESSAGE = "PLACEHOLDER D-1: no completed AI run yet, so there is no draft to show"
+
+
+def _row_as_the_run_left_it(a: AttackAssessment, row: AttackCoverageResponse) -> AttackCoverage:
+    """One coverage row rebuilt IN MEMORY from a run's stored result, never added
+    to a session, so nothing is written. Carries every column the dashboard
+    reads: status, reason, the three tool lists, rationale and the citation
+    record. `reviewed_status` is not in the stored result and stays NULL: the
+    draft is the state before review."""
+    return AttackCoverage(
+        id=row.id,
+        assessment_id=a.id,
+        technique_code=row.technique_code,
+        status=row.status.value if row.status is not None else None,
+        reason_code=row.reason_code,
+        narrative=row.narrative,
+        notes=row.notes,
+        locked=row.locked,
+        detection_tools=row.detection_tools,
+        prevention_tools=row.prevention_tools,
+        response_tools=row.response_tools,
+        rationale=row.rationale,
+        unconfirmed_citations=(
+            None
+            if row.unconfirmed_citations is None
+            else [c.model_dump() for c in row.unconfirmed_citations]
+        ),
+        answered_by=row.answered_by,
+        answered_at=row.answered_at,
+    )
+
+
+@router.get(
+    "/services/{service_id}/draft-dashboard",
+    response_model=AttackDraftDashboardResponse,
+    summary="The dashboard as the last AI run left the assessment, before review (admin, #1178)",
+)
+def draft_dashboard(
+    service_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackDraftDashboardResponse:
+    """Gene's 2026-10-15 test-run item 10: an admin-only draft dashboard after
+    the AI run, kept for comparison after review.
+
+    Built from the last COMPLETED mitre_map run on the service's current
+    assessment, from the rows as that run left them (`ai_runs.result`), never
+    from the rows as they are now: a consultant's later edit does not move it,
+    and a re-run replaces it. The body is the client dashboard's own builder
+    (`clients.attack_dashboard_body`), so the two compute rows the same way.
+    Admin-only by the route's dependency, not by a hidden link."""
+    # Imported here: `routes.clients` imports this module at load time.
+    from app.routes.clients import attack_dashboard_body
+
+    svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    a = _latest_assessment(db, svc.id)
+    run = (
+        None
+        if a is None
+        else db.execute(
+            select(AiRun)
+            .where(
+                AiRun.service_id == svc.id,
+                AiRun.purpose == "mitre_map",
+                AiRun.subject_id == a.id,
+                AiRun.status == AiRunStatus.COMPLETED,
+            )
+            .order_by(AiRun.finished_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    )
+    if a is None or run is None or run.finished_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"reason": "attack_no_draft", "message": _NO_DRAFT_MESSAGE},
+        )
+    stored = AttackRunAiResponse.model_validate(run.result)
+    body = attack_dashboard_body(
+        db,
+        client=client,
+        svc=svc,
+        assessment=a,
+        coverage=[_row_as_the_run_left_it(a, row) for row in stored.coverage],
+    )
+    _log.info(
+        "attack.draft_dashboard.built",
+        service_id=str(svc.id),
+        run_id=str(run.id),
+        actor_user_id=str(user.id),
+        evaluated=len(body.techniques),
+    )
+    return AttackDraftDashboardResponse(
+        **dict(body), run_id=run.id, run_finished_at=run.finished_at
+    )
 
 
 # ---------------------------------------------------------------------------
