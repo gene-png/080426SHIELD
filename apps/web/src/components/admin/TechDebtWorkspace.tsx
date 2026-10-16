@@ -318,7 +318,7 @@ Name it:`,
       "",
     );
     if (name === null || !name.trim()) return;
-    // #1176: still free text, deliberately, pending a scope call on #736. The
+    // #1176: still free text, deliberately (the rest is tracked in #1247). The
     // API's include route takes any category; the dropdown shows an off-list
     // one as "(not on the list)". See `_refuse_off_list_category`.
     const category = window.prompt("Category (optional):", "") ?? undefined;

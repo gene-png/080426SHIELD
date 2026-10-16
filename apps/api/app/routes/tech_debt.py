@@ -504,9 +504,9 @@ def _refuse_off_list_category(value: str | None, *, current: str | None) -> None
     value from before the closed list (v3.2) is kept, never remapped.
 
     Applied to the item PATCH only. The include-a-row and add-components
-    routes also take a typed category, and are deliberately left alone here,
-    pending a scope call on #736: a value they store is shown by the dropdown
-    as "(not on the list)"."""
+    routes also take a typed category, and are deliberately left alone (the
+    coordinator's scope call; the rest is tracked in #1247): a value they
+    store is shown by the dropdown as "(not on the list)"."""
     if value is None or value in CATEGORIES or value == current:
         return
     _log.info("tech_debt.category_refused", reason="category_not_on_list")
@@ -1018,6 +1018,10 @@ def include_excluded_row(
         capability_list_id=cap_list.id,
         name=body.name,
         vendor=body.vendor,
+        # #1176: NOT restricted to the closed list, deliberately: the web asks
+        # with free text, and refusing it needs its own plan and copy (tracked
+        # in #1247). The item PATCH is restricted (`_refuse_off_list_category`);
+        # a value stored here shows in its dropdown as "(not on the list)".
         category=body.category,
         function=body.function,
         annual_cost_usd=body.annual_cost_usd,
@@ -1348,6 +1352,8 @@ def add_capability_components(
                 parent_item_id=item.id,
                 name=comp.name,
                 vendor=item.vendor,
+                # #1176: not restricted to the closed list, deliberately, as
+                # in the include route above (tracked in #1247).
                 category=comp.category,
                 function=comp.function,
                 # No cost: the parent holds the licence value.
