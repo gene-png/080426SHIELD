@@ -1126,6 +1126,7 @@ export function AttackWorkspace({
                   refusal, so it sits in the step where that refusal is met. */}
               <AttackComputedReviewPanel
                 assessment={assessment}
+                catalog={catalog}
                 busy={busy !== null || runInProgress}
                 onReview={onReview}
               />

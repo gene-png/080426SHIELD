@@ -1,7 +1,11 @@
 "use client";
 import type { JSX } from "react";
 
-import type { AttackAssessment, AttackCoverageRow } from "@/lib/attack/types";
+import type {
+  AttackAssessment,
+  AttackCatalog,
+  AttackCoverageRow,
+} from "@/lib/attack/types";
 
 /** The status words the panel prints. Admin copy, posted on #554 (A3). */
 const STATUS_TEXT: Record<string, string> = {
@@ -37,8 +41,95 @@ function isReviewed(row: AttackCoverageRow): boolean {
   );
 }
 
+interface TacticGroup {
+  tactic: string;
+  rows: AttackCoverageRow[];
+}
+
+/** The queue by tactic, in the catalog's tactic order, or null when the
+ *  catalog cannot place every queued technique: a row with no group would be
+ *  a row the panel does not show. A technique under several tactics is in
+ *  each of their groups. */
+function groupByTactic(
+  queue: AttackCoverageRow[],
+  catalog: AttackCatalog | null | undefined,
+): TacticGroup[] | null {
+  if (!catalog) return null;
+  const tacticsOf = new Map(catalog.techniques.map((t) => [t.id, t.tactics]));
+  if (queue.some((row) => !(tacticsOf.get(row.technique_code) ?? []).length)) {
+    return null;
+  }
+  return catalog.tactics
+    .map((tactic) => ({
+      tactic: tactic.name,
+      rows: queue.filter((row) =>
+        (tacticsOf.get(row.technique_code) ?? []).includes(tactic.shortname),
+      ),
+    }))
+    .filter((group) => group.rows.length > 0);
+}
+
+function reviewOf(rows: AttackCoverageRow[]) {
+  return rows.map((row) => ({
+    code: row.technique_code,
+    computed_status: row.computed_status ?? "",
+  }));
+}
+
+function count(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/** The queue's table: the code (with its catalog name when known), the AI's
+ *  status, the computed one, and the three capability words. */
+function ReviewTable({
+  rows,
+  nameOf,
+}: {
+  rows: AttackCoverageRow[];
+  nameOf: Map<string, string>;
+}): JSX.Element {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr>
+            <th scope="col">Technique</th>
+            <th scope="col">AI suggested</th>
+            <th scope="col">Computed</th>
+            <th scope="col">Detect</th>
+            <th scope="col">Prevent</th>
+            <th scope="col">Respond</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.technique_code}>
+              <td>
+                <span className="font-mono">{row.technique_code}</span>
+                {nameOf.has(row.technique_code)
+                  ? ` ${nameOf.get(row.technique_code)}`
+                  : null}
+              </td>
+              <td>{statusText(row.status)}</td>
+              <td>{statusText(row.computed_status)}</td>
+              <td>{IN_PLACE_TEXT[row.capabilities?.detect ?? ""] ?? ""}</td>
+              <td>{IN_PLACE_TEXT[row.capabilities?.prevent ?? ""] ?? ""}</td>
+              <td>{IN_PLACE_TEXT[row.capabilities?.respond ?? ""] ?? ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export interface AttackComputedReviewPanelProps {
   assessment: AttackAssessment;
+  /** #1052 / #1051: groups the queue by tactic and names each technique.
+   *  Absent (still loading), or missing any queued technique, the queue is
+   *  shown ungrouped, every row, as before. */
+  catalog?: AttackCatalog | null;
   busy: boolean;
   /** Records the review of what this panel shows: each code with the computed
    *  status on screen, so the API can refuse one that moved since. */
@@ -57,6 +148,7 @@ export interface AttackComputedReviewPanelProps {
  */
 export function AttackComputedReviewPanel({
   assessment,
+  catalog,
   busy,
   onReview,
 }: AttackComputedReviewPanelProps): JSX.Element | null {
@@ -68,10 +160,14 @@ export function AttackComputedReviewPanel({
     .filter((row) => row.in_review_queue === true)
     .sort((a, b) => a.technique_code.localeCompare(b.technique_code));
   const reviewed = assessment.coverage.filter(isReviewed).length;
-  const shown = queue.map((row) => ({
-    code: row.technique_code,
-    computed_status: row.computed_status ?? "",
-  }));
+  const shown = reviewOf(queue);
+  const groups = groupByTactic(queue, catalog);
+  const nameOf = new Map(
+    groups ? (catalog?.techniques ?? []).map((t) => [t.id, t.name]) : [],
+  );
+  const multiTactic =
+    groups !== null &&
+    groups.reduce((n, g) => n + g.rows.length, 0) > queue.length;
 
   return (
     <section
@@ -108,38 +204,43 @@ export function AttackComputedReviewPanel({
       )}
       {queue.length > 0 ? (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr>
-                  <th scope="col">Technique</th>
-                  <th scope="col">AI suggested</th>
-                  <th scope="col">Computed</th>
-                  <th scope="col">Detect</th>
-                  <th scope="col">Prevent</th>
-                  <th scope="col">Respond</th>
-                </tr>
-              </thead>
-              <tbody>
-                {queue.map((row) => (
-                  <tr key={row.technique_code}>
-                    <td className="font-mono">{row.technique_code}</td>
-                    <td>{statusText(row.status)}</td>
-                    <td>{statusText(row.computed_status)}</td>
-                    <td>
-                      {IN_PLACE_TEXT[row.capabilities?.detect ?? ""] ?? ""}
-                    </td>
-                    <td>
-                      {IN_PLACE_TEXT[row.capabilities?.prevent ?? ""] ?? ""}
-                    </td>
-                    <td>
-                      {IN_PLACE_TEXT[row.capabilities?.respond ?? ""] ?? ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {groups === null ? (
+            <ReviewTable rows={queue} nameOf={nameOf} />
+          ) : (
+            <>
+              {multiTactic ? (
+                <p
+                  className="text-sm text-ink-secondary"
+                  data-testid="attack-computed-review-multi-tactic"
+                >
+                  PLACEHOLDER M-4c: a technique listed under more than one
+                  tactic is marked reviewed everywhere it appears
+                </p>
+              ) : null}
+              {groups.map((group) => (
+                <div
+                  key={group.tactic}
+                  className="flex flex-col gap-2"
+                  data-testid="attack-computed-review-group"
+                >
+                  <h4 className="text-sm font-semibold text-ink-primary">
+                    {`PLACEHOLDER M-4a: ${group.tactic} (${count(group.rows.length)})`}
+                  </h4>
+                  <ReviewTable rows={group.rows} nameOf={nameOf} />
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => void onReview(reviewOf(group.rows))}
+                      disabled={busy}
+                      className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
+                    >
+                      {`PLACEHOLDER M-4b: ${count(group.rows.length)} in ${group.tactic}`}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
           <div>
             <button
               type="button"
