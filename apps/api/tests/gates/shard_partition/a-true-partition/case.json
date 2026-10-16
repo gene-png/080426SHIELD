@@ -1,0 +1,15 @@
+{
+ "incident": "Control: the shape the Python and E2E aggregates must accept -- every selected test ran in exactly one shard.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt"
+ ]
+}

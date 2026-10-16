@@ -60,6 +60,16 @@ function isSubmittedField(key: string): key is SubmittedClientField {
   return (SUBMITTED_CLIENT_FIELDS as readonly string[]).includes(key);
 }
 
+/** Whether every value in `patch` is one the wizard keeps on screen after a
+ *  failed save: the submitted client fields, laid over the server's copy. */
+function keepsPatch(patch: IntakePatchRequest): boolean {
+  const { client, ...profile } = patch;
+  return (
+    Object.keys(profile).length === 0 &&
+    Object.keys(client ?? {}).every(isSubmittedField)
+  );
+}
+
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
     acc[step.key] = i;
@@ -107,6 +117,9 @@ export function IntakeWizard(): JSX.Element {
         }
         return nextEntered;
       }),
+    // #1115: the wizard keeps on screen only the client fields it submits;
+    // Step 3's are re-read from the server when the step reopens.
+    keepsPatch,
   );
 
   // #252: the client fields as this person last ENTERED them, from every save

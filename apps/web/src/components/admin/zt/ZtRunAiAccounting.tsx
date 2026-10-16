@@ -70,8 +70,8 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
  * NOT merged into one label, because telling a consultant a row is "locked"
  * when nobody locked it is a false statement about who did what.
  */
-// #1084: the line for a run that sent no capability. PLACEHOLDER, PENDING the
-// advisor's ruling: proposed text, not approved verbatim.
+// #1084: the line for a run that sent no capability. Approved verbatim at #736
+// comment 6216024281 (item 1.14).
 const NOTHING_SENT =
   "No capability was sent to the AI, because none had notes recorded when this run started.";
 
@@ -349,8 +349,7 @@ export function ZtRunAiAccounting({
   if (result.suggestions_received === 0 && result.capabilities_sent === 0) {
     return (
       <div className="space-y-2">
-        {/* PLACEHOLDER, PENDING the advisor's ruling (#1084 re-review R6):
-            proposed text, not approved. */}
+        {/* Approved verbatim at #736 comment 6216024281 (#1084). */}
         <p className="text-sm text-ink-secondary">{NOTHING_SENT}</p>
         <ZtOmittedBlock result={result} otherAlert={false} />
       </div>
