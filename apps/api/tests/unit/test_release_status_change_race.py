@@ -40,7 +40,8 @@ CHANGED = (
 
 def assert_refused(r) -> None:
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"reason": "parent_changed_during_release", "message": CHANGED}
+    err = r.json()["error"]  # the D-016 envelope
+    assert (err["reason"], err["message"]) == ("parent_changed_during_release", CHANGED), err
 
 
 @contextmanager
