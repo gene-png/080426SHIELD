@@ -134,7 +134,9 @@ check "default is CI's"         echoargs 0 "pytest -p no:cacheprovider -m unit t
 check "options after --"        echoargs 0 "-m unit tests/unit -k foo (app=" "" tests/unit -- -k foo
 # The self-test in BOTH states.
 check "self-test, right mount"  probe    0 "self-test: PASS"         "FAIL"   --self-test
-SHIELD_UNIT_MOUNT_SOURCE="$EMPTY" check "self-test, wrong mount" probe 2 "FAIL (red half)" "self-test: PASS" --self-test
+# The must-not is the inner run REFUSING the hook: that also ends in "FAIL (red
+# half)", and would hide a broken tag-and-probe check (review of 74506b66).
+SHIELD_UNIT_MOUNT_SOURCE="$EMPTY" check "self-test, wrong mount" probe 2 "FAIL (red half)" "self-test hook" --self-test
 # Run from ANOTHER tree, the script refuses rather than test the tree the shell
 # is in (review of 313678ad: the self-test then "proved" the wrong tree).
 OTHER="$TMP/other"
