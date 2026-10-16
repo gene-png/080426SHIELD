@@ -3,7 +3,8 @@
 not declare it.
 
 `CLAUDE.md`'s merge rule says an agent merges unattended only when six
-conditions hold, and that "any PR tripping 4, 5 or 6 comes back to the human".
+conditions hold, and that "any PR tripping 4, 5 or 6 comes back to the human" (since D-113, it is extra
+care and goes to the advisor).
 Condition 4 -- "No migration" -- is a path question with an exact answer, and it
 was answered from memory by whoever wanted to merge.
 
@@ -312,8 +313,8 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         print(
-            "  The merge rule says a PR tripping condition 4 comes back to the\n"
-            "  human. THAT is not enforced here and is not meant to be; what is\n"
+            "  The merge rule says a PR tripping condition 4 is extra care and\n"
+            "  goes to the advisor (D-113). THAT is not enforced here and is not meant to be; what is\n"
             "  enforced is that the PR says so.\n"
             "\n"
             "  Add a line to the body:\n"
