@@ -399,6 +399,23 @@ def start_revision(
     return result
 
 
+def refuse_mint_over_released(version: int) -> HTTPException:
+    """#1123 item 1, approved verbatim at #736 comment 6216024281: a plain
+    "create assessment" over a RELEASED latest version is refused. It used to
+    mint a blank version+1 draft that is not a revision, so the client doors
+    (`client_facing`) did not apply and the client was handed a blank
+    questionnaire over their released answers. Start a revision is the one
+    supported way to reopen released work, and the control exists on the ATT&CK,
+    CSF and ZT workspaces (`StartRevisionButton`). Typed (D-016)."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "version_released_use_revision",
+            "message": f"Version {version} is released. Use Start a revision to change it.",
+        },
+    )
+
+
 def is_revision_draft(record: Any) -> bool:
     """A DRAFT minted by "Start a revision": the consultant's, not the client's."""
     return record.status.value == "draft" and getattr(record, "revision_of", None) is not None
