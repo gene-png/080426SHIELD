@@ -30,11 +30,16 @@ function result(over: Partial<ZtRunAiResponse> = {}): ZtRunAiResponse {
 }
 
 const DRIFT = /The AI returned no suggestions at all/;
+// PENDING the advisor's ruling: the proposed line for a run that sent nothing.
+// It changes with the ruling, never with the component.
+const NOTHING_SENT =
+  "No capability was sent to the AI, because none has notes recorded.";
 
 describe("ZtRunAiAccounting, a run that sent nothing (#1084)", () => {
   it("shows the omitted disclosure and no drift alert", () => {
     render(<ZtRunAiAccounting result={result({ capabilities_sent: 0 })} />);
     // The positive state first, so the absences below are not vacuous.
+    expect(screen.getByText(NOTHING_SENT)).toBeInTheDocument();
     expect(
       screen.getByText("2 capabilities got no stage from the AI this run."),
     ).toBeInTheDocument();
@@ -54,7 +59,9 @@ describe("ZtRunAiAccounting, a run that sent nothing (#1084)", () => {
 });
 
 describe("ZtRunAiAccounting, nothing sent and nothing omitted (#1084)", () => {
-  it("never renders an empty panel: with nothing to list, the alert stays", () => {
+  // Every row blank AND locked: nothing sent, nothing omitted (a locked row is
+  // never omitted). The panel is never empty and never claims drift.
+  it("says nothing was sent, with no drift alert and no empty panel", () => {
     render(
       <ZtRunAiAccounting
         result={result({
@@ -64,6 +71,8 @@ describe("ZtRunAiAccounting, nothing sent and nothing omitted (#1084)", () => {
         })}
       />,
     );
-    expect(screen.getByRole("alert")).toHaveTextContent(DRIFT);
+    expect(screen.getByText(NOTHING_SENT)).toBeInTheDocument();
+    expect(screen.queryByText(DRIFT)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

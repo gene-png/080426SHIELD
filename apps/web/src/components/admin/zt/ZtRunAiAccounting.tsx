@@ -70,6 +70,11 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
  * NOT merged into one label, because telling a consultant a row is "locked"
  * when nobody locked it is a false statement about who did what.
  */
+// #1084: the line for a run that sent no capability. PLACEHOLDER, PENDING the
+// advisor's ruling: proposed text, not approved verbatim.
+const NOTHING_SENT =
+  "No capability was sent to the AI, because none has notes recorded.";
+
 // `edited` joined it with #645, `no_notes` with #1084 (as in CSF, #1000).
 const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
   "locked",
@@ -335,19 +340,21 @@ export function ZtRunAiAccounting({
   //
   // #840: a response with no entries leaves every capability without a
   // result, so the omitted block renders here too.
-  // #1084: every capability was blank, so nothing was sent and no call was
-  // made. Receiving nothing is then the design: show the disclosure, never
-  // the drift alert. `=== 0`, not falsy: a run stored before the count
-  // existed (undefined/null) keeps the alert, as it did. And only when the
-  // disclosure has something to list: with nothing omitted either (every row
-  // blank AND locked, or no rows) the block renders nothing, and a completed
-  // run must never show an empty panel, so that case keeps the alert.
-  if (
-    result.suggestions_received === 0 &&
-    result.capabilities_sent === 0 &&
-    (result.omitted_count ?? 0) > 0
-  ) {
-    return <ZtOmittedBlock result={result} otherAlert={false} />;
+  // #1084: no capability was sent (every one is blank), so no call was made.
+  // Receiving nothing is then the design, never the drift alert: one neutral
+  // line says so, then the disclosure, which lists the blank rows that are not
+  // locked and renders nothing when every row is locked, so the panel is
+  // never empty. `=== 0`, not falsy: a run stored before the count existed
+  // (undefined/null) keeps the alert, as it did.
+  if (result.suggestions_received === 0 && result.capabilities_sent === 0) {
+    return (
+      <div className="space-y-2">
+        {/* PLACEHOLDER, PENDING the advisor's ruling (#1084 re-review R6):
+            proposed text, not approved. */}
+        <p className="text-sm text-ink-secondary">{NOTHING_SENT}</p>
+        <ZtOmittedBlock result={result} otherAlert={false} />
+      </div>
+    );
   }
   if (result.suggestions_received === 0) {
     return (

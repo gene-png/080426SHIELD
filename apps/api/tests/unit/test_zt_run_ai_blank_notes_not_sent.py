@@ -259,7 +259,7 @@ def test_a_row_given_notes_during_the_run_is_named_by_its_edit(world, monkeypatc
 def test_a_wholly_blank_assessment_makes_no_model_call(world) -> None:
     """Every row blank, as on a fresh assessment: nothing would be sent, so no
     call is made and no `llm_calls` row is written (mirrors CSF's approved P1,
-    not yet built on main).
+    not yet built on main as of 2026-10-16).
     The run still lists every capability as omitted with `notes_blank`, and
     says it sent none, so the panel does not read it as a broken response.
 
@@ -294,3 +294,25 @@ def test_a_run_states_how_many_capabilities_it_sent(world) -> None:
     result = world.run()
 
     assert result["capabilities_sent"] == len(sent) == len(world.sent[0]["capabilities"])
+
+
+@pytest.mark.unit
+def test_every_row_blank_and_locked_sends_nothing_and_omits_nothing(world) -> None:
+    """A locked row is never omitted (#840), and a blank one is never sent, so
+    a run over rows that are all blank AND locked has nothing to send and
+    nothing to list. No call is made, and the run says it sent none, which is
+    what lets the panel say so instead of claiming a broken response."""
+    from app.models.llm_call import LLMCall
+
+    for i in range(len(world.answers)):
+        world.patch(i, locked=True)
+    world.respond()
+
+    result = world.run()
+
+    assert world.sent == [], "the provider was called with nothing to score"
+    with world.sessions() as s:
+        assert s.execute(select(LLMCall)).scalars().all() == []
+    assert result["capabilities_sent"] == 0
+    assert (result["omitted_count"], result["omitted_capabilities"]) == (0, [])
+    assert (result["suggestions_received"], result["dropped"]) == (0, [])
