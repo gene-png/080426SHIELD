@@ -48,18 +48,29 @@ LEVEL_5 = {
 }
 
 KEPT = "No longer a gap: kept for the record"
+# The level bands by name since #736 6205956728 (the XLSX cover's C8 line).
 METHOD_NEW = (
-    "Levels are code-computed: total = sum of the five dimensions (0-10); L1 0-2, L2 3-5, "
-    "L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor roll-up across the in-scope tiers "
-    'that have been scored. A tier with no score recorded is left out and marked "Not '
-    'scored".'
+    "Levels are code-computed: total = sum of the five dimensions (0-10); Ad hoc 0-2, "
+    "Developing 3-5, Defined 6-7, Managed 8-9, Optimized 10. Enterprise = weighted-floor "
+    "roll-up across the in-scope tiers that have been scored. A tier with no score recorded "
+    'is left out and marked "Not scored".'
 )
 METHOD_OLD = (
-    "Levels are code-computed: total = sum of the five dimensions (0-10); L1 0-2, L2 3-5, "
-    "L3 6-7, L4 8-9, L5 10. Enterprise = weighted-floor roll-up across the tiers in use."
+    "Levels are code-computed: total = sum of the five dimensions (0-10); Ad hoc 0-2, "
+    "Developing 3-5, Defined 6-7, Managed 8-9, Optimized 10. Enterprise = weighted-floor "
+    "roll-up across the tiers in use."
 )
-SUMMARY_NEW = "Enterprise maturity, rolled up across the scored impact tiers in use, averages Level"
-SUMMARY_OLD = "Enterprise maturity, rolled up across the impact tiers in use, averages Level"
+# W3 (#736 6205956728): on a draft the average is over scored subcategories,
+# one decimal, rounded down (only CODE is scored, at Defined, 3). On a frozen
+# assessment it keeps the number it was delivered with, `round()` over every
+# row (every row reads Ad hoc, 1, there), and gains the name.
+SUMMARY_NEW = (
+    "Enterprise maturity, rolled up across the scored impact tiers in use, averages "
+    "3.0 of 5 (Defined)."
+)
+SUMMARY_OLD = (
+    "Enterprise maturity, rolled up across the impact tiers in use, averages 1 of 5 (Ad hoc)."
+)
 TWO_UNSCORED = "2 in-scope tier rows were not scored and are not part of the Enterprise level."
 ONE_UNSCORED = "1 in-scope tier row was not scored and is not part of the Enterprise level."
 
@@ -214,10 +225,10 @@ def test_the_export_describes_the_scored_tiers_rule(app_client) -> None:  # noqa
     assert METHOD_NEW in about, about
     ent = _row(book["Enterprise Profile"], CODE)
     assert (ent["High"], ent["Mod"], ent["Low"], ent["Enterprise"]) == (
-        3,
+        "Defined",
         "Not scored",
         "Not scored",
-        "L3",
+        "Defined",
     ), ent
     # Every other subcategory has no scored tier, keeps its rows (#1073), and
     # leaves nothing out: the count is CODE's two rows.
@@ -249,7 +260,12 @@ def test_a_frozen_assessment_exports_the_old_copy(app_client) -> None:  # noqa: 
     about = [r[0] for r in book["About"] if r and r[0]]
     assert METHOD_OLD in about, about  # positive first
     ent = _row(book["Enterprise Profile"], CODE)
-    assert (ent["High"], ent["Mod"], ent["Low"], ent["Enterprise"]) == (3, 1, 1, "L1"), ent
+    assert (ent["High"], ent["Mod"], ent["Low"], ent["Enterprise"]) == (
+        "Defined",
+        "Ad hoc",
+        "Ad hoc",
+        "Ad hoc",
+    ), ent
     assert METHOD_NEW not in about
     for kind in ("exec_pdf", "exec_docx", "full_pdf", "full_docx"):
         flat = _flat_text(kind, files[kind])
