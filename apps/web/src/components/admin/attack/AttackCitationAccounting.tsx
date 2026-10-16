@@ -211,6 +211,46 @@ function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
   );
 }
 
+/**
+ * #1181: Gene's plain-English citation line, replacing the numeric headline
+ * ("{n} tool citations checked against the client's capability list: ...").
+ * Copy C-1 to C-5 approved verbatim (#736 comment 6216024281, from the
+ * proposal in 6208173127); counts comma-formatted. C-2a keeps #115's
+ * "completed batches only" qualifier on a partial run.
+ */
+const CITATION_INTRO =
+  "For each attack technique, the AI listed which of the client's tools help stop it, spot it or respond to it. Each time it named a tool, we checked that the tool is really on the client's approved list, so the AI can't make one up.";
+
+function citationLine(
+  confirmed: number,
+  needsReview: number,
+  rejected: number,
+  runIncomplete: boolean,
+): string {
+  const n = (k: number) => k.toLocaleString("en-US");
+  const total = confirmed + needsReview + rejected;
+  if (total === 0) {
+    return `${CITATION_INTRO} The AI named no tools, so there was nothing to check.`;
+  }
+  const checked = runIncomplete
+    ? `We checked ${n(total)} of these, from the batches that completed.`
+    : `We checked ${n(total)} of these.`;
+  if (needsReview === 0 && rejected === 0) {
+    return `${CITATION_INTRO} ${checked} All ${n(total)} are on the list. None need a closer look and none were rejected.`;
+  }
+  const onList =
+    confirmed === 0
+      ? "None are on the list."
+      : `${n(confirmed)} are on the list.`;
+  const closer =
+    needsReview === 0
+      ? "None need a closer look."
+      : `${n(needsReview)} need a closer look.`;
+  const gone =
+    rejected === 0 ? "None were rejected." : `${n(rejected)} were rejected.`;
+  return `${CITATION_INTRO} ${checked} ${onList} ${closer} ${gone}`;
+}
+
 export function AttackCitationAccounting({
   result,
 }: {
@@ -219,7 +259,6 @@ export function AttackCitationAccounting({
   const confirmed = result.citations_confirmed ?? 0;
   const needsReview = result.citations_needs_review ?? 0;
   const rejected = result.citations_rejected ?? 0;
-  const total = confirmed + needsReview + rejected;
 
   // A payload from before the resolver carries none of these. Rendering
   // "0 citations" over it would assert something the run never measured.
@@ -274,17 +313,8 @@ export function AttackCitationAccounting({
       data-testid="attack-citation-accounting"
       aria-live="polite"
     >
-      <p className="text-ink-secondary">
-        {total === 1 ? "1 tool citation" : `${total} tool citations`} checked
-        {runIncomplete
-          ? " across the completed batches only"
-          : " against the client’s capability list"}
-        : <span className="font-semibold text-ink-primary">{confirmed}</span>{" "}
-        confirmed,{" "}
-        <span className="font-semibold text-ink-primary">{needsReview}</span>{" "}
-        need review,{" "}
-        <span className="font-semibold text-ink-primary">{rejected}</span>{" "}
-        rejected.
+      <p className="text-ink-secondary" data-testid="attack-citation-line">
+        {citationLine(confirmed, needsReview, rejected, runIncomplete)}
       </p>
 
       {runIncomplete ? (
