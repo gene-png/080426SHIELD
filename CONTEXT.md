@@ -13,7 +13,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
-**2026-10-16: #1129, the workspace document list follows the workspace.** The admin documents panel lists the uploads of the workspace's own client, not whichever client another tab last set active. Status: the 2026-10-16 #1129 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+**2026-10-16: #1129, the workspace document list follows the workspace.** The admin documents panel lists, downloads and (#1262) files uploads under the workspace's own client, not whichever client another tab last set active. Status: the 2026-10-16 #1129 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1225 item 1, no untyped server text on a failed upload list.** On a failed upload list, the admin documents panel and intake Steps 5 and 6 show a server sentence only when it is typed (`{reason, message}`), and their own copy otherwise. Status: the 2026-10-16 #1225 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
