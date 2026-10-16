@@ -630,6 +630,12 @@ class RiskRegisterResponse(BaseModel):
     capped_target_codes: dict[str, list[str]] | None = None
     #: #915 (S3): the approved sentence built from it, rendered as given.
     zt_capped_target_note: str | None = None
+    #: #1343: per ZT source, the finding codes whose target has no recorded
+    #: origin (`risk/zt_target_origin.py`). None when the register records
+    #: nothing, which is not "none" (an empty list).
+    unrecorded_target_codes: dict[str, list[str]] | None = None
+    #: #1343: `{code}: <approved sentence>`, one per code, rendered as given.
+    zt_unrecorded_target_notes: list[str] = []
     #: #474 D': the approved CSF source note, or None (no CSF findings).
     csf_source_note: str | None = None
     #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
