@@ -3,6 +3,7 @@ import { CsfWorkspace } from "@/components/admin/csf/CsfWorkspace";
 import { EnsureActiveClient } from "@/components/admin/EnsureActiveClient";
 import { TechDebtWorkspace } from "@/components/admin/TechDebtWorkspace";
 import { ZtWorkspace } from "@/components/admin/zt/ZtWorkspace";
+import type { SectionKey } from "@/components/service-shell/SectionBar";
 import type { FrameKind } from "@/components/service-shell/shellCopy";
 
 import type { JSX } from "react";
@@ -65,16 +66,26 @@ function Workspace({
   }
 }
 
+/**
+ * The section's slot, and the ONE place a service track splits its workspace
+ * into sections: it receives the URL's `section` (already checked against the
+ * kind by the page). Until a track moves its components, every section shows
+ * the whole existing workspace, once, and `section` only names the slot.
+ */
 export function ExistingWorkspace({
   kind,
   serviceId,
+  section,
 }: {
   kind: FrameKind;
   serviceId: string;
+  section: SectionKey;
 }): JSX.Element {
   return (
-    <EnsureActiveClient serviceId={serviceId}>
-      <Workspace kind={kind} serviceId={serviceId} />
-    </EnsureActiveClient>
+    <div data-testid="section-view" data-section={section}>
+      <EnsureActiveClient serviceId={serviceId}>
+        <Workspace kind={kind} serviceId={serviceId} />
+      </EnsureActiveClient>
+    </div>
   );
 }
