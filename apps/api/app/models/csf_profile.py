@@ -45,6 +45,18 @@ class CsfEvidenceBasis(enum.StrEnum):
     LINKED = "linked"
 
 
+class CsfEvidenceStatus(enum.StrEnum):
+    """A Working Profile row's evidence, three values (Gene, #736 6201691989
+    item 2; migration 0074, which read `has_evidence` true as ON_FILE and false
+    as NEITHER). Stored as the VALUE. No value changes a score or a level
+    except under the frozen cap (`csf/rules.py::evidence_cap_applies`), which
+    reads ON_FILE alone, as the boolean it replaced did."""
+
+    ON_FILE = "on_file"
+    CONFIRMED_IN_DISCUSSION = "confirmed_in_discussion"
+    NEITHER = "neither"
+
+
 class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "csf_dimension_scores"
     __table_args__ = (
@@ -78,7 +90,17 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )
-    has_evidence: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    evidence_status: Mapped[CsfEvidenceStatus] = mapped_column(
+        SAEnum(
+            CsfEvidenceStatus,
+            name="csf_evidence_status",
+            native_enum=False,
+            length=32,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=CsfEvidenceStatus.NEITHER,
+        nullable=False,
+    )
     target_level: Mapped[int | None] = mapped_column(SmallInteger)
 
     # Work Order C2: locked rows are untouched by a Run-AI rerun.
@@ -104,7 +126,7 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # #1126. Every other row is NULL: a DRAFT (or SUBMITTED) row's
     # tick switches to the EV-1 rule at launch, and an unticked row has no
     # tick to freeze. NOTHING READS IT FOR SCORING YET: `score_tier`'s
-    # evidence cap still reads `has_evidence` alone.
+    # frozen evidence cap reads `has_evidence` (evidence on file) alone.
     #
     # DEFERRED (group `EVIDENCE_BASIS_GROUP`) and `evaluates_none()`, for
     # `Artifact`'s evidence-intake columns' reason: a select or an ORM insert
@@ -116,6 +138,18 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
         deferred=True,
         deferred_group=EVIDENCE_BASIS_GROUP,
     )
+
+    @property
+    def has_evidence(self) -> bool:
+        """Evidence on file: what the boolean column meant before 0074, and
+        what the frozen cap reads."""
+        return self.evidence_status == CsfEvidenceStatus.ON_FILE
+
+    @has_evidence.setter
+    def has_evidence(self, value: bool) -> None:
+        """The two values the boolean could write: true is ON_FILE, false is
+        NEITHER. CONFIRMED_IN_DISCUSSION is written through `evidence_status`."""
+        self.evidence_status = CsfEvidenceStatus.ON_FILE if value else CsfEvidenceStatus.NEITHER
 
 
 class CsfGapAction(UUIDPKMixin, TimestampMixin, Base):

@@ -30,6 +30,7 @@ import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
+import { coverageLine, evidenceLine } from "@/lib/csf/optionsCopy";
 import type {
   CsfDroppedSuggestion,
   CsfPlaybookExport,
@@ -534,13 +535,15 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
     key: "ent",
     header: "Enterprise",
     align: "center",
-    cell: (r) => `L${r.enterprise_level}`,
+    // Option 1, #1073: a subcategory with no scored tier has no level.
+    cell: (r) =>
+      r.enterprise_level === null ? NOT_SCORED : `L${r.enterprise_level}`,
   },
   {
     key: "rule",
     header: "Rule",
     align: "center",
-    cell: (r) => `#${r.rollup_rule}`,
+    cell: (r) => (r.rollup_rule === null ? "" : `#${r.rollup_rule}`),
   },
   {
     key: "target",
@@ -852,6 +855,27 @@ export function CsfPlaybookPanel({
               data-testid="csf-retired-rows"
             >
               {enterprise.retired_rows_note}
+            </p>
+          ) : null}
+
+          {/* C3 (Options 1 and 3): scored + self-reported + not answered,
+              stated at zero too. The same counts the playbook files state. */}
+          {seeded && enterprise?.coverage ? (
+            <p
+              className="text-sm text-ink-secondary"
+              data-testid="csf-coverage"
+            >
+              {coverageLine(enterprise.coverage)}
+            </p>
+          ) : null}
+          {/* E3: only where evidence labels a level. Under a frozen
+              assessment's cap it limits the level instead (`evidence_cap`). */}
+          {seeded && enterprise?.coverage && enterprise.evidence_cap === false ? (
+            <p
+              className="text-sm text-ink-secondary"
+              data-testid="csf-evidence-coverage"
+            >
+              {evidenceLine(enterprise.coverage)}
             </p>
           ) : null}
 
