@@ -209,6 +209,15 @@ class CapabilityComponentsRequest(BaseModel):
     components: list[CapabilityComponentInput] = Field(min_length=1)
 
 
+class TechDebtCategoriesResponse(BaseModel):
+    """#1176: the category dropdown's options. `categories` is
+    `tech_debt/extract.py` `CATEGORIES`, served so the web never copies it;
+    "Uncategorized" is stored as null and only labelled here."""
+
+    categories: list[str]
+    uncategorized_label: str
+
+
 class CapabilityItemPatch(BaseModel):
     """Partial-update body for inline edits in the admin table.
 
