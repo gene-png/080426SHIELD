@@ -98,6 +98,7 @@ from app.schemas.tech_debt import (
     SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
+    TechDebtCategoriesResponse,
     TopCostItemResponse,
 )
 from app.security.rate_limit import enforce_ai_rate_limit
@@ -112,6 +113,7 @@ from app.tech_debt.exporters import (
     render_xlsx,
 )
 from app.tech_debt.extract import (
+    CATEGORIES,
     PROMPT_VERSIONS_WITH_CLOSED_SCALES,
     client_org_name_for_tenant,
     duplicated_source_rows,
@@ -1422,6 +1424,8 @@ def patch_capability_item(
             detail="Patch body is empty.",
         )
     _refuse_unstorable_values(data.get("annual_cost_usd"), data.get("license_count"))
+    if "category" in data:
+        _refuse_off_list_category(data["category"], current=item.category)
     # for #927: a part carries no cost; its bundle holds the license value
     # (`tech_debt/components.py`). Null stays allowed: it is the state a part is
     # born in, and the way a cost stored before this refusal is cleared.
@@ -1465,6 +1469,46 @@ def patch_capability_item(
     db.commit()
     db.refresh(item)
     return CapabilityItemResponse.model_validate(item, from_attributes=True)
+
+
+#: #1176: what "Uncategorized" is called. It is stored as null (the client
+#: dashboard labels null the same way, `routes/clients.py` `_UNCATEGORIZED`).
+_UNCATEGORIZED_LABEL = "Uncategorized"
+
+
+@router.get(
+    "/categories",
+    response_model=TechDebtCategoriesResponse,
+    summary="The capability category list the editor offers (admin, #1176)",
+)
+def list_categories(
+    _user: Annotated[User, _admin_required],
+) -> TechDebtCategoriesResponse:
+    """`CATEGORIES`, read from the extraction prompt's module, never copied."""
+    return TechDebtCategoriesResponse(
+        categories=list(CATEGORIES), uncategorized_label=_UNCATEGORIZED_LABEL
+    )
+
+
+def _refuse_off_list_category(value: str | None, *, current: str | None) -> None:
+    """#1176: a consultant's category is one from the list, null
+    ("Uncategorized"), or the row's current value unchanged -- so a stored
+    value from before the closed list (v3.2) is kept, never remapped.
+
+    Applied to the item PATCH only. The include-a-row and add-components
+    routes also take a typed category, and are deliberately left alone here,
+    pending a scope call on #736: a value they store is shown by the dropdown
+    as "(not on the list)"."""
+    if value is None or value in CATEGORIES or value == current:
+        return
+    _log.info("tech_debt.category_refused", reason="category_not_on_list")
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "reason": "category_not_on_list",
+            "message": "Choose a category from the list, or Uncategorized.",
+        },
+    )
 
 
 @router.post(
