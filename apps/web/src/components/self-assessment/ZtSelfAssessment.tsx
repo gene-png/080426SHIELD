@@ -18,6 +18,7 @@ import {
 // and read as an unexplained placement rule.
 import { MIN_TARGET_STAGE } from "@/lib/assessment-targets";
 
+import { BlankAnswersWarning } from "@/components/self-assessment/BlankAnswersWarning";
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import { ZtStagePicker } from "@/components/admin/zt/ZtStagePicker";
 import {
@@ -90,6 +91,9 @@ export function ZtSelfAssessment({
   const saveSeq = React.useRef(0);
   const [submitted, setSubmitted] = React.useState(false);
   const [pillarIdx, setPillarIdx] = React.useState(0);
+  // #1173: Submit with blanks shows the warning instead of submitting.
+  const [blankWarning, setBlankWarning] = React.useState(false);
+  const pillarRef = React.useRef<HTMLElement>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -292,6 +296,25 @@ export function ZtSelfAssessment({
   const stat = pillarStats[idx];
   const isLast = idx >= pillars.length - 1;
   const incomplete = pillarStats.filter((s) => s.answered === 0);
+  const blankTotal = capabilityTotal - answeredTotal;
+
+  function onSubmitClick(): void {
+    if (blankTotal > 0) {
+      setBlankWarning(true);
+      return;
+    }
+    void onSubmit();
+  }
+
+  function goToPillar(code: string): void {
+    const i = pillarStats.findIndex((s) => s.code === code);
+    if (i < 0) throw new Error(`[self-assessment] no pillar ${code}`);
+    setPillarIdx(i);
+    pillarRef.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -450,6 +473,7 @@ export function ZtSelfAssessment({
           {/* Current pillar */}
           {pillar && stat ? (
             <section
+              ref={pillarRef}
               aria-label={`${pillar.code} ${pillar.name}`}
               className="flex flex-col gap-4 rounded-md border border-border-subtle bg-surface-card p-4"
             >
@@ -613,6 +637,20 @@ export function ZtSelfAssessment({
         </div>
       ) : null}
 
+      {blankWarning && blankTotal > 0 ? (
+        <BlankAnswersWarning
+          areas={pillarStats.map((s) => ({
+            code: s.code,
+            blank: s.total - s.answered,
+          }))}
+          total={capabilityTotal}
+          noun="capabilities"
+          disabled={submitting || !everyPillarStarted || savesInFlight > 0}
+          onGoTo={goToPillar}
+          onSubmitAnyway={() => void onSubmit()}
+        />
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-tertiary">
           {everyPillarStarted ? (
@@ -630,7 +668,7 @@ export function ZtSelfAssessment({
         </p>
         <button
           type="button"
-          onClick={() => void onSubmit()}
+          onClick={onSubmitClick}
           disabled={submitting || !everyPillarStarted || savesInFlight > 0}
           title={
             everyPillarStarted

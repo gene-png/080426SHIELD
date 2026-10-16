@@ -19,6 +19,7 @@ import {
 import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
 
 import { CsfQuestionnaire } from "@/components/admin/csf/CsfQuestionnaire";
+import { BlankAnswersWarning } from "@/components/self-assessment/BlankAnswersWarning";
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import {
   fetchCatalog,
@@ -122,6 +123,13 @@ export function CsfSelfAssessment({
   // reason, as `assessmentSeq` in the admin workspaces.
   const saveSeq = React.useRef(0);
   const [submitted, setSubmitted] = React.useState(false);
+  // #1173: Submit with blanks shows the warning instead of submitting.
+  const [blankWarning, setBlankWarning] = React.useState(false);
+  // The questionnaire's function tab, set from here by the warning's "Go to".
+  const [activeFunction, setActiveFunction] = React.useState<string | null>(
+    null,
+  );
+  const questionnaireRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -309,6 +317,32 @@ export function CsfSelfAssessment({
     ? (PROFILE_LABEL[assessment.client_profile] ?? null)
     : null;
   const targetTiers = catalog.tiers.filter((t) => t.tier >= MIN_TARGET_TIER);
+  // #1173: blanks per in-scope function, over the same in-scope set as the
+  // "answered" count above, so the two always add up to `total`.
+  const blankAreas = filteredCatalog.functions.map((fn) => ({
+    code: fn.code,
+    blank: fn.categories
+      .flatMap((c) => c.subcategories)
+      .filter((s) => (answersByCode[s.code]?.maturity_tier ?? null) === null)
+      .length,
+  }));
+  const blankTotal = total - answeredCount;
+
+  function onSubmitClick(): void {
+    if (blankTotal > 0) {
+      setBlankWarning(true);
+      return;
+    }
+    void onSubmit();
+  }
+
+  function goToFunction(code: string): void {
+    setActiveFunction(code);
+    questionnaireRef.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -381,16 +415,20 @@ export function CsfSelfAssessment({
               {assessment.retired_answers_note}
             </p>
           ) : null}
-          <CsfQuestionnaire
-            catalog={filteredCatalog}
-            answersByCode={answersByCode}
-            onAnswerUpdate={onAnswerUpdate}
-            // #758 review: read-only while Submit is out. Submit cannot start
-            // while a save is out, but a save started DURING Submit went
-            // after the assessment left draft, and its 409 landed after the
-            // page had become `SelfAssessmentSubmitted`.
-            readOnly={submitting}
-          />
+          <div ref={questionnaireRef}>
+            <CsfQuestionnaire
+              catalog={filteredCatalog}
+              answersByCode={answersByCode}
+              activeFunction={activeFunction ?? undefined}
+              onActiveFunctionChange={setActiveFunction}
+              onAnswerUpdate={onAnswerUpdate}
+              // #758 review: read-only while Submit is out. Submit cannot start
+              // while a save is out, but a save started DURING Submit went
+              // after the assessment left draft, and its 409 landed after the
+              // page had become `SelfAssessmentSubmitted`.
+              readOnly={submitting}
+            />
+          </div>
         </CardBody>
       </Card>
 
@@ -414,6 +452,17 @@ export function CsfSelfAssessment({
         </div>
       ) : null}
 
+      {blankWarning && blankTotal > 0 ? (
+        <BlankAnswersWarning
+          areas={blankAreas}
+          total={total}
+          noun="outcomes"
+          disabled={submitting || savesInFlight > 0}
+          onGoTo={goToFunction}
+          onSubmitAnyway={() => void onSubmit()}
+        />
+      ) : null}
+
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-ink-tertiary">
           You can submit now and your consultant will follow up if anything
@@ -421,7 +470,7 @@ export function CsfSelfAssessment({
         </p>
         <button
           type="button"
-          onClick={() => void onSubmit()}
+          onClick={onSubmitClick}
           disabled={submitting || savesInFlight > 0}
           className="rounded-md bg-brand-500 px-5 py-2.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
