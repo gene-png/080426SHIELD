@@ -52,6 +52,9 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
   protected: "answer was not written by the AI, and an offline run left it",
   // #645: an edit that landed after the run started is kept, never overwritten.
   edited: "answer was edited after this run started, so the run left it",
+  // #1084, approved verbatim at #736 comment 6205425122: CSF's `no_notes`
+  // label with "row" read as "capability".
+  no_notes: "capability has no notes, so the AI does not assess it",
   // #839 F1, S4, approved verbatim at #736 comment 6049667540: the PATCH routes
   // refuse this stage with the approved 422, and this is the run's word for it.
   stage_above_capability_max:
@@ -67,11 +70,12 @@ const DROP_REASON_LABEL: Record<ZtDroppedSuggestion["reason"], string> = {
  * NOT merged into one label, because telling a consultant a row is "locked"
  * when nobody locked it is a false statement about who did what.
  */
-// `edited` joined it with #645.
+// `edited` joined it with #645, `no_notes` with #1084 (as in CSF, #1000).
 const BY_DESIGN_SKIPS: ReadonlySet<string> = new Set([
   "locked",
   "protected",
   "edited",
+  "no_notes",
 ]);
 
 /**

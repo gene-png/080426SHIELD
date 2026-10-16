@@ -288,6 +288,7 @@ class ZtDroppedSuggestion(BaseModel):
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
     | `edited`       | the answer was edited after the run started (#645)       |
+    | `no_notes`     | named a blank-notes capability, which is never sent (#1084) |
     | `stage_above_capability_max` | a current stage above the capability's own maximum (#839) |
 
     `locked` and `protected` render separately from the rest. Both are by-design
@@ -312,6 +313,7 @@ class ZtDroppedSuggestion(BaseModel):
         "locked",
         "protected",
         "edited",
+        "no_notes",
         "stage_above_capability_max",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None

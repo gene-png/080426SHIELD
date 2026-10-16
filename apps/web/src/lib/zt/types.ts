@@ -124,6 +124,8 @@ export interface ZtDroppedSuggestion {
     | "locked"
     | "protected"
     | "edited"
+    // #1084: named a blank-notes capability, which is never sent.
+    | "no_notes"
     // #839 F1: a current stage above the capability's own maximum.
     | "stage_above_capability_max";
   /** The capability code exactly as the model wrote it, or null. */
