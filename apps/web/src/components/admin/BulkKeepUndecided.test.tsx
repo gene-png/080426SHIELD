@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { TechDebtProxyError } from "@/lib/tech_debt/client";
 import type { CapabilityItem } from "@/lib/tech_debt/types";
@@ -31,6 +31,18 @@ const ITEMS = [
   row("bundle", "keep"),
   row("part", null, "bundle"), // a part carries its own disposition
 ];
+
+// jsdom has no <dialog>.showModal()/.close(); the design-system Modal opens one.
+// The same stub as AttackWorkspace.run-supersede.test.tsx.
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function showModal(): void {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function close(): void {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  };
+});
 
 describe("BulkKeepUndecided (TD-11)", () => {
   it("names the undecided count, parts included", () => {

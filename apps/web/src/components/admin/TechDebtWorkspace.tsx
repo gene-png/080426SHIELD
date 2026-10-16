@@ -459,12 +459,10 @@ Components carry no cost of their own — this licence keeps its full value.`,
     listSeq.current += 1;
     let next: CapabilityList;
     try {
-      next = await bulkSetDisposition(
-        list.id,
-        itemIds,
-        disposition,
-        onlyIfUndecided,
-      );
+      // The flag is passed only when set, so #641's calls are unchanged.
+      next = onlyIfUndecided
+        ? await bulkSetDisposition(list.id, itemIds, disposition, true)
+        : await bulkSetDisposition(list.id, itemIds, disposition);
     } catch (err) {
       // Rethrown, not swallowed: the TABLE owns this refusal's display (beside
       // the bulk bar, with the selection kept for a retry), and a rejection is
