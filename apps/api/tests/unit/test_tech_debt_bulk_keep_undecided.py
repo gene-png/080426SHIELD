@@ -26,6 +26,17 @@ from tests.unit.test_tech_debt_routes import (  # noqa: F401  (fixture)
 pytestmark = pytest.mark.unit
 
 
+def _revision(sessions, list_id: str) -> int:
+    """The list's edit revision: a refused click must not move it, or an
+    approved list would silently need approving again (#640)."""
+    import uuid
+
+    from app.models.capability import CapabilityList
+
+    with sessions() as s:
+        return s.get(CapabilityList, uuid.UUID(list_id)).revision
+
+
 def _world(app_client):  # noqa: F811
     c, sessions, provider = app_client
     bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
@@ -55,6 +66,7 @@ def test_one_decided_row_refuses_the_whole_request_and_writes_nothing(
     assert first.status_code == 200, first.text
     with sessions() as s:
         audits_before = len(s.execute(select(AuditEntry)).scalars().all())
+    revision_before = _revision(sessions, list_id)
 
     r = _bulk(
         c,
@@ -69,6 +81,8 @@ def test_one_decided_row_refuses_the_whole_request_and_writes_nothing(
     assert (plan["cut_count"], plan["keep_count"], plan["undecided_count"]) == (1, 0, 2)
     with sessions() as s:
         assert len(s.execute(select(AuditEntry)).scalars().all()) == audits_before
+    # The revision bump `_record_edit` made was rolled back with the rows.
+    assert _revision(sessions, list_id) == revision_before
 
 
 def test_a_decision_landing_just_before_the_write_is_not_overwritten(
@@ -94,6 +108,7 @@ def test_a_decision_landing_just_before_the_write_is_not_overwritten(
             s.commit()
         return real_update(*args, **kwargs)
 
+    revision_before = _revision(sessions, list_id)
     monkeypatch.setattr(td, "update", decide_then_update)
     r = _bulk(
         c,
@@ -105,6 +120,8 @@ def test_a_decision_landing_just_before_the_write_is_not_overwritten(
     assert r.json()["error"]["reason"] == "capability_items_already_decided"
     plan = _plan(c, bearer, svc_id)
     assert (plan["cut_count"], plan["keep_count"], plan["undecided_count"]) == (1, 0, 2)
+    # The refused request's own bump was rolled back.
+    assert _revision(sessions, list_id) == revision_before
 
 
 def test_without_the_flag_the_route_still_overwrites_as_before(app_client) -> None:  # noqa: F811
