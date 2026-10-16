@@ -30,6 +30,7 @@ from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
 from app.zt.scoring import GapAnalysis, ScoreResult
 from app.zt.target_caps import stage_above_max_sentences, target_cap_sentences
+from app.zt.target_origin import TARGET_ORIGIN_NOT_RECORDED, unrecorded_target_codes
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -55,6 +56,30 @@ class ZtDeliverableContext:
     #: seed pass the real values.
     target_source: str = "client"
     engagement_target_used: bool = True
+
+
+def _unrecorded_gap_codes(ctx: ZtDeliverableContext) -> list[str]:
+    """#1343: the gap rows shown whose target is a per-capability target with
+    no recorded origin (`zt/target_origin.py`), in gap-list order. Only rows
+    the deliverable shows: a target the client never reads here needs no line.
+    """
+    unrecorded = set(unrecorded_target_codes(ctx.framework, ctx.answers))
+    return [g.code for g in ctx.gap.gaps if g.code in unrecorded]
+
+
+def _unrecorded_origin_lines(ctx: ZtDeliverableContext) -> list[str]:
+    """The DOCX/PDF lines under the gap table, `{code}: <sentence>`, one per
+    code (placement approved at #736 6225462107)."""
+    return [f"{code}: {TARGET_ORIGIN_NOT_RECORDED}" for code in _unrecorded_gap_codes(ctx)]
+
+
+def _gap_notes_cell(notes: str | None, unrecorded: bool) -> str:
+    """The XLSX Gap Plan Notes cell: the row's own notes, with the approved
+    sentence APPENDED when its target's origin is not recorded (#1343; never
+    replacing what is there, per 6225462107)."""
+    if not unrecorded:
+        return notes or ""
+    return f"{notes} {TARGET_ORIGIN_NOT_RECORDED}" if notes else TARGET_ORIGIN_NOT_RECORDED
 
 
 def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
@@ -359,6 +384,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
+    unrecorded_codes = set(_unrecorded_gap_codes(ctx))
     for g in ctx.gap.gaps:
         safe_text_row(
             ws3,
@@ -370,7 +396,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 g.target_stage,
                 g.gap_size,
                 g.priority_score,
-                g.notes or "",
+                _gap_notes_cell(g.notes, g.code in unrecorded_codes),
             ],
         )
     if not ctx.gap.gaps:
@@ -478,6 +504,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
                 for g in ctx.gap.gaps
             ],
         )
+        add_paragraphs(doc, _unrecorded_origin_lines(ctx))  # #1343
 
     return to_bytes(doc)
 
@@ -594,6 +621,8 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
         )
         gap_table.setStyle(_table_style())
         story.append(gap_table)
+        for line in _unrecorded_origin_lines(ctx):  # #1343
+            story.append(pdf_text(line, styles["BodyText"]))
 
     doc.build(story)
     return out.getvalue()
