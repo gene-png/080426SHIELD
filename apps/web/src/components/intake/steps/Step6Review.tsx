@@ -17,6 +17,7 @@ import {
 import type { JSX } from "react";
 import { formatDateOnly, formatInstantUtc } from "@/lib/dates";
 import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
+import { readFailureReason } from "@/lib/describe-save-error";
 import { isNamedOrg } from "@/lib/org-name";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
@@ -88,15 +89,22 @@ export function Step6Review({
   const [artifacts, setArtifacts] = React.useState<ArtifactSummary[] | null>(
     null,
   );
+  // #1223: a failed list is NOT an empty one. Saying "No documents uploaded"
+  // over a failed read is a false statement about the client's own uploads,
+  // on the step that exists so they can confirm them.
+  const [listError, setListError] = React.useState<string | null>(null);
   React.useEffect(() => {
     let cancelled = false;
     listArtifacts()
       .then((res) => {
         if (!cancelled) setArtifacts(res.items ?? []);
       })
-      .catch(() => {
-        // Non-blocking: the list is confirmation, not a submit gate.
-        if (!cancelled) setArtifacts([]);
+      .catch((err) => {
+        // Non-blocking: the list is confirmation, not a submit gate. But say
+        // that it failed, in the copy Step 5 uses for the same failure.
+        if (!cancelled) {
+          setListError(readFailureReason(err) ?? "Failed to load uploads.");
+        }
       });
     return () => {
       cancelled = true;
@@ -152,7 +160,11 @@ export function Step6Review({
         >
           Uploaded evidence
         </h3>
-        {artifacts === null ? (
+        {listError ? (
+          <p className="mt-2 text-sm text-status-danger-fg" role="alert">
+            {listError}
+          </p>
+        ) : artifacts === null ? (
           <p className="mt-2 text-sm text-ink-tertiary">Loading…</p>
         ) : artifacts.length === 0 ? (
           <p className="mt-2 text-sm text-ink-tertiary">

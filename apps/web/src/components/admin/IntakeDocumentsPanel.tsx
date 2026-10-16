@@ -12,6 +12,7 @@ import {
 } from "@shield/design-system";
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
+import { readFailureReason } from "@/lib/describe-save-error";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -83,9 +84,9 @@ export function IntakeDocumentsPanel({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't load documents.",
-          );
+          // #1223: never the error's own message, which for this READ was
+          // `ArtifactUploadError`'s "Upload failed: <status>".
+          setError(readFailureReason(err) ?? "Couldn't load documents.");
         }
       });
     return () => {
