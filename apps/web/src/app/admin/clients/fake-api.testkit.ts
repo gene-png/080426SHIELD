@@ -13,7 +13,10 @@
  * - `GET /admin/services/{id}`: cross-tenant service detail, 422 for a
  *   non-UUID id, 404 if unknown.
  * Both `/admin/*` reads are `require_role(ADMIN)`: a bearer whose user is not
- * an admin (`NON_ADMIN_TOKEN`, e.g. a role changed after sign-in) gets 403.
+ * an admin (`NON_ADMIN_TOKEN`) gets 403. No product path produces that today
+ * (the session's role comes from the API's login, and nothing in the API
+ * rewrites a role), so the frame's 403 refusal is a guard that should normally
+ * never fire; a role change that left sessions alive would make it reachable.
  */
 import { vi } from "vitest";
 

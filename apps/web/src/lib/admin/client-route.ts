@@ -22,8 +22,11 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
 import { orgDisplayName } from "@/lib/org-name";
 
-/** 403 / 404 / 422 from a read naming a client or service: not found. */
-function isRefusal(err: unknown): boolean {
+/**
+ * 403 / 404 / 422 from a read naming a client or service: not found. The
+ * caller logs the status, so the log names WHICH refusal it was.
+ */
+function isRefusal(err: unknown): err is ApiError {
   return err instanceof ApiError && [403, 404, 422].includes(err.status);
 }
 
@@ -93,7 +96,11 @@ export async function loadClientFrame(clientId: string): Promise<ClientFrame> {
     });
   } catch (err) {
     if (isRefusal(err)) {
-      console.warn("[client_frame] refused: client not found", clientId);
+      console.warn(
+        "[client_frame] refused: the client read answered",
+        err.status,
+        clientId,
+      );
       notFound();
     }
     throw err;
@@ -127,7 +134,11 @@ export async function newUrlForOldService(serviceId: string): Promise<string> {
     });
   } catch (err) {
     if (isRefusal(err)) {
-      console.warn("[client_frame] old URL: service not found", serviceId);
+      console.warn(
+        "[client_frame] old URL refused: the service read answered",
+        err.status,
+        serviceId,
+      );
       notFound();
     }
     throw err;
