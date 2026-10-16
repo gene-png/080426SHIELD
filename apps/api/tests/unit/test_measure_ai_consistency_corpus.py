@@ -1574,6 +1574,20 @@ def test_a_batch_whose_commit_failed_after_the_call_is_unknown_spend(
     assert report["budget_usd"]["complete"] is False
     # #952 round 3, finding 2: the output-token block says the same.
     assert report["budget"]["complete"] is False
+    # Which commit failed: the FINALISE, after the call. Its row was committed
+    # RUNNING before egress and still says so, with no tokens; a failed INSERT
+    # would leave no row at all and report the same unknown spend.
+    assert chosen, "setup: the finalise commit failed"
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+
+    with TestSession() as db:
+        stuck = db.execute(
+            _select(_func.count())
+            .select_from(LLMCall)
+            .where(LLMCall.status == LLMCallStatus.RUNNING, LLMCall.output_tokens.is_(None))
+        ).scalar_one()
+    assert stuck == 1, stuck
 
 
 def _dump_failing(monkeypatch, statuses: dict[str, str]):
