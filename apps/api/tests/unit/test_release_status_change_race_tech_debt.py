@@ -1,6 +1,7 @@
-"""#1123 item 2, Tech Debt (ruled at #736 6216024281). Tech Debt passes a `ParentGuard`, but its refusal fires only
-while the list is still APPROVED; a status change before the flip commits the
-release. Same hook and the same approved refusal as `test_release_status_change_race.py`.
+"""#1123 item 2, Tech Debt (ruled at #736 6216024281). Tech Debt passes a
+`ParentGuard`, but before #1123 its refusal fired only while the list was
+still APPROVED, and a status change before the flip committed the release.
+Same hook and the same approved refusal as `test_release_status_change_race.py`.
 """
 
 from __future__ import annotations

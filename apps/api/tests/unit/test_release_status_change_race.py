@@ -2,10 +2,10 @@
 parent's status changed between the release's pre-read and its flip.
 
 `deliverable_release._release_parent` flips the parent with a conditional
-UPDATE (`status = APPROVED`, plus the caller's guard). On a missed flip it
-raises the guard's refusal only when the parent is still APPROVED; when the
-status itself moved it logs `release_parent_changed_concurrently` and the
-release commits. These tests drive that move: a one-shot hook commits
+UPDATE (`status = APPROVED`, plus the caller's guard). Before #1123, a missed
+flip raised the guard's refusal only when the parent was still APPROVED, and
+when the status itself had moved it logged and the release committed. These
+tests drive that move: a one-shot hook commits
 APPROVED -> DRAFT (what #1120's unlock would make possible) from a separate
 session immediately before the flip, as
 `test_deliverable_release.py::test_a_parent_released_concurrently_is_logged_not_overwritten`
@@ -83,7 +83,7 @@ def _parent_id(model: type, service_id: str):
         )
 
 
-# --- ZT: no guard today -----------------------------------------------------
+# --- ZT ----------------------------------------------------------------------
 
 
 def test_zt_release_is_refused_when_the_assessment_moved_before_the_flip(
@@ -173,7 +173,48 @@ def test_a_zt_release_with_nothing_moved_still_releases(app_client) -> None:  # 
     assert _released(deliv_id)
 
 
-# --- ATT&CK: its guard does not cover a status change -----------------------
+def test_a_repair_re_release_over_a_moved_parent_keeps_the_earlier_release(
+    app_client, capsys  # noqa: F811
+) -> None:
+    """The REPAIR path (#1123 review F1): a deliverable already with the client
+    whose parent is stuck on APPROVED (pre-W4) is re-released while the parent
+    moves. "Nothing was released" would be false here, so it is not raised: the
+    earlier release stands and the move is logged.
+
+    Red-on-revert: drop the `deliv.released_at is not None` branch in
+    `_release_parent` and this answers 409 about a delivered report."""
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    deliv_id = _zt_finalize_release(c, bearer, svc_id)  # released
+    parent = _parent_id(ZtAssessment, svc_id)
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        s.get(ZtAssessment, parent).status = ZtAssessmentStatus.APPROVED  # pre-W4 shape
+        s.commit()
+    capsys.readouterr()
+
+    with _status_moves_before_the_flip(ZtAssessment, parent, ZtAssessmentStatus.DRAFT) as fired:
+        r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
+
+    assert fired, "the hook never ran -- the repair flip was not driven"
+    assert r.status_code == 200, r.text
+    assert r.json()["released_at"] is not None
+    assert _released(deliv_id)
+    assert "release_repair_parent_changed" in capsys.readouterr().out
+
+
+# --- ATT&CK -------------------------------------------------------------------
 
 
 def test_attack_release_is_refused_when_the_assessment_moved_before_the_flip(

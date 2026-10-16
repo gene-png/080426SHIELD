@@ -1,18 +1,13 @@
-"""#1123 item 2, the CSF half (RED, pending the advisor's ruling on T2's plan,
-#736 6212272655): a CSF release must not commit after the assessment's status
-changed between the release's pre-read and its flip.
+"""#1123 item 2, the CSF half (ruled at #736 6216024281): a CSF release must
+not commit after the assessment's status changed between the release's
+pre-read and its flip.
 
-The twin of T2's `test_release_status_change_race.py` (ZT, ATT&CK, Tech Debt,
-on `trackT2/1123-release-race-red`), which leaves CSF to this track. CSF
-passes no `ParentGuard` to `deliverable_release._release_parent`, so a missed
-flip with the status moved is logged as `release_parent_changed_concurrently`
-and the release commits. Here a one-shot hook commits APPROVED -> DRAFT (what
-#1120's unlock would make possible) from a separate session right before the
-flip.
-
-The expected outcome is the PROPOSAL, not shipped behaviour: the release is
-refused (409) and nothing is released. On main it fails with 200. The
-refusal's reason and message are not pinned: they wait for approved copy.
+The twin of `test_release_status_change_race.py` (ZT, ATT&CK, Tech Debt),
+written by the CSF track and folded in here. CSF passes no `ParentGuard`;
+before #1123 a missed flip with the status moved was logged and the release
+committed. A one-shot hook commits APPROVED -> DRAFT (what #1120's unlock
+would make possible) from a separate session right before the flip, and the
+release is refused with the approved typed 409 and nothing is released.
 """
 
 from __future__ import annotations
@@ -28,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.deliverable import Deliverable
 from tests.unit.test_frozen_engagement_target import _register, app_client  # noqa: F401
+from tests.unit.test_release_status_change_race import assert_refused
 
 pytestmark = pytest.mark.unit
 
@@ -97,5 +93,5 @@ def test_csf_release_is_refused_when_the_assessment_moved_before_the_flip(
         r = c.post(f"/csf/deliverables/{deliv_id}/release", headers=h)
 
     assert fired, "the hook never ran -- the race was not driven"
-    assert r.status_code == 409, r.text
+    assert_refused(r)
     assert not _released(deliv_id), "a release committed over an assessment that moved"

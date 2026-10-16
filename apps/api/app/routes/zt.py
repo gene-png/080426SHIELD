@@ -120,6 +120,7 @@ from app.tech_debt.filename import (
     deliverable_filename,
 )
 from app.tenant import (
+    require_deliverable_in_tenant,
     require_service_in_tenant,
     require_zt_assessment_in_tenant,
 )
@@ -2381,6 +2382,9 @@ def release_zt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    # #1123 (a) guards a FIRST release only: its refusal says nothing was
+    # released, which is false for the repair re-release of a delivered report.
+    first_release = require_deliverable_in_tenant(db, deliverable_id, client.id).released_at is None
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2388,7 +2392,7 @@ def release_zt_deliverable(
         user=user,
         kinds=(ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD),
         action="zt.deliverable.released",
-        parent_guard=_zt_release_guard(deliverable_id),
+        parent_guard=_zt_release_guard(deliverable_id) if first_release else None,
     )
     return _serialize_deliverable(db, deliv)
 

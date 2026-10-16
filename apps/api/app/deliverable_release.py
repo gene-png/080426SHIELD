@@ -67,8 +67,9 @@ PARENT_CHANGED_DURING_RELEASE = (
 
 def refuse_parent_changed_during_release() -> HTTPException:
     """The typed refusal (D-016) for a parent that moved under the release flip
-    (#1123). The caller has not committed, so nothing the release wrote survives:
-    "nothing was released" is true when this is raised."""
+    (#1123). Raised only on a FIRST release, before the caller commits, so
+    nothing the release wrote survives and "nothing was released" is true. The
+    repair re-release of an already-released deliverable never raises it."""
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
@@ -133,7 +134,9 @@ def _release_parent(
     RELEASED, so a sibling release flipped it first (benign: logged, and the
     release stands); anything else, so the status moved under the release (an
     unlock, say), which is REFUSED for every service, guard or not, with
-    `refuse_parent_changed_during_release`. It used to be logged and committed.
+    `refuse_parent_changed_during_release` -- on a FIRST release only. On the
+    repair re-release the report is already delivered, so it is logged and the
+    earlier release stands. It used to be logged and committed in both.
 
     Returns True only when it flipped the parent. The flip is a bulk UPDATE, so
     it leaves nothing dirty in the session, and a caller that commits only when
@@ -212,6 +215,20 @@ def _release_parent(
     if flipped != 1:
         if guard is not None and row.status == parent.status_enum.APPROVED:
             raise guard.refusal(db, row.id)
+        if row.status != parent.status_enum.RELEASED and deliv.released_at is not None:
+            # The REPAIR re-release (`release_deliverable`'s already-released
+            # branch): the report is already with the client, so "nothing was
+            # released" would be false. The earlier release stands; the parent
+            # is left as it is, and that is logged.
+            _log.warning(
+                "deliverable.release_repair_parent_changed",
+                deliverable_id=str(deliv.id),
+                action=action,
+                service_kind=svc.kind.value,
+                parent_version=deliv.parent_version,
+                parent_status=row.status.value,
+            )
+            return False
         if row.status != parent.status_enum.RELEASED:
             _log.warning(
                 "deliverable.release_refused_parent_changed",
