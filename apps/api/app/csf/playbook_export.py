@@ -788,7 +788,8 @@ EVIDENCE_WORDS = {
     "confirmed_in_discussion": "Confirmed in discussion",
     "neither": "Neither",
 }
-#: New (no number yet): the summary sentence when no subcategory is scored.
+#: The summary sentence when no subcategory is scored. Approved as proposed
+#: (advisor, #736 6216024281 item 3c; the text is 6209105057's).
 NO_AVERAGE = "No subcategory has been scored yet, so there is no average level."
 
 

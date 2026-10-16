@@ -81,7 +81,6 @@ from app.csf.retired import (
     answers_sentence,
     catalog_rows,
     has_recorded_action,
-    has_recorded_value_besides_target,
     retired_answers,
     retired_scores,
     working_profile_sentence,
@@ -2172,33 +2171,18 @@ register_catalog_field(
 )
 
 
-#: P1 (#736 6204461502), Gene's to decide; one constant so either answer is a
-#: one-line change, both pinned by `test_csf_leave_out_before_egress.py`.
-#: True leaves out EVERY subcategory whose current answer has no notes.
-#: False leaves out only those that also have no recorded value on any
-#: in-scope tier (Q1 (a) read literally), so a blank-notes subcategory a
-#: consultant scored is still sent; #1000's `no_notes` drop then discards the
-#: model's row for it on a live run.
-LEAVE_OUT_EVERY_BLANK_NOTES = True
-
-
 def _left_out_codes(
     rows: Mapping[str, CsfDimensionScore], answers: Mapping[str, CsfAnswer]
 ) -> frozenset[str]:
     """Option 1, code decides what is scored (#736 6201620727 item 1): the
     subcategory codes left out of the csf_score payload BEFORE egress, in
     every mode, so the preview is what egresses. A code with no answer row
-    has no notes (`_has_notes`, #1000's one statement of it)."""
+    has no notes (`_has_notes`, #1000's one statement of it).
+
+    P1 (Gene, #736 6205956728): EVERY subcategory whose current answer has no
+    notes is left out, a consultant-scored one included."""
     codes = {r.subcategory_code for r in rows.values()}
-    blank = {c for c in codes if c not in answers or not _has_notes(answers[c].notes)}
-    if LEAVE_OUT_EVERY_BLANK_NOTES:
-        return frozenset(blank)
-    scored = {
-        r.subcategory_code
-        for r in rows.values()
-        if r.in_scope and has_recorded_value_besides_target(r)
-    }
-    return frozenset(blank - scored)
+    return frozenset(c for c in codes if c not in answers or not _has_notes(answers[c].notes))
 
 
 def _catalog_tier(tier: str) -> str:
@@ -2279,7 +2263,6 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
         assessment_id=str(a.id),
         sent_codes=len(codes),
         left_out_codes=len(left_out),
-        every_blank=LEAVE_OUT_EVERY_BLANK_NOTES,
     )
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     return CsfAiRequest(

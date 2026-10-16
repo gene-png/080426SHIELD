@@ -52,8 +52,11 @@ export const HELP_LEVEL_BANDS: readonly string[] = [
 export const HELP_EVIDENCE =
   'Choose "Evidence on file" only when evidence for this subcategory and tier is held, or "Confirmed in discussion" when the client confirmed it with you but nothing is held. Neither changes the scores or the level. With "Neither", the level is shown as not validated by evidence, and a Managed or Optimized level is shown as notional. Run AI never sets this, and a file the client attached to the questionnaire does not set it either: a consultant has to.';
 
+/** Approved as proposed (advisor, #736 6216024281 item 3c; the text is
+ * 6210492030's). Under rules 3/NULL a subcategory with no scored tier has no
+ * level (`enterprise.py::_not_scored`), so it is not checked for a gap. */
 export const HELP_TARGET =
-  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, or every in-scope tier while none has been scored. It compares their rolled-up level, usually the lowest, with the highest target among them. Below the target is a gap. If none of them has a target, the subcategory is not checked for a gap: it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
+  'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, compares their rolled-up level, usually the lowest, with the highest target among them, and reports a level below the target as a gap. A subcategory with no scored tier has no level, so it is not checked for a gap. If no scored tier has a target, it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
 
 export const HELP_IN_SCOPE =
   'Untick "In scope" when this subcategory does not apply to the systems in this tier. An out-of-scope row is left out of the Enterprise level, the gaps and their priorities. If every tier is out of scope, the subcategory leaves the Enterprise profile.';
@@ -132,10 +135,11 @@ export const CAPPED_NOTE =
 /**
  * S2: under Target, only when this tier's row has none. The gap is judged per
  * subcategory against the highest target among the in-scope tiers the roll-up
- * reads (`enterprise_subcategories`: `max(targets)`): the tiers that have been
- * scored, or every in-scope tier while none has been scored. So an untargeted
- * tier is still checked when another in-scope tier has a target and has been
- * scored, or when no tier has been scored yet (#1076, #1141).
+ * reads (`enterprise_subcategories`: `max(targets)`), which under rules 3/NULL
+ * are the tiers that have been scored; with none scored there is no level and
+ * no gap (`_not_scored`, #1073). So an untargeted tier is still checked when
+ * another in-scope tier has a target and has been scored. Approved as
+ * proposed (advisor, #736 6216024281 item 3c; the text is 6210492030's).
  */
 export const NO_TARGET_NOTE =
-  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored, or if no tier has been scored yet.";
+  "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored.";
