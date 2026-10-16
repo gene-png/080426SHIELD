@@ -54,6 +54,13 @@ function statusOf(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
+/** A 2xx carried on an error: the save landed and only its answer could not
+ *  be read (#1093 item 2). */
+function isLandedAnswer(err: unknown): boolean {
+  const status = statusOf(err);
+  return status !== null && status >= 200 && status < 300;
+}
+
 /** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
  *  409 (the intake will never take it) or a 422. Only these let the typed
  *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
@@ -144,12 +151,22 @@ export function useIntakeAutoSave(
       pending.current += 1;
       setSavesInFlight((n) => n + 1);
       publish();
+      let next: IntakeStateResponse;
       try {
-        const next = await patchIntake(patch);
+        next = await patchIntake(patch);
         for (const f of own()) errors.current.delete(f);
-        onUpdate?.(next);
-        return next;
       } catch (err) {
+        if (isLandedAnswer(err)) {
+          // #1093 item 2: the write happened; only its answer was unreadable.
+          // A success for the header, with no state to hand `onUpdate`. The
+          // typed overlay stays, and the next GET /intake (any reload of the
+          // wizard) is what brings the server's copy back in line with it.
+          for (const f of own()) errors.current.delete(f);
+          console.warn(
+            `[intake] save landed; its answer could not be read (status ${statusOf(err)})`,
+          );
+          return null;
+        }
         // IN-1 (#1049): "Network error." only when no answer came back. An
         // answer with no usable server message gets copy for its class, by
         // the table #1115 approved (6207611148): see `fallbackFor`.
@@ -166,6 +183,16 @@ export function useIntakeAutoSave(
         setSavesInFlight((n) => n - 1);
         publish();
       }
+      // OUTSIDE the try (#1093 item 2): a throw here is the caller's bug, not
+      // a failed save, so it is logged and re-thrown as itself rather than
+      // reported to the client as "Network error.".
+      try {
+        onUpdate?.(next);
+      } catch (err) {
+        console.error("[intake] onUpdate threw after a save landed", err);
+        throw err;
+      }
+      return next;
     },
     [onUpdate, onRefused, keeps, publish],
   );
