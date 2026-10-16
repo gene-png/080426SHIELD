@@ -21,7 +21,6 @@ export function EnsureActiveClient({
   serviceId: string;
   children: React.ReactNode;
 }): JSX.Element {
-  // The client this workspace resolved; null until it has (#1129).
   // The client resolved FOR a service (#1262). Derived per service rather
   // than reset on change: when `serviceId` changes, the stored one no longer
   // matches and the children wait, so an upload can never be filed under the
