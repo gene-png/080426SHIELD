@@ -186,9 +186,7 @@ describe("CsfPlaybookPanel, Run-AI in the background (#645)", () => {
       run({ status: "completed", result: result() }),
     );
     render(<CsfPlaybookPanel serviceId="svc-1" />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
     await waitFor(() => expect(m.run).toHaveBeenCalledWith("svc-1", "live"));
     await waitFor(() => expect(m.ent).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(/AI applied/)).toHaveTextContent(
@@ -229,9 +227,7 @@ describe("CsfPlaybookPanel, a Run AI whose outcome is unknown, reconciled (#645)
     render(
       <CsfPlaybookPanel serviceId="svc-1" onRunOutcomeUnknown={onUnknown} />,
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
     expect(await screen.findByTestId("ai-run-running")).toBeInTheDocument();
     // The page-life lock and its copy belong to CsfWorkspace (#752); the
     // panel tells it, as before.
@@ -252,9 +248,7 @@ describe("CsfPlaybookPanel, a Run AI whose outcome is unknown, reconciled (#645)
     render(
       <CsfPlaybookPanel serviceId="svc-1" onRunOutcomeUnknown={onUnknown} />,
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
     await waitFor(() => expect(m.summary).toHaveBeenCalledTimes(2));
     expect(onUnknown).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("ai-run-load-failed")).toBeNull();
@@ -269,16 +263,12 @@ describe("CsfPlaybookPanel, an unreadable AI status (#645)", () => {
     expect(
       await screen.findByTestId("run-ai-status-unknown"),
     ).toHaveTextContent(/Reload the page/);
-    expect(
-      screen.getByRole("button", { name: "Run AI (csf_score)" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run AI" })).toBeDisabled();
 
     aiStatus.current = { status: aiStatus.ok, phase: "loaded" };
     rerender(<CsfPlaybookPanel serviceId="svc-1" />);
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Run AI (csf_score)" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Run AI" })).toBeEnabled(),
     );
     expect(screen.queryByTestId("run-ai-status-unknown")).toBeNull();
   });
@@ -373,9 +363,9 @@ describe("CsfPlaybookPanel, rows a batch left out (#836)", () => {
   }
 
   const O1_PLURAL =
-    "3 rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:";
+    "3 rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, those rows stay not scored. Re-run before relying on this draft:";
   const O1_SINGULAR =
-    "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:";
+    "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, those rows stay not scored. Re-run before relying on this draft:";
 
   it("says how many rows got no answer, and names them", async () => {
     showsLastRun(

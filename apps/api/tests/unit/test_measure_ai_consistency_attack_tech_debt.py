@@ -1399,7 +1399,7 @@ def test_a_csf_row_answered_only_by_a_batch_that_did_not_ask_is_no_agreement() -
         # The run SENT these values; the apply path dropped them. Reporting
         # them as fields the model omitted would misstate what it did.
         assert (d["missing_in_a"], d["missing_in_b"]) == (0, 0), name
-    lv = csf_levels(only_stray, has_evidence=has_evidence)
+    lv = csf_levels(only_stray, has_evidence=has_evidence, cap=True)
     assert "high|GV.OC-02" not in lv["levels"], "a stray was scored"
     agree = csf_level_agreement(lv, lv, has_evidence)
     assert (agree["compared"], agree["equal"], agree["both_unscoreable"]) == (2, 1, 1)
