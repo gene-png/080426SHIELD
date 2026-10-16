@@ -75,6 +75,31 @@ describe("Step6Review: the uploads list failed to load (#1223)", () => {
     expect(screen.queryByText(/No documents uploaded/)).toBeNull();
   });
 
+  it("keeps #550's outcome sentence off this read (RR-2), and shows its own copy", async () => {
+    // A read changed nothing, so "check before trying again" does not apply.
+    respond(
+      504,
+      JSON.stringify({
+        error: {
+          code: 504,
+          reason: "upstream_outcome_unknown",
+          message:
+            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+        },
+      }),
+    );
+    renderStep();
+    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
+    expect(screen.queryByText(/couldn't confirm/)).toBeNull();
+  });
+
+  it("treats a 200 with no item list as a failed load, not an empty one", async () => {
+    respond(200, JSON.stringify({}));
+    renderStep();
+    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
+    expect(screen.queryByText(/No documents uploaded/)).toBeNull();
+  });
+
   it("still says nothing was uploaded when the list loads empty", async () => {
     respond(200, JSON.stringify({ items: [] }));
     renderStep();

@@ -52,6 +52,27 @@ describe("IntakeDocumentsPanel: the document list failed to load (#1223)", () =>
     },
   );
 
+  it("keeps #550's outcome sentence off this read (RR-2)", async () => {
+    respond(
+      504,
+      JSON.stringify({
+        error: {
+          code: 504,
+          reason: "upstream_outcome_unknown",
+          message:
+            "We couldn't confirm whether this finished. It may still complete; check before trying again.",
+        },
+      }),
+    );
+    render(
+      <IntakeDocumentsPanel onExtract={() => undefined} extracting={false} />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load documents.",
+    );
+    expect(screen.queryByText(/couldn't confirm/)).toBeNull();
+  });
+
   it("shows the server's own sentence when it sent one", async () => {
     respond(
       503,
