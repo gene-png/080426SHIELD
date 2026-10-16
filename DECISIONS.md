@@ -6636,7 +6636,7 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 
 **What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
 
-## D-113 — CSF scoring with no notes or evidence: unscored, not 0; evidence labels a level and no longer caps it (amends CSF_Flow_Spec section 8)
+## D-114 — CSF scoring with no notes or evidence: unscored, not 0; evidence labels a level and no longer caps it (amends CSF_Flow_Spec section 8)
 
 **2026-10-15 · CSF** (Decision: Gene, relayed by the advisor on #736: Options 1 and 3 in 6200638511; four changes in 6201620727; Q1 to Q4 and three-state evidence in 6201691989; level names in 6202644525. Recorded in the landing commit of PR (a).)
 
