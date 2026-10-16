@@ -13,7 +13,7 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import { typedReadFailure } from "@/components/intake/readFailureCopy";
-import { useWorkspaceClientId } from "./EnsureActiveClient";
+import { useWorkspaceClientId } from "./workspaceClient";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
