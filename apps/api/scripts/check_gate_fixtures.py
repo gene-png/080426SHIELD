@@ -160,6 +160,37 @@ DEFERRED: dict[str, str] = {
         "143 with no probe left. Red-on-revert, 2026-09-24: four mutations, each "
         "red on its named failure."
     ),
+    "preflight_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Drives the REAL `scripts/preflight.sh` and the REAL planner over a fixture "
+        "repository, with a stub `docker` that prints one status line per planned "
+        "step: every step 0 must PASS (exit 0); a planned step with no status line "
+        "must be COULD-NOT-LOOK (2); a failed step FAIL (1); an advisory failure "
+        "still PASS; usage errors and a dirty tree 2; the summary says NARROW by "
+        "default and FULL when asked; prettier or the web checks failing is FAIL, "
+        "their could-not-look is 2, and a NARROW skip of them is stated; a gate "
+        "only the base has runs (the base is merged in), and a conflicting base "
+        "is 2. Red-on-revert, 2026-10-16: a missing status read as 0, the "
+        "dirty-tree check, the grep that ended the script early under pipefail, "
+        "prettier's and the web checks' status ignored, and the merge removed "
+        "each red their cases."
+    ),
+    "unit_in_worktree_status.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "Both states are covered internally with REAL RUNS of "
+        "`scripts/unit-in-worktree.sh` under a stub `docker` on PATH: the refusing "
+        "state (image missing, 125, no RAN line, exit 1 with no summary, exit 0 "
+        "with every test skipped, exit 5, usage, a run from another tree, the "
+        "mount hook outside a self-test) must exit 2 with the cause named; the "
+        "passing state must report pytest's 0 or 1. The stub EMITS the WRONG-APP "
+        "and DEP-SKEW markers, so the harness proves only how the host side "
+        "judges them: the in-container `app` check and dependency check do not run "
+        "in CI (they were run live against the image on 2026-10-16). `--self-test` "
+        "runs in both states: 0 against the worktree, 2 naming the red half with "
+        "the mount pointed at an empty directory; a TERM mid-self-test exits 143 "
+        "with no probe left. Red-on-revert, 2026-10-15 and 2026-10-16: each "
+        "mutation red on its named case."
+    ),
     "verify_in_worktree_mounts.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "Both states are covered internally and BOTH ARE REAL RUNS: the passing "

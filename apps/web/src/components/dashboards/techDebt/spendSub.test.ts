@@ -39,6 +39,8 @@ function data(over: Partial<TechDebtDashboardData>): TechDebtDashboardData {
     // #177/#193 (Batch E): the count is exact unless a case says otherwise --
     // the world every case below was written for. Not under test here.
     excluded_count_exact: true,
+    // TD-10 (for #1048): no uncosted tool unless a case says otherwise.
+    no_cost_count: 0,
     ...over,
   } as TechDebtDashboardData;
 }
@@ -72,8 +74,14 @@ describe("spendSub", () => {
 
   it("falls back to the uncosted-tool wording when no rows were excluded", () => {
     expect(
-      spendSub(data({ spend_completeness: "partial", excluded_count: 0 })),
-    ).toBe("Floor - some tools lacked a cost");
+      spendSub(
+        data({
+          spend_completeness: "partial",
+          excluded_count: 0,
+          no_cost_count: 2,
+        }),
+      ),
+    ).toBe("Floor - 2 tools have no cost; total excludes them");
   });
 
   it("does not claim a row count it does not have", () => {
@@ -85,9 +93,10 @@ describe("spendSub", () => {
         spend_completeness: "partial",
         excluded_count: 3,
         source_rows_total: null,
+        no_cost_count: 1,
       }),
     );
-    expect(out).toBe("Floor - some tools lacked a cost");
+    expect(out).toBe("Floor - 1 tool has no cost; total excludes it");
     expect(out).not.toContain("null");
   });
 
@@ -123,10 +132,10 @@ describe("spendSub, the fourth state", () => {
     expect(out).not.toContain("lacked a cost");
   });
 
-  it("still says 'lacked a cost' when that is actually the cause", () => {
+  it("still names the uncosted tools when that is actually the cause", () => {
     // POSITIVE CONTROL for the branch above: a balanced list with an uncosted
-    // item must keep the original wording, or the new branch has simply
-    // replaced one wrong sentence with another.
+    // item must keep naming the uncosted tools (TD-10 counts them), or the
+    // new branch has simply replaced one wrong sentence with another.
     expect(
       spendSub(
         data({
@@ -134,8 +143,9 @@ describe("spendSub, the fourth state", () => {
           excluded_count: 0,
           source_rows_total: 30,
           included_count: 30,
+          no_cost_count: 1,
         }),
       ),
-    ).toBe("Floor - some tools lacked a cost");
+    ).toBe("Floor - 1 tool has no cost; total excludes it");
   });
 });

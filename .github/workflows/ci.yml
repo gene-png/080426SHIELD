@@ -6,9 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# A pull request's superseded run is cancelled; a push to main never is. Each
+# merge is a different tree, and grouping main by ref let the next merge cancel
+# the run testing the last one, so main's own CI never finished (2026-10-16).
+# For a push the group is the commit, which no other run shares, and a push
+# never cancels (a re-run of the same commit included). Exactly the advisor's
+# block (#736 6207756046 item 2). Pinned by test_ci_concurrency.py.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -351,6 +357,13 @@ jobs:
           # positive control, and a TERM mid-self-test (143, no probe left).
           # The first fix keyed on one cause and let "0 error(s)" print over 127.
           bash tests/gates/verify_in_worktree_status.sh
+          # The API twin: `unit-in-worktree.sh` reports a verdict only beside
+          # its RAN line and a matching pytest summary, and its `--self-test`
+          # goes red when the mount is not the worktree. Stub `docker`.
+          bash tests/gates/unit_in_worktree_status.sh
+          # preflight.sh reports PASS only when every planned step left a 0, and
+          # a planned step with no status line is could-not-look. Stub `docker`.
+          bash tests/gates/preflight_status.sh
           # A self-test nobody runs is furniture. `red-on-revert.sh` is the
           # harness that keeps `git checkout --` out of the restore path, and
           # it shipped with a restore check that compared a file to itself --
