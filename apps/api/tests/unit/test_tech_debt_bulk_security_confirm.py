@@ -75,17 +75,23 @@ _ITEMS = [
 _CSV = b"Tool\nTool Sec\nTool HR\nTool Mail\nTool Old\n"
 
 
+def _extract_list(c, h, title: str) -> tuple[str, dict[str, str], str]:
+    """One extracted list of `_ITEMS` in a new service: (list id, ids by name,
+    service id)."""
+    svc_id = c.post("/tech-debt/services", headers=h, json={"title": title}).json()["id"]
+    art = c.post("/artifacts", headers=h, files={"file": ("inv.csv", io.BytesIO(_CSV), "text/csv")})
+    assert art.status_code == 201, art.text
+    body = tech_debt_extract(c, svc_id, h, art.json()["id"])
+    return body["id"], {i["name"]: i["id"] for i in body["items"]}, svc_id
+
+
 def _world(app_client):  # noqa: F811
     c, sessions, provider = app_client
     bearer = _register(c, "admin@example.com")
     h = {"Authorization": f"Bearer {bearer}"}
     provider.register("extract.capabilities", lambda _p: LLMResponse(json.dumps({"items": _ITEMS})))
-    svc_id = c.post("/tech-debt/services", headers=h, json={"title": "Portfolio"}).json()["id"]
-    art = c.post("/artifacts", headers=h, files={"file": ("inv.csv", io.BytesIO(_CSV), "text/csv")})
-    assert art.status_code == 201, art.text
-    body = tech_debt_extract(c, svc_id, h, art.json()["id"])
-    ids = {i["name"]: i["id"] for i in body["items"]}
-    return c, sessions, h, body["id"], ids, svc_id
+    list_id, ids, svc_id = _extract_list(c, h, "Portfolio")
+    return c, sessions, h, list_id, ids, svc_id
 
 
 def _confirm(c, h, list_id: str, item_ids: list[str]):
@@ -100,6 +106,18 @@ def _row(c, h, svc_id: str, item_id: str) -> dict:
     r = c.get(f"/tech-debt/services/{svc_id}/capability-lists/latest", headers=h)
     assert r.status_code == 200, r.text
     return next(i for i in r.json()["items"] if i["id"] == item_id)
+
+
+def _audit_rows(sessions, item_id: str) -> list[AuditEntry]:
+    with sessions() as s:
+        return list(
+            s.execute(
+                select(AuditEntry).where(
+                    AuditEntry.target_type == "capability_item",
+                    AuditEntry.target_id == uuid.UUID(item_id),
+                )
+            ).scalars()
+        )
 
 
 def _audits(sessions, item_id: str) -> list[str]:
@@ -143,6 +161,13 @@ def test_each_row_gets_the_single_confirms_own_audit_row(app_client) -> None:  #
     # #845: a not-in-use security tool is recorded as taken out of ATT&CK scope.
     assert _audits(sessions, ids["Tool Old"]) == ["capability_item.removed_from_attack_scope"]
     assert _audits(sessions, ids["Tool Mail"]) == []
+    # The single confirm's own details, per row: the name, and for a
+    # not-in-use tool its note too.
+    assert _audit_rows(sessions, ids["Tool HR"])[0].details == {"name": "Tool HR"}
+    assert _audit_rows(sessions, ids["Tool Old"])[0].details == {
+        "name": "Tool Old",
+        "notes": "Security tool not in use: retired last year.",
+    }
 
 
 def test_the_revision_moves_once(app_client) -> None:  # noqa: F811
@@ -174,11 +199,15 @@ def test_one_row_not_awaiting_sign_off_refuses_the_whole_request(
 
 
 def test_a_row_from_another_list_is_refused(app_client) -> None:  # noqa: F811
-    c, _s, h, list_id, ids, svc_id = _world(app_client)
-    r = _confirm(c, h, list_id, [ids["Tool HR"], str(uuid.uuid4())])
+    """A REAL row awaiting sign-off in another list, so only the route's list
+    filter can refuse it (a made-up id would be refused with no filter at all)."""
+    c, sessions, h, list_id, ids, svc_id = _world(app_client)
+    _other_list, other_ids, _other_svc = _extract_list(c, h, "Second portfolio")
+    r = _confirm(c, h, list_id, [ids["Tool HR"], other_ids["Tool HR"]])
     assert r.status_code == 422, r.text
     assert r.json()["error"]["reason"] == "capability_items_not_in_list"
     assert _row(c, h, svc_id, ids["Tool HR"])["security_class_confirmed"] is False
+    assert _audits(sessions, other_ids["Tool HR"]) == []
 
 
 def test_an_empty_selection_is_refused(app_client) -> None:  # noqa: F811

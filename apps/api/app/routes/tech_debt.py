@@ -1217,6 +1217,11 @@ def bulk_confirm_security_classification(
                 "message": "Select at least one row to classify.",
             },
         )
+    # The list row's lock FIRST, as every edit path takes it (sessions do not
+    # autoflush), and the rows are read AFTER it: an override commits under
+    # the same lock, so the check below sees it rather than a value read
+    # before it landed. Every refusal below rolls the bump back.
+    _record_edit(db, cap_list.id)
     items = (
         db.execute(
             select(CapabilityItem)
@@ -1228,6 +1233,13 @@ def bulk_confirm_security_classification(
     )
     missing = len(wanted) - len(items)
     if missing:
+        db.rollback()
+        _log.warning(
+            "tech_debt.bulk_security_signoff_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_in_list=missing,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
@@ -1239,12 +1251,19 @@ def bulk_confirm_security_classification(
                 ),
             },
         )
-    # The list row's lock first, as every edit path takes it (sessions do not
-    # autoflush), so the item rows below are taken after it.
-    _record_edit(db, cap_list.id)
+    # Stricter than the single confirm's `security_related is not False`, on
+    # purpose: an already-confirmed row is refused too. The single route lets a
+    # consultant confirm one row again; a bulk selection naming a row someone
+    # already confirmed means the page is stale, and all-or-nothing says so.
     not_awaiting = [i for i in items if not awaiting_security_signoff(i)]
     if not_awaiting:
         db.rollback()
+        _log.warning(
+            "tech_debt.bulk_security_signoff_refused",
+            capability_list_id=str(cap_list.id),
+            selected=len(wanted),
+            not_awaiting=len(not_awaiting),
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={

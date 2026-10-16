@@ -155,6 +155,36 @@ describe("SecurityClassificationQueue bulk confirm (#1174)", () => {
       "1 of the 3 selected rows do not need sign-off.",
     );
     expect(onUpdated).not.toHaveBeenCalled();
+    // The rows are still in the queue, unconfirmed.
+    expect(c.getByRole("checkbox", { name: "Select hr" })).toBeInTheDocument();
+  });
+
+  it("disables every row's own controls while a bulk confirm is in flight", async () => {
+    let finish: (l: CapabilityList) => void = () => undefined;
+    vi.mocked(bulkConfirmSecurityClassification).mockReturnValue(
+      new Promise<CapabilityList>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(
+      <SecurityClassificationQueue
+        list={list(NOT_SECURITY)}
+        onUpdated={vi.fn()}
+        editable
+      />,
+    );
+    const c = within(card("security-signoff-not-security"));
+    // POSITIVE CONTROL: a row's own confirm is enabled before the bulk click.
+    const rowConfirms = c.getAllByRole("button", {
+      name: "Not security — confirm",
+    });
+    expect(rowConfirms[0]).toBeEnabled();
+    fireEvent.click(c.getByRole("checkbox", { name: "Select all (3)" }));
+    fireEvent.click(c.getByRole("button", { name: "Not security: confirm 3" }));
+    await waitFor(() => expect(rowConfirms[0]).toBeDisabled());
+    for (const b of rowConfirms) expect(b).toBeDisabled();
+    expect(c.getByRole("checkbox", { name: "Select hr" })).toBeDisabled();
+    finish(list([]));
   });
 
   it("offers no selection on a locked list", () => {

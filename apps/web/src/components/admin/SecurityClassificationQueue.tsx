@@ -164,7 +164,9 @@ export function SecurityClassificationQueue({
     sel: RowSelection,
   ) {
     const chosen = picked[item.id] ?? [];
-    const busy = busyId === item.id;
+    // #1174: ANY run in flight (a row's, or the bulk confirm) disables every
+    // row's controls, so a single confirm cannot race a bulk one.
+    const busy = busyId !== null;
     return (
       <li key={item.id} className="flex flex-col gap-2 py-3">
         <div className="flex flex-wrap items-baseline gap-2">
