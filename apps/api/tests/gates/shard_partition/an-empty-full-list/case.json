@@ -1,0 +1,16 @@
+{
+ "incident": "The full selection read as empty (a collector that found nothing, or a list that did not download) must be could-not-look: an empty union equal to an empty selection would certify a run of nothing.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt"
+ ],
+ "stdout_contains": "the full selection"
+}
