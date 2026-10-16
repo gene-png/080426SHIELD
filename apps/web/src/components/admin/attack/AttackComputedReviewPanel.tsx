@@ -54,7 +54,7 @@ function groupByTactic(
   queue: AttackCoverageRow[],
   catalog: AttackCatalog | null | undefined,
 ): TacticGroup[] | null {
-  if (!catalog) return null;
+  if (!catalog || queue.length === 0) return null;
   const tacticsOf = new Map(catalog.techniques.map((t) => [t.id, t.tactics]));
   if (queue.some((row) => !(tacticsOf.get(row.technique_code) ?? []).length)) {
     return null;
