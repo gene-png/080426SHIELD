@@ -8,9 +8,12 @@ Generate drafts the ZT findings from v2.
    what Generate reads is a draft. It used to ask for ANY approved-or-released
    assessment, found the released v1 behind the draft, and listed nothing.
 2. A register generated from the released v1 must not be refused as if it
-   drew on a draft. The register drew on v1; a newer version exists, so the
-   refusal is the one for a changed input, which names the remedy that works
-   (generate a new version), not "(draft)".
+   drew on a draft. The register drew on v1, and a newer DRAFT is open, so the
+   blocker is `changed` and the sentence is the approved newer-draft one
+   (advisor, #736 6225640724 item 5). It names both remedies: discard the
+   draft and publish this register, or release the draft and generate again.
+   "Generate a new version" alone would name a remedy that cannot publish,
+   because that register would draw on the draft.
 
 Every expected value is typed from the scenario, never read from the code.
 """
@@ -58,7 +61,7 @@ def test_the_gate_names_an_input_whose_current_record_is_a_revision_draft(
     assert gate["synthesizable_missing"] == [], gate
 
 
-def test_a_register_from_released_inputs_is_refused_as_changed_not_as_a_draft(
+def test_a_register_from_released_inputs_names_the_newer_draft(
     app_client,  # noqa: F811
 ) -> None:
     c, provider = app_client
@@ -70,7 +73,8 @@ def test_a_register_from_released_inputs_is_refused_as_changed_not_as_a_draft(
     assert _blockers(r) == [{"input": "zt", "reason": "changed", "status": "draft"}]
     message = r.json()["error"]["message"]
     assert message == (
-        "An assessment this register draws on has changed since it was generated: "
-        "Zero Trust. Generate a new version before publishing."
+        "This register can't be published while a newer draft is open. Discard that "
+        "draft, then publish again. Or release the draft, then generate a new version "
+        "before publishing."
     ), message
     assert "(draft" not in message, message

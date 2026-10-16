@@ -2934,6 +2934,15 @@ _SELECTION_NOT_RECORDED_MESSAGE = (
 )
 
 
+#: #1156 (advisor, #736 6225640724 item 5, verbatim): the refusal when an input
+#: the register drew on now has a newer DRAFT open.
+NEWER_DRAFT_OPEN = (
+    "This register can't be published while a newer draft is open. Discard that "
+    "draft, then publish again. Or release the draft, then generate a new version "
+    "before publishing."
+)
+
+
 def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     """#737. One sentence per cause, naming each input. DRAFT copy."""
     if any(b.reason == "not_recorded" for b in blockers):
@@ -2958,7 +2967,18 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
             "This register cannot be published until every assessment it draws on is "
             "released: " + "; ".join(waiting) + "."
         )
-    changed = [_INPUT_LABELS.get(b.kind, b.kind) for b in blockers if b.reason == "changed"]
+    # #1156: a `changed` input whose current record is a DRAFT is a newer
+    # version opened after generate (a revision). "Generate a new version"
+    # alone names a remedy that cannot publish: that register would draw on
+    # the draft. Approved verbatim (advisor, #736 6225640724 item 5); the
+    # "Discard draft" control is on that service's workspace.
+    if any(b.reason == "changed" and b.status == "draft" for b in blockers):
+        parts.append(NEWER_DRAFT_OPEN)
+    changed = [
+        _INPUT_LABELS.get(b.kind, b.kind)
+        for b in blockers
+        if b.reason == "changed" and b.status != "draft"
+    ]
     if changed:
         parts.append(
             "An assessment this register draws on has changed since it was generated: "
