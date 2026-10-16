@@ -1,5 +1,6 @@
 import type { AiSource } from "@/lib/aiSource/types";
 import { noCostSentence } from "@/lib/tech_debt/components";
+import { AI_ESTIMATE_LABEL } from "@/lib/tech_debt/costEstimate";
 
 /**
  * Client Tech Debt (software portfolio) dashboard — types + pure transforms
@@ -21,6 +22,8 @@ export interface TechDebtItem {
    * null for a row that is not a part.
    */
   bundle: string | null;
+  /** TD-5 (for #1060): the cost is an AI estimate, labelled (copy E5). */
+  ai_estimate: boolean;
 }
 
 export interface CategorySpend {
@@ -41,6 +44,8 @@ export interface Redundancy {
    * flag (an API older than the field) is unconfirmed, never confirmed.
    */
   savings_cost_known: boolean;
+  /** #1299 (TD-5): AI-estimated costs `savings_usd` includes. */
+  savings_ai_estimate_count: number;
   items: TechDebtItem[];
 }
 
@@ -81,6 +86,13 @@ export interface TechDebtDashboardData {
    * cost and is not counted.
    */
   no_cost_count: number;
+  /**
+   * TD-5 (for #1060): source items whose cost is an AI estimate, which
+   * `annual_spend_usd` INCLUDES. Any one makes spend "partial" (E7).
+   */
+  ai_estimate_count: number;
+  /** #1299 (TD-5): AI-estimated costs `identified_savings_usd` includes. */
+  savings_ai_estimate_count: number;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];
@@ -112,7 +124,9 @@ export function itemCost(it: TechDebtItem): string {
       ? "Included in its bundle"
       : `Included in ${it.bundle}`;
   }
-  return usdCompact(it.annual_cost_usd);
+  const cost = usdCompact(it.annual_cost_usd);
+  // TD-5 (for #1060), copy E5: an estimate is labelled wherever it appears.
+  return it.ai_estimate === true ? `${cost} (${AI_ESTIMATE_LABEL})` : cost;
 }
 
 /** Full USD (e.g. $708,000). */

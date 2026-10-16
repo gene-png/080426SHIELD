@@ -27,6 +27,7 @@ function tool(name: string, cost: number | null): TechDebtItem {
     disposition: "keep",
     notes: null,
     bundle: null,
+    ai_estimate: false,
   };
 }
 

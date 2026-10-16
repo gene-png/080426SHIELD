@@ -136,6 +136,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.cost_estimate import is_ai_estimate, savings_estimate_count
 from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
@@ -725,6 +726,8 @@ class _TechDebtTotal(NamedTuple):
     value: float | None
     cost_known: bool
     unresolved: bool
+    # #1299 (TD-5): AI-estimated costs the savings include.
+    ai_estimate_count: int = 0
 
 
 def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
@@ -1006,6 +1009,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
         return _TechDebtTotal(None, True, False)
     total = 0.0
     cost_known = True
+    estimated = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED list.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -1030,7 +1034,9 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
         found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
         total += found.amount
         cost_known = cost_known and found.known
-    return _TechDebtTotal(total, cost_known, False)
+        # #1299 (TD-5): the same released rows, the same one rule.
+        estimated += savings_estimate_count(items)
+    return _TechDebtTotal(total, cost_known, False, estimated)
 
 
 @router.get(
@@ -1095,6 +1101,7 @@ def value_summary(
         tech_debt_savings_usd=td.value,
         tech_debt_savings_cost_known=td.cost_known,
         tech_debt_savings_unresolved=td.unresolved,
+        tech_debt_savings_ai_estimate_count=td.ai_estimate_count,
         zt_gap_count=zt.value,
         zt_gap_unresolved=zt.unresolved,
         zt_services=zt.services,
@@ -1704,6 +1711,7 @@ def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
         bundle=bundle_name(it, names),
+        ai_estimate=is_ai_estimate(it),
     )
 
 
@@ -1787,6 +1795,9 @@ def tech_debt_dashboard(
     # so the count and "partial" cannot disagree.
     no_cost_count = len(no_cost_items(items))
     spend_cost_known = no_cost_count == 0
+    # TD-5 (for #1060): costs the AI estimated. E7 (#736 6206818759): any one
+    # makes spend "partial" -- an estimate is not a recorded cost.
+    ai_estimate_count = sum(1 for it in items if is_ai_estimate(it))
     # category -> {"total": float, "items": [CapabilityItem]}; "count" is
     # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
@@ -1839,6 +1850,8 @@ def tech_debt_dashboard(
             # renders it ("≥ "), even at $0, so a category whose counted row
             # has no usable cost reads as a floor, as the headline does.
             savings_cost_known=b["savings"].known,
+            # #1299 (TD-5): the estimated costs this category's savings include.
+            savings_ai_estimate_count=savings_estimate_count(b["items"]),
             items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
@@ -1878,7 +1891,9 @@ def tech_debt_dashboard(
     exclusion_state = exclusion_count_state(cl)
     if source_rows_total is None:
         spend_completeness = "unknown"
-    elif excluded_count or not spend_cost_known or exclusion_state == "unknown":
+    elif (
+        excluded_count or not spend_cost_known or ai_estimate_count or exclusion_state == "unknown"
+    ):
         # An unknown exclusion count is never "complete": a row may have been
         # excluded that the arithmetic floors to zero (#193).
         spend_completeness = "partial"
@@ -1929,6 +1944,9 @@ def tech_debt_dashboard(
         included_count=included_count,
         excluded_count=excluded_count,
         no_cost_count=no_cost_count,
+        ai_estimate_count=ai_estimate_count,
+        # #1299 (TD-5): the estimated costs the identified savings include.
+        savings_ai_estimate_count=savings_estimate_count(items),
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,

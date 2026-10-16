@@ -21,6 +21,7 @@ import {
   type TechDebtItem,
 } from "@/lib/dashboards/techDebt";
 import { noCostSentence } from "@/lib/tech_debt/components";
+import { aiEstimateSentence } from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 
 import type { JSX } from "react";
@@ -71,14 +72,22 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  */
 export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
-    return "May not be complete - upload not reconciled";
+    // TD-5: estimates the total includes are stated here too (copy E6).
+    const estimates = aiEstimateSentence(data.ai_estimate_count);
+    const note = "May not be complete - upload not reconciled";
+    return estimates === null ? note : `${note} · ${estimates}`;
   }
   if (data.spend_completeness === "partial") {
     // TD-10 (for #1048): the count of tools the total leaves out follows any
     // exclusion text, so an excluded row can no longer hide it.
     const noCost = noCostSentence(data.no_cost_count);
+    // TD-5 (for #1060), copy E6: estimated costs the total INCLUDES, after any
+    // other text with " · ". E7 makes any estimate "partial" on its own.
+    const estimates = aiEstimateSentence(data.ai_estimate_count);
+    const withEstimates = (text: string) =>
+      estimates === null ? text : `${text} · ${estimates}`;
     const withNoCost = (exclusion: string) =>
-      noCost === null ? exclusion : `${exclusion} · ${noCost}`;
+      withEstimates(noCost === null ? exclusion : `${exclusion} · ${noCost}`);
     // #193: an exclusion count the extraction could not attribute is a FLOOR,
     // and 0 when items were as many as rows -- never stated as the count.
     if (!data.excluded_count_exact && data.source_rows_total !== null) {
@@ -99,18 +108,19 @@ export function spendSub(data: TechDebtDashboardData): string {
     // means attribution failed, so the API reports `excluded_count_exact`
     // false and the branch above takes it. Pinned at the API by
     // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
-    // cause left: an included tool with no cost, which the API counts with the
-    // same predicate that made the figure partial.
-    //
+    // causes left: an included tool with no cost, which the API counts with the
+    // same predicate that made the figure partial, and (TD-5) an AI-estimated
+    // cost, which the total includes. Estimates alone are not a floor.
+    if (noCost !== null) return withEstimates(`Floor - ${noCost}`);
+    if (estimates !== null) return estimates;
     // RATCHET, deliberately kept: the count-free sentence below is UNREACHABLE
     // from the current API, which reaches this line only with
-    // no_cost_count > 0 (`no_cost_items` sets both the count and "partial").
-    // It would become reachable if "partial" gained a cause other than an
-    // uncosted tool or an exclusion, or if an API older than `no_cost_count`
-    // served this page. Either way it stays a floor, never "Across all tools".
-    return noCost === null
-      ? "Floor - some tools lacked a cost"
-      : `Floor - ${noCost}`;
+    // no_cost_count > 0 or ai_estimate_count > 0 (`no_cost_items` and
+    // `is_ai_estimate` set both the counts and "partial"). It would become
+    // reachable if "partial" gained a cause other than an uncosted tool, an
+    // estimate or an exclusion, or if an API older than these counts served
+    // this page. Either way it stays a floor, never "Across all tools".
+    return "Floor - some tools lacked a cost";
   }
   return "Across all tools";
 }
@@ -188,6 +198,13 @@ function th(align: "left" | "right" = "left"): React.CSSProperties {
   };
 }
 
+/** #1299 (TD-5): the approved E6 sentence after a savings line, when the
+ * figure includes an AI-estimated cost; the line unchanged otherwise. */
+function withEstimates(text: string, k: number): string {
+  const estimates = aiEstimateSentence(k);
+  return estimates === null ? text : `${text} · ${estimates}`;
+}
+
 function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
   return (
     <div
@@ -221,6 +238,8 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
                 as "—", so a $0 floor is written in full. */}
             {r.savings_cost_known === true ? "" : "≥ "}
             {r.savings_usd > 0 ? usdCompact(r.savings_usd) : usdFull(0)}/yr
+            {/* #1299 (TD-5): savings including an AI estimate say so (E6). */}
+            {withEstimates("", r.savings_ai_estimate_count)}
           </span>
         ) : null}
       </div>
@@ -284,11 +303,12 @@ export function TechDebtDashboard({
         <KpiCard
           label="Identified savings"
           value={usdFull(data.identified_savings_usd)}
-          sub={
+          sub={withEstimates(
             data.savings_cost_known
               ? "From tools marked to cut"
-              : "Floor — some cut tools lacked a cost"
-          }
+              : "Floor — some cut tools lacked a cost",
+            data.savings_ai_estimate_count,
+          )}
           accent={C.green}
         />
       </KpiRow>

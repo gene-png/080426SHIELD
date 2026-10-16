@@ -36,6 +36,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.cost_estimate import is_ai_estimate, savings_estimate_count
 from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
@@ -91,10 +92,29 @@ class DeliverableContext:
     #: when this is non-empty, because `build_context` derives one from the
     #: other. Defaulted like `spend_cost_known`; `build_context` always sets it.
     no_cost_names: tuple[str, ...] = ()
+    #: TD-5 (for #1060): how many source items' costs are AI estimates
+    #: (`cost_estimate.is_ai_estimate`). `total_cost` includes them, so the
+    #: files say so (E6) and the total is not called a "Total" (E7's parity).
+    ai_estimate_count: int = 0
+    #: #1299 (TD-5): AI-estimated costs `estimated_savings` includes
+    #: (`cost_estimate.savings_estimate_count`). Defaulted like the above.
+    savings_ai_estimate_count: int = 0
 
 
 #: #193: why the exclusion count is unknown, as every surface states it.
 UNKNOWN_EXCLUSION_CAUSE = "the AI could not match every extracted capability to one uploaded row"
+
+
+def cost_notes(ctx: DeliverableContext) -> list[str]:
+    """Every note that qualifies the cost figure, in order: TD-10's uncosted
+    tools, then TD-5's AI estimates (copy E6, approved on #736 6206818759)."""
+    lines = no_cost_lines(ctx)
+    k = ctx.ai_estimate_count
+    if k == 1:
+        lines.append("Note: 1 annual cost is an AI estimate; the annual cost includes it.")
+    elif k > 1:
+        lines.append(f"Note: {k} annual costs are AI estimates; the annual cost includes them.")
+    return lines
 
 
 def no_cost_lines(ctx: DeliverableContext) -> list[str]:
@@ -159,8 +179,22 @@ def _names(ctx: DeliverableContext) -> dict:
 
 
 def _cost_text(item: CapabilityItem) -> str:
-    """A non-part row's cost cell in the PDF and DOCX: its cost, or "—"."""
-    return f"${float(item.annual_cost_usd):,.0f}" if item.annual_cost_usd is not None else "—"
+    """A non-part row's cost cell in the PDF and DOCX: its cost, or "—". An AI
+    estimate says so in the cell (TD-5 copy E5, approved on #736)."""
+    if item.annual_cost_usd is None:
+        return "—"
+    cost = f"${float(item.annual_cost_usd):,.0f}"
+    return f"{cost} (AI estimate)" if is_ai_estimate(item) else cost
+
+
+def savings_estimates_sentence(ctx: DeliverableContext) -> str | None:
+    """#1299 (TD-5): beside "Estimated annual savings" when the figure includes
+    an AI-estimated cost, the approved E6 sentence (#736 6220094031 item 3);
+    None when it includes none."""
+    k = ctx.savings_ai_estimate_count
+    if k <= 0:
+        return None
+    return "1 cost is an AI estimate" if k == 1 else f"{k} costs are AI estimates"
 
 
 def cost_label(ctx: DeliverableContext) -> str:
@@ -244,6 +278,15 @@ def cost_label(ctx: DeliverableContext) -> str:
         return "Included annual cost"
     if ctx.source_rows_total is None:
         return "Annual cost (may not be complete)"
+    if ctx.ai_estimate_count > 0:
+        # TD-5 (for #1060): never "Total" while an AI estimate is in it. Copy
+        # approved on #736 (6218297098).
+        k = ctx.ai_estimate_count
+        return (
+            "Annual cost, including 1 AI estimate"
+            if k == 1
+            else f"Annual cost, including {k} AI estimates"
+        )
     return "Total annual cost"
 
 
@@ -280,6 +323,11 @@ def build_context(
     # TD-10 (for #1048): the floor flag is DERIVED from the uncosted items, so
     # the count the files state and the label above it cannot disagree.
     uncosted = no_cost_items(items_list)
+    # TD-5 (for #1060): an AI estimate is not a recorded cost, so a total
+    # including one is never a "Total" -- `cost_label` names the estimates
+    # instead, the deliverable's twin of the dashboard's E7 ("partial"). It is
+    # counted, not a floor: the figure includes it.
+    estimated = sum(1 for it in items_list if is_ai_estimate(it))
     spend_known = not uncosted
     for it in items_list:
         # for #835: a split bundle's part is not a cost. Its parent holds the
@@ -340,6 +388,8 @@ def build_context(
         savings_cost_known=savings_known,
         spend_cost_known=spend_known,
         no_cost_names=tuple(it.name for it in uncosted),
+        ai_estimate_count=estimated,
+        savings_ai_estimate_count=savings_estimate_count(items_list),
         # #177: THE ONE READER, as the dashboard and the admin list call it.
         exclusion_state=exclusion_count_state(cap_list),
     )
@@ -372,6 +422,9 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         "Rationale",
         "Notes",
         "AI Confidence %",
+        # TD-5 (for #1060), copy E5: the LAST column, so every existing column
+        # keeps its position.
+        "Cost source",
     ]
     safe_text_row(ws, header)
     header_fill = PatternFill(start_color="FFEEF2F7", end_color="FFEEF2F7", fill_type="solid")
@@ -401,6 +454,7 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
                 item.disposition_rationale or "",
                 item.notes or "",
                 item.confidence_pct if item.confidence_pct is not None else "",
+                "AI estimate" if is_ai_estimate(item) else "",
             ],
         )
 
@@ -427,13 +481,16 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
             column=6,
             value="≥ (one or more cut rows missing a cost)",
         ).font = Font(italic=True)
+    if (estimates := savings_estimates_sentence(ctx)) is not None:
+        # #1299 (TD-5): beside the savings figure, after any floor note.
+        ws.cell(row=summary_row + 1, column=7, value=estimates).font = Font(italic=True)
     # TD-10 (for #1048): below the savings row, so every existing cell keeps
     # its position. The names are client text, so they go in as text.
-    for line in no_cost_lines(ctx):
+    for line in cost_notes(ctx):
         safe_text_row(ws, [line])
 
     # Reasonable column widths.
-    widths = [28, 22, 16, 28, 18, 10, 14, 38, 38, 16]
+    widths = [28, 22, 16, 28, 18, 10, 14, 38, 38, 16, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -499,6 +556,8 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
         if ctx.savings_cost_known
         else f"≥ ${ctx.estimated_savings:,.0f}"
     )
+    if (estimates := savings_estimates_sentence(ctx)) is not None:
+        savings = f"{savings} ({estimates})"
     story.append(
         Paragraph(
             # for #835: source items, not a split bundle's parts.
@@ -509,7 +568,7 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
         )
     )
     # TD-10 (for #1048): the names are client text, so they are escaped (#775).
-    for line in no_cost_lines(ctx):
+    for line in cost_notes(ctx):
         story.append(pdf_text(line, body))
     if not ctx.savings_cost_known:
         story.append(
@@ -591,6 +650,8 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         if ctx.savings_cost_known
         else f"≥ ${ctx.estimated_savings:,.0f}"
     )
+    if (estimates := savings_estimates_sentence(ctx)) is not None:
+        savings = f"{savings} ({estimates})"
     add_heading(doc, "Summary")
     recon = reconciliation_line(ctx)
     lines = (
@@ -602,7 +663,7 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         f"Capabilities reviewed: {ctx.included_count}",
         f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
         # TD-10 (for #1048): directly after the cost line it qualifies.
-        *no_cost_lines(ctx),
+        *cost_notes(ctx),
         f"Estimated annual savings: {savings}",
     ]
     if not ctx.savings_cost_known:

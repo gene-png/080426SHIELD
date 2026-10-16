@@ -137,7 +137,9 @@ def test_the_model_reads_the_column(tmp_path) -> None:
 
     url, engine = _at_0073(tmp_path)
     item = _item(engine)
-    command.upgrade(_cfg(url), "0072")
+    # "head", not "0072": the ORM model always describes the newest schema (see
+    # test_migration_0072_suite_flags.py's twin of this test).
+    command.upgrade(_cfg(url), "head")
     _set_version(engine, item)
     with Session(engine) as s:
         assert s.get(CapabilityItem, uuid.UUID(item)).extracted_prompt_version == "v3.3"

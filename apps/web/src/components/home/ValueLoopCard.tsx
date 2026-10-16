@@ -3,6 +3,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 import type { JSX } from "react";
 
 import { HOME_CARD_NOTE, homeCardNotCheckedNote } from "@/lib/attack/subset";
+import { aiEstimateSentence } from "@/lib/tech_debt/costEstimate";
 import {
   targetNotes,
   gapHint,
@@ -115,6 +116,13 @@ function pluralGaps(n: number): string {
 
 function buildMetrics(summary: ValueSummary): Metric[] {
   const savings = summary.tech_debt_savings_usd;
+  // #1299 (TD-5): savings that include an AI-estimated cost say so (E6).
+  const estimates =
+    savings === null
+      ? null
+      : aiEstimateSentence(summary.tech_debt_savings_ai_estimate_count);
+  const withEstimates = (hint: string) =>
+    estimates === null ? hint : `${hint} · ${estimates}`;
   return [
     {
       label: "Tech debt savings identified",
@@ -125,10 +133,11 @@ function buildMetrics(summary: ValueSummary): Metric[] {
           : summary.tech_debt_savings_cost_known
             ? `${USD.format(savings)} / yr`
             : `${USD.format(savings)}+ / yr`,
-      hint:
+      hint: withEstimates(
         savings !== null && !summary.tech_debt_savings_cost_known
           ? "A floor — some retired tools had no cost on file."
           : "Annual spend on tools marked to cut.",
+      ),
       unresolved: summary.tech_debt_savings_unresolved,
     },
     {

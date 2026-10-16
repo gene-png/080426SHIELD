@@ -32,6 +32,7 @@ function row(
     disposition: "keep",
     notes: null,
     bundle,
+    ai_estimate: false,
   };
 }
 

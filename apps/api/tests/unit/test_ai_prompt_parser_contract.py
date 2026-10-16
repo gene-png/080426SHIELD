@@ -50,6 +50,8 @@ SUGGESTION_JOBS = (
     "mitre_map",
     "risk_synthesize",
     "attack_scenario_delta",
+    # TD-5 (for #1060): the opt-in cost estimate declares "estimates".
+    "tech_debt_cost_estimate",
 )
 
 

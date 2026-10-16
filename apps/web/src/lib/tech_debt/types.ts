@@ -58,6 +58,16 @@ export interface CapabilityItem {
    * the row is not awaiting sign-off.
    */
   signoff_kind?: "not_in_use" | "not_security" | null;
+  /**
+   * TD-5 (for #1060), migration 0074: where `annual_cost_usd` came from.
+   * "ai_estimate" is labelled "AI estimate" wherever the cost appears; null is
+   * "not recorded" (an uploaded cost), never an estimate.
+   */
+  cost_source?: "ai_estimate" | "consultant" | null;
+  /** Work Order C2: a locked row is never changed by a Run-AI, the estimate included. */
+  locked?: boolean;
+  /** The model's one-sentence basis for an estimate; consultant-only. */
+  cost_estimate_basis?: string | null;
   source_artifact_id: string | null;
   disposition: CapabilityDisposition | null;
   disposition_rationale: string | null;
@@ -195,8 +205,9 @@ export interface OverlapAnalysis {
   top_cost_items: TopCostItem[];
   total_cost: number;
   /** #781: what `total_cost` may honestly be called -- the deliverable's own
-   *  `cost_label` for this list: "Total annual cost", "Included annual cost"
-   *  or "Annual cost (may not be complete)". */
+   *  `cost_label` for this list: "Total annual cost", "Included annual cost",
+   *  "Annual cost (may not be complete)", or (TD-5) "Annual cost, including
+   *  {k} AI estimates" / "Annual cost, including 1 AI estimate". */
   total_cost_label: string;
   total_items: number;
   uncategorized_count: number;

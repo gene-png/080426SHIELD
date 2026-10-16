@@ -46,6 +46,7 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.ai.batching import run_batches
 from app.ai.isolation import REDACTION_BUDGET_EXCEEDED, RedactionRefused, limit_text
 from app.ai.llm import LLMClient
 from app.ai.runs import (
@@ -68,6 +69,8 @@ from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.audit_entry import AuditEntry
 from app.models.capability import (
+    COST_SOURCE_AI_ESTIMATE,
+    COST_SOURCE_CONSULTANT,
     CapabilityDisposition,
     CapabilityItem,
     CapabilityList,
@@ -87,6 +90,7 @@ from app.schemas.tech_debt import (
     CapabilityItemResponse,
     CapabilityListResponse,
     ConsolidationPlanSummary,
+    CostEstimateRequest,
     DeliverableResponse,
     ExtractionFlags,
     ExtractRequest,
@@ -106,12 +110,23 @@ from app.security.rate_limit import enforce_ai_rate_limit
 from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
 from app.tech_debt.components import is_component, savings_cost
+from app.tech_debt.cost_estimate import (
+    BATCH_FAILED,
+    CHANGED_MEANWHILE,
+    build_payload,
+    estimate_targets,
+    parse_estimates,
+)
+from app.tech_debt.cost_estimate import JOB_NAME as COST_ESTIMATE_JOB
+from app.tech_debt.cost_estimate import PURPOSE as COST_ESTIMATE_PURPOSE
+from app.tech_debt.cost_estimate import TOP_LEVEL_KEY as COST_ESTIMATE_KEY
 from app.tech_debt.exporters import (
     build_context,
     cost_label,
     render_docx,
     render_pdf,
     render_xlsx,
+    savings_estimates_sentence,
 )
 from app.tech_debt.extract import (
     CATEGORIES,
@@ -127,7 +142,7 @@ from app.tech_debt.filename import (
     SERVICE_SLUG_BY_KIND,
     deliverable_filename,
 )
-from app.tech_debt.overlap import analyze_overlap
+from app.tech_debt.overlap import analyze_overlap, no_cost_items
 from app.tech_debt.parsers import SUPPORTED_MIME, UnsupportedInventoryFormat
 from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusions
 from app.tech_debt.savings import estimated_savings
@@ -1602,6 +1617,11 @@ def patch_capability_item(
     locked_val = data.pop("locked", None)
     for field, value in data.items():
         setattr(item, field, value)
+    if "annual_cost_usd" in data:
+        # TD-5 (for #1060): editing the cost is the override of an AI estimate.
+        # A cost the consultant typed is theirs; a cleared cost has no source.
+        item.cost_source = COST_SOURCE_CONSULTANT if data["annual_cost_usd"] is not None else None
+        item.cost_estimate_basis = None
     if data:
         # A content edit -> no longer an AI guess.
         item.confidence_pct = None
@@ -1768,6 +1788,232 @@ def bulk_set_disposition(
     )
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+#: TD-5 (for #1060). Copy approved on #736 (6218297098): the stale-tab case,
+#: where the button was shown but every uncosted row has since been costed.
+_NOTHING_TO_ESTIMATE = "Every tool already has a cost, so there is nothing to estimate."
+#: The same refusal when uncosted rows remain but every one is locked. Copy
+#: approved on #736 (6221187740).
+_ALL_UNCOSTED_LOCKED = "Every tool without a cost is locked, so the AI will not estimate it."
+#: Tools per call: 50 answers of about 50 tokens each, far inside the purpose's
+#: output budget, so no inventory is ever truncated.
+_ESTIMATE_BATCH = 50
+_ESTIMATE_MAX_WORKERS = 4
+#: Copy approved on #736 (6218297098).
+_ESTIMATE_DEADLINE = (
+    "The AI estimate stopped before it finished. Tools it did not reach still have no cost."
+)
+
+
+@router.post(
+    "/capability-lists/{list_id}/cost-estimate",
+    response_model=AiRunStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Estimate the missing annual costs with AI, in the background (admin, TD-5)",
+)
+def estimate_missing_costs(
+    list_id: uuid.UUID,
+    body: CostEstimateRequest,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+    llm: Annotated[LLMClient, Depends(_llm_dep)],
+    runner: Annotated[Runner, Depends(get_ai_run_runner)],
+    _rl: Annotated[None, Depends(enforce_ai_rate_limit)],
+) -> AiRunStarted:
+    """TD-5 (for #1060): the opt-in "Let AI estimate". A 202 with a run to poll.
+
+    Asks only `cost_estimate.estimate_targets` (TD-10's uncosted source items,
+    minus locked rows), on a list still open to edits. Every refusal is made
+    here, synchronously; the job re-checks each row before writing it.
+    """
+    serves = require_serves(body.serves)
+    cap_list = _editable_list_or_404(db, list_id, client)
+    items = (
+        db.execute(select(CapabilityItem).where(CapabilityItem.capability_list_id == cap_list.id))
+        .scalars()
+        .all()
+    )
+    targets = estimate_targets(items)
+    if not targets:
+        # Uncosted rows that are all locked are not "every tool has a cost":
+        # the consultant locked them, and the message says so.
+        message = _ALL_UNCOSTED_LOCKED if no_cost_items(items) else _NOTHING_TO_ESTIMATE
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "no_costs_to_estimate", "message": message},
+        )
+    _log.info(
+        "tech_debt.cost_estimate_requested",
+        capability_list_id=str(cap_list.id),
+        targets=len(targets),
+    )
+    return start_run(
+        db,
+        llm=llm,
+        serves=serves,
+        service_id=cap_list.service_id,
+        client_id=client.id,
+        purpose=COST_ESTIMATE_PURPOSE,
+        subject_id=cap_list.id,
+        requested_by=user.id,
+        runner=runner,
+        work=functools.partial(
+            _cost_estimate_run_work,
+            list_id=cap_list.id,
+            target_ids=tuple(t.id for t in targets),
+        ),
+    )
+
+
+def _still_a_target(item: CapabilityItem | None) -> bool:
+    """A row the job may still write: present, uncosted, unlocked, not a part.
+    Anything else changed after the click, and the change is the consultant's."""
+    return item is not None and bool(estimate_targets([item]))
+
+
+def _cost_estimate_run_work(
+    session: Session,
+    ctx: RunContext,
+    *,
+    list_id: uuid.UUID,
+    target_ids: tuple[uuid.UUID, ...],
+) -> RunOutcome:
+    """The estimate, in the background job's own session (#645).
+
+    Every asked row ends in exactly one count: estimated, declined (the model
+    said it could not), or refused with a reason. A row the consultant costed,
+    locked or removed while the run was going is never overwritten: it is
+    counted as `changed_meanwhile`.
+    """
+    db = session
+    cap_list = db.get(CapabilityList, list_id)
+    if cap_list is None or cap_list.status in (
+        CapabilityListStatus.RELEASED,
+        CapabilityListStatus.DISCARDED,
+    ):
+        refusal = _refuse_closed_list(cap_list) if cap_list is not None else None
+        detail = refusal.detail if refusal is not None else {}
+        raise RunFailed(
+            detail.get("reason", "capability_list_not_found"),
+            detail.get("message", "Capability list not found."),
+        )
+    refused: dict[str, int] = {}
+    asked = [db.get(CapabilityItem, i) for i in target_ids]
+    targets = [it for it in asked if _still_a_target(it)]
+    if len(targets) < len(asked):
+        refused[CHANGED_MEANWHILE] = len(asked) - len(targets)
+    estimated = 0
+    declined = 0
+    stray = 0
+    batches_total = 0
+    batches_failed = 0
+    if targets:
+        payload, refs = build_payload(targets)
+        tools = payload["tools"]
+        # Batched so an inventory of any size fits the purpose's output budget
+        # (`_MAX_OUTPUT_TOKENS_BY_PURPOSE`): a batch of 50 answers is a few
+        # thousand tokens. A failed batch costs its own tools (counted below),
+        # a redaction refusal fails the run whole, and a credential rejection
+        # stops further batches (`run_batches`).
+        batched = run_batches(
+            db,
+            ctx.llm,
+            COST_ESTIMATE_JOB,
+            [
+                {"tools": tools[i : i + _ESTIMATE_BATCH]}
+                for i in range(0, len(tools), _ESTIMATE_BATCH)
+            ],
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=client_org_name_for_tenant(db, ctx.client_id),
+            name_hints=name_hints_for_tenant(db, ctx.client_id),
+            deadline_at=ctx.deadline_at,
+            max_workers=_ESTIMATE_MAX_WORKERS,
+            deadline_message=_ESTIMATE_DEADLINE,
+        )
+        batches_total, batches_failed = batched.total, batched.failed
+        answered: set[str] = set()
+        estimates = {}
+        for answer, inputs in zip(batched.answers, batched.inputs, strict=True):
+            asked_refs = [t["ref"] for t in inputs["tools"]]
+            answered.update(asked_refs)
+            outcome = parse_estimates(answer[COST_ESTIMATE_KEY], asked_refs)
+            declined += len(outcome.declined)
+            stray += outcome.stray_entries
+            for reason, refs_refused in outcome.refused.items():
+                refused[reason] = refused.get(reason, 0) + len(refs_refused)
+            estimates.update(outcome.estimates)
+        lost = len(refs) - len(answered)
+        if lost:
+            refused[BATCH_FAILED] = lost
+        # The list row's lock BEFORE any item row's: every edit route takes it
+        # first (`_record_edit`; sessions do not autoflush, so their item
+        # UPDATEs reach the database at commit). Writing items first and the
+        # revision after would invert that order and can deadlock a consultant's
+        # edit against this run on Postgres. SQLite ignores FOR UPDATE and
+        # locks the whole database, so the order cannot invert there.
+        db.execute(
+            select(CapabilityList.id).where(CapabilityList.id == cap_list.id).with_for_update()
+        )
+        for ref, estimate in estimates.items():
+            # ONE conditional UPDATE per row, so the check and the write are
+            # atomic: Tech Debt's edit routes are not locked by a run, and a
+            # consultant who costs, locks or splits the row at any moment before
+            # this statement wins. The WHERE is `estimate_targets`' rule in SQL.
+            written = db.execute(
+                update(CapabilityItem)
+                .where(
+                    CapabilityItem.id == refs[ref],
+                    CapabilityItem.annual_cost_usd.is_(None),
+                    CapabilityItem.locked.is_(False),
+                    CapabilityItem.parent_item_id.is_(None),
+                )
+                .values(
+                    annual_cost_usd=estimate.cost,
+                    cost_source=COST_SOURCE_AI_ESTIMATE,
+                    cost_estimate_basis=estimate.basis,
+                )
+                .execution_options(synchronize_session=False)
+            ).rowcount
+            if written != 1:
+                refused[CHANGED_MEANWHILE] = refused.get(CHANGED_MEANWHILE, 0) + 1
+                continue
+            estimated += 1
+    counts = {
+        # The list this run wrote: how the #646 stamp (`mode_stamp`) ties an
+        # estimate run to the list, as it does an extraction run.
+        "capability_list_id": str(cap_list.id),
+        "asked": len(asked),
+        "estimated": estimated,
+        "declined": declined,
+        "refused": dict(sorted(refused.items())),
+        "stray_entries": stray,
+        "batches_total": batches_total,
+        "batches_failed": batches_failed,
+    }
+    if estimated:
+        _record_edit(db, cap_list.id)
+    audit(
+        db,
+        action="capability_items.cost_estimated",
+        target_type="capability_list",
+        target_id=cap_list.id,
+        actor_user_id=ctx.requested_by,
+        details={"capability_list_id": str(cap_list.id), **counts},
+    )
+    return RunOutcome(
+        result=counts,
+        applied_count=estimated,
+        batches_total=max(batches_total, 1),
+        batches_failed=batches_failed,
+        accounting=(
+            "tech_debt.cost_estimate_applied",
+            {"capability_list_id": str(cap_list.id), **counts},
+        ),
+    )
 
 
 def build_approved_membership(db: Session, capability_list_id: uuid.UUID) -> list[dict]:
@@ -2293,7 +2539,13 @@ def savings_preview(
     """#804: the savings what-if. Overlays the proposed dispositions on the
     stored items IN MEMORY and computes the figure with the deliverable's own
     derivation. Writes nothing, calls no AI; "Apply to plan" goes through the
-    disposition routes and their guards."""
+    disposition routes and their guards.
+
+    #1299 (TD-5), left alone on purpose: this consultant-only figure carries no
+    AI-estimate sentence. Every client and deliverable savings figure does
+    (`cost_estimate.savings_estimate_count`); here the consultant sees each
+    estimated row's "AI estimate" badge in the table beside it. Tracked in
+    #1354 for a sentence here too."""
     cap_list = db.get(CapabilityList, list_id)
     svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
     if cap_list is None or svc is None or svc.client_id != client.id:
@@ -2401,6 +2653,9 @@ def consolidation_plan_summary(
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
+    # #1299 (TD-5), left alone on purpose: this consultant-only card carries no
+    # AI-estimate sentence (each estimated row is badged in the table beside
+    # it); every client and deliverable savings figure does. Tracked in #1354.
     savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(
@@ -2651,6 +2906,8 @@ def finalize_deliverable(
         data=docx_bytes,
     )
 
+    # #1299 (TD-5): the same E6 sentence as every other savings figure.
+    savings_estimates = savings_estimates_sentence(ctx)
     summary_line = (
         # for #835: the client's Results and Home pages show this beside the
         # files, so it counts what the PDF's "Capabilities reviewed" counts:
@@ -2661,7 +2918,8 @@ def finalize_deliverable(
         # left alone.
         f"{ctx.included_count} capabilities reviewed; "
         f"{'≥ ' if not ctx.savings_cost_known else ''}"
-        f"${ctx.estimated_savings:,.0f} estimated annual savings."
+        f"${ctx.estimated_savings:,.0f} estimated annual savings"
+        f"{f' ({savings_estimates})' if savings_estimates else ''}."
     )
 
     deliv = Deliverable(

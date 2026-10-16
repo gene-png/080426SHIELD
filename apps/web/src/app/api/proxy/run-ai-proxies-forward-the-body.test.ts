@@ -28,8 +28,9 @@ function routeFiles(dir: string): string[] {
   return out;
 }
 
+// TD-5 (for #1060): the Tech Debt `cost-estimate` starts a Run-AI too.
 const RUN_AI_ROUTE =
-  /[\\/](run-ai|capability-lists[\\/]extract)[\\/]route\.ts$/;
+  /[\\/](run-ai|capability-lists[\\/]extract|cost-estimate)[\\/]route\.ts$/;
 
 describe("Run-AI proxies forward the body (#645)", () => {
   const runAiRoutes = routeFiles(PROXY_ROOT).filter((p) =>

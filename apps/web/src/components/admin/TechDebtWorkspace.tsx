@@ -40,8 +40,16 @@ import {
   fetchCategories,
   fetchOverlapAnalysis,
   proxyMessage,
+  startCostEstimate,
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
+import {
+  aiEstimateItems,
+  aiEstimateSentence,
+  costEstimateResult,
+  estimateResultLine,
+  estimateTargets,
+} from "@/lib/tech_debt/costEstimate";
 import type { TechDebtCategories, TechDebtRun } from "@/lib/tech_debt/client";
 import type {
   CapabilityDisposition,
@@ -58,6 +66,7 @@ import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
+import { CostEstimatePrompt } from "./CostEstimatePrompt";
 import { BulkKeepUndecided } from "./BulkKeepUndecided";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
@@ -176,6 +185,10 @@ export function TechDebtWorkspace({
       cancelled = true;
     };
   }, []);
+  // TD-5 (for #1060): "Enter costs" filters the table to the uncosted rows.
+  const [uncostedOnly, setUncostedOnly] = React.useState(false);
+  const [estimating, setEstimating] = React.useState(false);
+  const [estimateError, setEstimateError] = React.useState<string | null>(null);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   // #550: set once an extraction's outcome is unknown and never cleared; a
@@ -639,7 +652,57 @@ Components carry no cost of their own — this licence keeps its full value.`,
     0,
   );
   // TD-10 (for #1048): the total leaves these out, and says how many.
-  const noCost = noCostSentence(list ? noCostItems(list.items).length : 0);
+  /**
+   * TD-5 (for #1060): "Let AI estimate". A run (#645); the list is re-read
+   * once it completes, and E4 is read from the run itself (`latestEstimate`).
+   */
+  async function runEstimate(listId: string, serves: AiServes): Promise<void> {
+    setEstimating(true);
+    setEstimateError(null);
+    const seq = ++listSeq.current;
+    try {
+      const started = await startCostEstimate(listId, serves);
+      const finished = await aiRun.follow(started);
+      console.debug(
+        `[tech-debt] cost estimate run ${finished.id} ended ${finished.status}`,
+      );
+      if (finished.status !== "completed") return;
+      const next = await fetchLatestList(serviceId);
+      if (seq === listSeq.current) setList(next);
+      setUncostedOnly(false);
+      await refreshOverlap();
+    } catch (err) {
+      // Fallback copy approved on #736 (6218297098); the API's own typed
+      // message is shown whenever there is one.
+      setEstimateError(
+        proxyMessage(err, "The AI estimate could not be started."),
+      );
+    } finally {
+      setEstimating(false);
+    }
+  }
+
+  const noCostRows = list ? noCostItems(list.items) : [];
+  const noCost = noCostSentence(noCostRows.length);
+  // TD-5: the rows "Let AI estimate" asks about (locked rows are never asked),
+  // so E1's count, the "Enter costs" view and the run's E4 agree.
+  const estimateRows = list ? estimateTargets(list.items) : [];
+  // Once the last of those rows has a cost, the view ends: never "Showing 0
+  // of n rows" over an empty table, and a row that later loses its cost
+  // cannot switch it back on. Adjusted while rendering (React's pattern for
+  // state that follows the data), not in an effect, so no render shows it.
+  if (uncostedOnly && estimateRows.length === 0) setUncostedOnly(false);
+  // TD-5 (for #1060), copy E6: the total INCLUDES these, and says so.
+  const aiEstimates = aiEstimateSentence(
+    list ? aiEstimateItems(list.items).length : 0,
+  );
+  // E4, from the service's newest run, so it survives a reload. Only a
+  // completed cost-estimate run's result is read; anything else says nothing.
+  const latestEstimate =
+    aiRun.latest?.status === "completed"
+      ? costEstimateResult(aiRun.latest)
+      : null;
+  const tableItems = list && uncostedOnly ? estimateRows : (list?.items ?? []);
   const lowConfidence =
     list?.items.filter(
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
@@ -891,6 +954,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 {noCost ? (
                   <StatusPill tone="warning">{noCost}</StatusPill>
                 ) : null}
+                {aiEstimates ? (
+                  <StatusPill tone="info">{aiEstimates}</StatusPill>
+                ) : null}
                 <DiscardDraftButton
                   status={list.status}
                   destructionSummary={discardSummary}
@@ -1020,6 +1086,40 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
             />
             <DispositionHelp />
+            <CostEstimatePrompt
+              noCostCount={estimateRows.length}
+              editable={list.status === "draft" || list.status === "approved"}
+              busy={estimating || extracting || aiRun.running !== null}
+              onEnterCosts={() => setUncostedOnly(true)}
+              onEstimate={(serves) => void runEstimate(list.id, serves)}
+            />
+            {latestEstimate ? (
+              <p
+                className="text-sm text-ink-secondary"
+                aria-live="polite"
+                data-testid="cost-estimate-result"
+              >
+                {estimateResultLine(latestEstimate)}
+              </p>
+            ) : null}
+            {estimateError ? (
+              <p className="text-sm text-status-danger-fg" role="alert">
+                {estimateError}
+              </p>
+            ) : null}
+            {uncostedOnly ? (
+              <p className="flex flex-wrap items-center gap-2 text-sm text-ink-secondary">
+                {/* #1175's approved strings (#736 6206818759 item 7). */}
+                <span>{`Showing ${tableItems.length} of ${list.items.length} rows`}</span>
+                <button
+                  type="button"
+                  onClick={() => setUncostedOnly(false)}
+                  className="text-ink-tertiary underline hover:text-ink-secondary"
+                >
+                  Clear filter
+                </button>
+              </p>
+            ) : null}
             {/* TD-11 (for #1055): every undecided row to Keep, guarded on the
                 server so a decision made since this page loaded is never
                 overwritten. */}
@@ -1031,7 +1131,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
             />
             <EditableCapabilityTable
               categories={categories === "error" ? null : categories}
-              items={list.items}
+              items={tableItems}
               onItemUpdate={onItemUpdate}
               onBulkDisposition={readOnly ? undefined : onBulkDisposition}
               readOnly={readOnly}

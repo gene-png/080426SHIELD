@@ -610,6 +610,9 @@ class TechDebtItem(BaseModel):
     # name, stripped; "" when that name is blank (still a part, so the screen
     # says "Included in its bundle"); None for a row that is not a part.
     bundle: str | None
+    # TD-5 (for #1060): the cost is an AI estimate (`cost_estimate.is_ai_estimate`),
+    # labelled "AI estimate" wherever it appears (copy E5).
+    ai_estimate: bool
 
 
 class TechDebtCategorySpend(BaseModel):
@@ -630,6 +633,9 @@ class TechDebtRedundancy(BaseModel):
     # for #1044: False when a counted (cut) row in this category has no usable
     # cost, so `savings_usd` is a floor; the card marks it as the headline does.
     savings_cost_known: bool
+    # #1299 (TD-5): AI-estimated costs `savings_usd` includes
+    # (`cost_estimate.savings_estimate_count`); the card says so (E6).
+    savings_ai_estimate_count: int
     items: list[TechDebtItem]
 
 
@@ -694,6 +700,13 @@ class TechDebtDashboardResponse(BaseModel):
     # A recorded $0 is a cost. REQUIRED: a default of 0 would claim every tool
     # was costed.
     no_cost_count: int
+    # TD-5 (for #1060): source items whose cost is an AI estimate
+    # (`cost_estimate.is_ai_estimate`), which `annual_spend_usd` INCLUDES. Any
+    # one makes `spend_completeness` "partial" (E7). REQUIRED, like the above.
+    ai_estimate_count: int
+    # #1299 (TD-5): AI-estimated costs `identified_savings_usd` includes
+    # (`cost_estimate.savings_estimate_count`); the card says so (E6).
+    savings_ai_estimate_count: int
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]
@@ -856,6 +869,9 @@ class ValueSummaryResponse(BaseModel):
     tech_debt_savings_usd: float | None
     tech_debt_savings_cost_known: bool
     tech_debt_savings_unresolved: bool
+    # #1299 (TD-5): AI-estimated costs the savings include, summed over the
+    # released lists (`cost_estimate.savings_estimate_count`).
+    tech_debt_savings_ai_estimate_count: int
     zt_gap_count: int | None
     zt_gap_unresolved: bool
     zt_services: int

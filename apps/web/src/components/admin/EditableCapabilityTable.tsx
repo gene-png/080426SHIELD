@@ -5,6 +5,7 @@ import { cn, StatusPill } from "@shield/design-system";
 
 import { patchCapabilityItem, proxyMessage } from "@/lib/tech_debt/client";
 import type { TechDebtCategories } from "@/lib/tech_debt/client";
+import { AI_ESTIMATE_LABEL } from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
@@ -626,6 +627,19 @@ export function EditableCapabilityTable({
                       className={cn(cellInputClasses, "text-right")}
                       aria-label="Annual cost USD"
                     />
+                    {/* TD-5 (for #1060), copy E5: an AI-estimated cost says
+                        so, with the model's basis on hover. Editing the cost
+                        is the override, and the API clears the label. */}
+                    {!isComponent &&
+                    item.cost_source === "ai_estimate" &&
+                    item.annual_cost_usd !== null ? (
+                      <span
+                        className="mt-1 inline-block rounded bg-status-info-bg px-1.5 py-0.5 text-xs text-status-info-fg"
+                        title={item.cost_estimate_basis ?? undefined}
+                      >
+                        {AI_ESTIMATE_LABEL}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="border-b border-border-subtle px-3 py-2 align-top text-right">
                     <input

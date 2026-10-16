@@ -72,6 +72,11 @@ RETIRING_DISPOSITIONS: frozenset[CapabilityDisposition] = frozenset(
     {CapabilityDisposition.CUT, CapabilityDisposition.CONSOLIDATE}
 )
 
+#: TD-5 (for #1060): the two recorded values of `CapabilityItem.cost_source`,
+#: as migration 0074's CHECK lists them. None is the third state, not recorded.
+COST_SOURCE_AI_ESTIMATE = "ai_estimate"
+COST_SOURCE_CONSULTANT = "consultant"
+
 
 class PurchaseStatus(enum.StrEnum):
     """What the client holds of one product inside a suite (TD-2, for #1058;
@@ -282,3 +287,10 @@ class CapabilityItem(UUIDPKMixin, TimestampMixin, Base):
     client_unconfirmed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # TD-5 (for #1060), migration 0074: where `annual_cost_usd` came from.
+    # `COST_SOURCE_AI_ESTIMATE` when the opt-in AI estimate wrote it, and
+    # `COST_SOURCE_CONSULTANT` when a consultant edited it afterwards. None is
+    # "not recorded" (every upload-extracted cost), NEVER an estimate.
+    cost_source: Mapped[str | None] = mapped_column(String(16))
+    # The model's one-sentence basis for an estimate; cleared by an override.
+    cost_estimate_basis: Mapped[str | None] = mapped_column(Text)
