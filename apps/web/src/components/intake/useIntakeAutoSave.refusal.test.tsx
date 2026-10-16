@@ -116,6 +116,9 @@ describe("useIntakeAutoSave refusal copy", () => {
   it("says the server could not save for a 5xx the api enveloped with no usable message", async () => {
     // The api's envelope with an empty message: the api answered and typed it
     // a failure, so the server sentence (#736 6116519635) still applies.
+    // A RATCHET, not a reachable state: today the api's 500 always carries a
+    // message (`_handle_unexpected`), so this row cannot occur on this route.
+    // It pins the envelope branch for the day an enveloped 5xx arrives bare.
     respond(500, { error: { code: 500, message: "" } });
     const message = await saveWebsite();
     expect(message).toBe(SERVER_FAILED);
