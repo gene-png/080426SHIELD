@@ -143,13 +143,23 @@ handover.
 
 **An agent merges a plain PR when conditions 1 to 6 hold**, and an
 extra-care PR when conditions 1 to 3 hold AND the advisor has approved it.
-Every merge is:
+Every merge is pinned to the head that was checked:
 
-    gh pr merge <n> --squash --match-head-commit <head sha>
+    gh pr merge <n> --squash --auto --match-head-commit <head sha>
 
-- **No `--auto`.** Auto-merge waits only for REQUIRED checks, so a red
-  non-required gate would not stop it, and it can merge a later push that
-  nobody reviewed.
+- **Auto-merge, with the head guard (Gene, 2026-10-16).** Enable it on a
+  plain PR only once the reviewer has run at that head and every
+  NON-required gate on it has finished green; auto-merge then waits for the
+  required checks itself. On an extra-care PR, enable it only after the
+  advisor's "merge approved at <sha>", at exactly that SHA.
+- **Until the guard is proven, merge by hand** with the same command minus
+  `--auto`, once every check has finished green. Proof means a throwaway PR
+  posted on #736 showing that a push after auto-merge was enabled does NOT
+  merge. On 2026-10-16 the probe could not run: the repository's "Allow
+  auto-merge" setting is off (`gh api repos/gene-png/080426SHIELD --jq
+  .allow_auto_merge` returned `false`). Turning it on is Gene's call.
+- **When a main run goes red, merging pauses** until the cause is named and
+  fixed. Auto-merge requests may stay, but no new one is enabled.
 - **Never** `--admin`, never bypass branch protection, never edit the
   required checks.
 - A PR that cannot merge (a red check, a conflict, BLOCKED) is reported on

@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-16 (coordinator, session_018WJ…): D-113, the merge rule, at your instruction._ An agent merges a PR once every check on its head has finished green and the reviewer has run on that head. Anything with a migration, an extra-care path or client-facing content first needs the advisor's merge approval naming its head SHA, and then the coordinator merges at exactly that head. Status docs are batched. You can still merge anything yourself.
+_2026-10-16 (coordinator, session_018WJ…): D-113, the merge rule, at your instruction._ An agent merges a PR once every check on its head has finished green and the reviewer has run on that head, with auto-merge and a head guard once that guard is proven (your repository's "Allow auto-merge" setting is currently off). Anything with a migration, an extra-care path or client-facing content first needs the advisor's merge approval naming its head SHA, and then the coordinator merges at exactly that head. Status docs are batched. You can still merge anything yourself.
 
 _2026-10-16 (track T5): #1170, the suite-listing banner moved to Notes and artifacts._ The "List each product separately, not as a suite" banner now shows at the top of Step 5 (Notes and artifacts), above the upload box, and no longer on Step 4 (Systems). Same rule and your approved wording. The Step 5 reminder line planned after IN-2 would now repeat it on the same step, so it waits for your call on whether it is still wanted. It comes back to you: condition 5.
 

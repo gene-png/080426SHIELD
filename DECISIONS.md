@@ -6642,7 +6642,7 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 
 **The decision.**
 
-- **Plain PRs.** An agent merges a PR with `gh pr merge --squash --match-head-commit <head>` once:
+- **Plain PRs.** An agent merges a PR, pinned to its head (`--match-head-commit`; see auto-merge below), once:
   - every check on that head has finished green, required or not;
   - the adversarial reviewer has run on that head;
   - every existing-test edit, user-facing string and prompt in it carries an advisor approval naming its hash or its text.
@@ -6656,6 +6656,6 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 - **Self-protection.** The merge-rule section, the reviewer-exception bullet in Rules of the road, the D-records that change either, and `.claude/agents/**` are condition-5 paths. A PR cannot clear itself under a rule it rewrites (#572).
 - **Oversight.** The advisor audits every merge afterwards. Branch protection and the required checks are never bypassed or edited.
 
-**Why no `--auto`** (from the adversarial review of the first draft, at 54045f07): auto-merge waits only for REQUIRED checks, so a red non-required gate would not stop it. It may also merge a later push that nobody reviewed.
+**Auto-merge, with a head guard** (Gene, #736 6207756046 item 1). The command is `gh pr merge --squash --auto --match-head-commit <sha>`. It is enabled only after the reviewer has run at that head and every non-required gate has finished green, and on an extra-care PR only after the advisor's approval at that SHA. The first draft dropped `--auto`, because auto-merge waits only for REQUIRED checks and might merge a later, unreviewed push. Gene chose to keep it, with those preconditions and the head guard. **Until the guard is proven** by a throwaway PR showing that a later push does not merge, merges are done by hand with `--match-head-commit`. On 2026-10-16 that probe could not run, because the repository's "Allow auto-merge" setting is off. **When a main run goes red, merging pauses** until the cause is named.
 
 **What would reopen this:** an extra-care PR merged without an advisor approval naming its head, or a plain merge that should have been extra care.
