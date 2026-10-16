@@ -79,11 +79,13 @@ function hasApiEnvelope(err: unknown): boolean {
 function fallbackFor(err: unknown, kept: boolean): string {
   const status = statusOf(err);
   if (status === null) return "Network error.";
-  // #1093 item 2, review of e85890b3: a 2xx we could not read. Our proxy
-  // answers every 2xx with JSON, and an unreadable api 2xx already arrives as
-  // the typed 504, so this came from something in front of the app and the
-  // PATCH may never have arrived. Unknown, never "Saved" and never "Network
-  // error.".
+  // #1093 item 2, review of e85890b3: a 2xx we cannot attribute to the api.
+  // Our proxy answers every 2xx with JSON, and an unreadable api 2xx already
+  // arrives as the typed 504, so this came from something in front of the app
+  // (a captive portal, a proxy's block page, a sign-in interstitial) and the
+  // PATCH may never have arrived. Not "a write that landed with an unreadable
+  // answer", the issue's first framing, which does not survive that trace.
+  // Unknown, never "Saved" and never "Network error.".
   if (status >= 200 && status < 300) return UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
   if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
   if (status >= 500 && status < 600) {
