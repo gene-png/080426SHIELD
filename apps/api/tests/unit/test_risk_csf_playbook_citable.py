@@ -28,6 +28,7 @@ import pytest
 from app.ai.llm import LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch
+from tests._csf_notes import note_every_answer
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
     _seed_attack_and_zt,
@@ -49,6 +50,8 @@ def _world(c, provider, bearer: str, cid: str) -> None:
     assert a.status_code in (200, 201), a.text
     seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert seeded.status_code in (200, 201), seeded.text
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+    note_every_answer(sid)
 
     zeros = dict.fromkeys(
         ("governance", "policy", "implementation", "monitoring", "improvement"), 0
@@ -164,6 +167,8 @@ def test_a_playbook_scored_only_by_the_run_ai_counts_through_its_dimensions(
     assert a.status_code in (200, 201), a.text
     seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert seeded.status_code in (200, 201), seeded.text
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+    note_every_answer(sid)
 
     from app.ai.llm import LLMClient
     from app.routes.csf import _llm_dep as csf_llm_dep

@@ -103,7 +103,9 @@ const OUTCOME_UNKNOWN = proxyRefusal(
 const COPY =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in dimension scores. Reload the page later and check the dimension scores in Full Playbook — Working Profiles before running it again. Run AI stays off on this page until you reload.";
 
-const RUN = "Run AI (csf_score)";
+// C11 (#736 6205956728): the button reads "Run AI". Testing Library matches
+// a role's name exactly, so the page's other "Run AI" controls do not match.
+const RUN = "Run AI";
 
 const ENTERPRISE = {
   tiers_in_use: ["moderate"],

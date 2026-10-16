@@ -21,6 +21,7 @@ import pytest
 
 from app.csf.catalog import SUBCATEGORIES
 from tests._ai_runs import csf_run_ai, csf_scores_by_batch
+from tests._csf_notes import note_every_answer
 from tests.unit.test_risk_csf_playbook_citable import _generate
 from tests.unit.test_risk_register import (  # noqa: F401  (app_client is a fixture)
     _admin,
@@ -48,6 +49,8 @@ def _playbook(
     assert a.status_code in (200, 201), a.text
     seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert seeded.status_code in (200, 201), seeded.text
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+    note_every_answer(sid)
 
     if score:
         from app.ai.llm import LLMClient

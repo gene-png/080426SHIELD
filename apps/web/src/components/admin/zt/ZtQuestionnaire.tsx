@@ -146,6 +146,7 @@ export function ZtQuestionnaire({
                         <ZtStagePicker
                           value={ans.maturity_stage}
                           stages={catalog.stages}
+                          maxStage={cap.max_stage}
                           disabled={readOnly}
                           ariaLabel={`Maturity stage for ${cap.code}`}
                           onChange={(next) => {
