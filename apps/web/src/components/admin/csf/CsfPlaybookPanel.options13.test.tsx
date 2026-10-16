@@ -9,12 +9,13 @@ import type { EnterpriseProfile } from "@/lib/csf/types";
 
 import { CsfPlaybookPanel } from "./CsfPlaybookPanel";
 
-/** CSF Options 1 and 3 through the panel: a subcategory with no scored tier
- * reads "Not scored" in Enterprise (never "Lnull"), and the C3 and E3 lines
- * state the API's counts, E3 only where evidence labels a level. The lines
- * are PLACEHOLDERS pending Gene's verbatim approval (#736 6204461502, with
- * the advisor's Q-A and E3 points in 6205425122 item 3); each is typed here,
- * never imported. Harness from CsfPlaybookPanel.unscored.test.tsx. */
+/** CSF Options 1 and 3 through the panel, in the text Gene approved (#736
+ * 6205956728): a subcategory with no scored tier reads "Not scored" in
+ * Enterprise (never "Lnull") with its C1 line, a scored one reads its level's
+ * name (C14), its tiers (C12) and its evidence (C8), and the C3 and E3 lines
+ * state the API's counts, E3 only where evidence labels a level. Every
+ * expected string is typed here, never imported. Harness from
+ * CsfPlaybookPanel.unscored.test.tsx. */
 vi.mock("@/lib/csf/client", () => ({
   CsfProxyError: class CsfProxyError extends Error {},
   fetchEnterpriseProfile: vi.fn(),
@@ -80,6 +81,7 @@ function row(code: string, over: Partial<Sub>): Sub {
     gap: false,
     priority: null,
     no_notes: false,
+    tier_evidence: { high: "on_file" },
     ...over,
   };
 }
@@ -156,11 +158,16 @@ describe("CsfPlaybookPanel, Options 1 and 3", () => {
     ent.mockResolvedValue(profile(false));
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     await screen.findByText("GV.OC-02");
-    expect(rowOf("GV.OC-01")).toHaveTextContent("L3"); // positive first
+    const scored = rowOf("GV.OC-01"); // positive first
+    expect(scored).toHaveTextContent("Defined");
+    expect(scored).toHaveTextContent("Evidence on file (High)");
     const cells = Array.from(rowOf("GV.OC-02").querySelectorAll("td")).map(
       (td) => td.textContent,
     );
     expect(cells).toContain("Not scored");
+    expect(rowOf("GV.OC-02")).toHaveTextContent(
+      "Self-reported, not validated: Tier 2 (Risk Informed). No notes, so not scored.",
+    );
     expect(cells.join(" ")).not.toMatch(/Lnull|L0\b|#null/);
   });
 });

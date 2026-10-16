@@ -24,7 +24,14 @@ import {
   RUBRIC_ROWS,
   type DimKey,
 } from "@/lib/csf/editorHelp";
-import { EVIDENCE_LABEL, EVIDENCE_OPTIONS } from "@/lib/csf/optionsCopy";
+import {
+  EVIDENCE_LABEL,
+  EVIDENCE_LEVEL_NOTE,
+  EVIDENCE_OPTIONS,
+  NOTIONAL_FROM_LEVEL,
+  levelName,
+  notionalCaveat,
+} from "@/lib/csf/optionsCopy";
 import type {
   CsfDimensionScore,
   CsfDimensionScorePatch,
@@ -122,6 +129,40 @@ function HowToScore(): JSX.Element {
         <p>{HELP_LOCK}</p>
       </div>
     </details>
+  );
+}
+
+/** C6 and E2 (#736 6205956728): the level line's note for the row's
+ * evidence value, and the notional caveat for a Managed or Optimized level
+ * with neither. */
+function EvidenceLevelNote({
+  row,
+}: {
+  row: CsfDimensionScore;
+}): JSX.Element | null {
+  const status = evidenceStatusOf(row);
+  const note = EVIDENCE_LEVEL_NOTE[status];
+  const notional = status === "neither" && row.level >= NOTIONAL_FROM_LEVEL;
+  if (!note && !notional) return null;
+  return (
+    <>
+      {note ? (
+        <span
+          className="ml-2 text-ink-tertiary"
+          data-testid="csf-level-evidence"
+        >
+          {note}
+        </span>
+      ) : null}
+      {notional ? (
+        <span
+          className="mt-1 block text-xs text-status-warning-fg"
+          data-testid="csf-level-notional"
+        >
+          {notionalCaveat(row.level)}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -304,9 +345,16 @@ export function CsfDimensionEditor({
                   {row.total}
                 </span>{" "}
                 · Level{" "}
-                <span className="font-semibold text-ink-primary">
-                  L{row.level}
+                <span
+                  className="font-semibold text-ink-primary"
+                  data-testid="csf-level-name"
+                >
+                  {levelName(row.level)}
                 </span>
+                {/* Only an assessment approved before Option 3 (rules 1 or
+                    2) is still capped, and keeps saying so. Every other
+                    row's level is the scores' alone, and C6 and E2 (#736
+                    6205956728) say what its evidence value means. */}
                 {row.evidence_capped ? (
                   <>
                     <span className="ml-2 text-status-warning-fg">
@@ -316,7 +364,9 @@ export function CsfDimensionEditor({
                       {CAPPED_NOTE}
                     </span>
                   </>
-                ) : null}
+                ) : (
+                  <EvidenceLevelNote row={row} />
+                )}
               </span>
               <label className="flex items-center gap-2">
                 <span className="text-ink-secondary">Target</span>
@@ -335,7 +385,7 @@ export function CsfDimensionEditor({
                   <option value="">—</option>
                   {[1, 2, 3, 4, 5].map((l) => (
                     <option key={l} value={l}>
-                      L{l}
+                      {levelName(l)}
                     </option>
                   ))}
                 </select>

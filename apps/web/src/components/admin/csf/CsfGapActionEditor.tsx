@@ -14,6 +14,7 @@ import {
   fetchGapActions,
   upsertGapAction,
 } from "@/lib/csf/client";
+import { levelName } from "@/lib/csf/optionsCopy";
 import type { CsfGapAction, CsfGapActionUpsert } from "@/lib/csf/types";
 
 import type { JSX } from "react";
@@ -152,14 +153,15 @@ export function CsfGapActionEditor({
                     {/* #1077 review, F2: a kept entry with nothing rolled up
                         (out of scope, or no scored tier: Option 1, #1073)
                         shows no level, never "L0" or "Lnull". */}
+                    {/* W2 (#736 6205956728): level names. */}
                     {a.enterprise_level !== null && a.enterprise_level > 0
-                      ? `L${a.enterprise_level}`
+                      ? levelName(a.enterprise_level)
                       : ""}
                     {/* F1: "Not measured", approved (#736 6127667643). */}
                     {a.target_not_measured === true
                       ? " → target Not measured"
                       : a.target_level
-                        ? ` → target L${a.target_level}`
+                        ? ` → target ${levelName(a.target_level)}`
                         : ""}{" "}
                     · priority{" "}
                     <span className="font-semibold text-ink-primary">

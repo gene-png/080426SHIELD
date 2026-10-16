@@ -30,7 +30,20 @@ import { RunAiGuard } from "../RunAiGuard";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
-import { coverageLine, evidenceLine } from "@/lib/csf/optionsCopy";
+import {
+  HAS_NOTES_NOT_SCORED,
+  NOT_SCORED,
+  OMITTED_ROWS_STAY,
+  PANEL_DESCRIPTION,
+  RUN_AI_LABEL,
+  coverageLine,
+  evidenceByTier,
+  evidenceLine,
+  levelName,
+  noNotesRunLine,
+  selfReportedLine,
+  tiersByLevel,
+} from "@/lib/csf/optionsCopy";
 import type {
   CsfDroppedSuggestion,
   CsfPlaybookExport,
@@ -244,9 +257,10 @@ function OmittedRows({
       data-testid="csf-run-omitted"
     >
       <p className="font-semibold">
+        {/* C5 (#736 6205956728): the second sentence. */}
         {count === 1
-          ? "1 row got no answer from the AI, so it keeps the scores it had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:"
-          : `${count} rows got no answer from the AI, so they keep the scores they had. On a Playbook that was not scored before, that is all zeros, which reads as Level 1. Re-run before relying on this draft:`}
+          ? `1 row got no answer from the AI, so it keeps the scores it had. ${OMITTED_ROWS_STAY} Re-run before relying on this draft:`
+          : `${count} rows got no answer from the AI, so they keep the scores they had. ${OMITTED_ROWS_STAY} Re-run before relying on this draft:`}
       </p>
       <ul className="list-disc pl-5">
         {rows.slice(0, ITEM_CAP).map((r) => (
@@ -261,11 +275,11 @@ function OmittedRows({
 }
 
 /**
- * #1000 (Gene's ruling 2): rows a LIVE run did not assess because their
- * interview answer has no notes. They keep their scores, so it is a count, not
- * an alert. Shown at zero too; absent when the run counted nothing (`null` on
- * an offline run, or a result stored before #1000). Copy approved on #1000,
- * comment 6102665946.
+ * #1000 (Gene's ruling 2), and C4 since CSF Option 1 (#736 6205956728): rows
+ * the run did not score because their interview answer has no notes, counted
+ * in every mode. They keep their scores, so it is a count, not an alert. Shown
+ * at zero too; absent when the run counted nothing (`null` on a result stored
+ * before #1000).
  */
 function NoNotesLine({
   result,
@@ -276,9 +290,7 @@ function NoNotesLine({
   if (typeof n !== "number") return null;
   return (
     <p className="text-sm text-ink-secondary" data-testid="csf-run-no-notes">
-      {n === 1
-        ? "Not assessed by AI (no notes): 1 row. It keeps the score it had."
-        : `Not assessed by AI (no notes): ${n} rows. They keep the scores they had.`}
+      {noNotesRunLine(n)}
     </p>
   );
 }
@@ -486,65 +498,81 @@ const PRIORITY_COLOR: Record<string, { bg: string; fg: string }> = {
   P3: { bg: "#f1f5f9", fg: "#475569" },
 };
 
-// #1031, copy approved verbatim (#736 6127667643): an unscored in-scope tier
-// reads "Not scored" and is never dropped, e.g. "H3 · M Not scored · L Not
-// scored". The separator is U+00B7 with a space each side.
-const NOT_SCORED = "Not scored";
+// #1031 (#736 6127667643): an in-scope tier nobody scored is never dropped;
+// since C12 (#736 6205956728) it reads "Not scored (Low)" among the tiers'
+// level names.
 const NOT_MEASURED = "Not measured";
 
-function tierLevels(row: EnterpriseSubcategory): string {
-  const order: [string, string][] = [
-    ["high", "H"],
-    ["moderate", "M"],
-    ["low", "L"],
-  ];
-  const unscored = row.unscored_tiers ?? [];
-  return order
-    .filter(([t]) => row.tier_levels[t] != null || unscored.includes(t))
-    .map(([t, abbr]) =>
-      unscored.includes(t)
-        ? `${abbr} ${NOT_SCORED}`
-        : `${abbr}${row.tier_levels[t]}`,
-    )
-    .join(" \u00b7 ");
+/** C1 (#736 6205956728): the line under the code. A subcategory with a
+ * level and notes carries none. One with a level and no notes keeps #1000's
+ * line: it is still true, and a live run still leaves it out. "Has a level",
+ * not `scored`: on an assessment approved before Option 1 an unscored
+ * subcategory keeps its delivered seed level, and is not called "not scored"
+ * beside it. */
+function subcategoryLine(r: EnterpriseSubcategory): string | null {
+  if (r.enterprise_level !== null) {
+    return r.no_notes === true
+      ? "No notes: a live AI run does not assess this row."
+      : null;
+  }
+  return r.no_notes === true
+    ? selfReportedLine(r.self_rating)
+    : HAS_NOTES_NOT_SCORED;
 }
 
 const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
   {
     key: "code",
     header: "Subcategory",
-    cell: (r) => (
-      <>
-        {r.subcategory_code}
-        {/* #1000: from CURRENT notes, present tense on purpose, so it stays
-            true when the stored score came from an earlier AI run. */}
-        {r.no_notes === true ? (
-          <span
-            className="block text-xs text-ink-tertiary"
-            data-testid="csf-row-no-notes"
-          >
-            No notes: a live AI run does not assess this row.
-          </span>
-        ) : null}
-      </>
-    ),
+    cell: (r) => {
+      // #1000: from CURRENT notes, present tense on purpose, so it stays true
+      // when the stored score came from an earlier AI run.
+      const line = subcategoryLine(r);
+      return (
+        <>
+          {r.subcategory_code}
+          {line !== null ? (
+            <span
+              className="block text-xs text-ink-tertiary"
+              data-testid="csf-row-no-notes"
+            >
+              {line}
+            </span>
+          ) : null}
+        </>
+      );
+    },
   },
   { key: "name", header: "Outcome", cell: (r) => r.name },
-  { key: "tiers", header: "Tiers", cell: (r) => tierLevels(r) },
+  {
+    key: "tiers",
+    header: "Tiers",
+    // C12; a subcategory with no scored tier has no tier levels at all.
+    cell: (r) =>
+      r.enterprise_level === null
+        ? NOT_SCORED
+        : tiersByLevel(r.tier_levels, r.unscored_tiers ?? []),
+  },
   {
     key: "ent",
     header: "Enterprise",
     align: "center",
-    // Option 1, #1073: a subcategory with no scored tier has no level.
+    // C2 and C14: a name, or "Not scored" for no scored tier (#1073).
     cell: (r) =>
-      r.enterprise_level === null ? NOT_SCORED : `L${r.enterprise_level}`,
+      r.enterprise_level === null ? NOT_SCORED : levelName(r.enterprise_level),
   },
   {
-    key: "rule",
-    header: "Rule",
-    align: "center",
-    cell: (r) => (r.rollup_rule === null ? "" : `#${r.rollup_rule}`),
+    key: "evidence",
+    header: "Evidence",
+    // C8: grouped by tier the way C12 groups levels.
+    cell: (r) =>
+      r.enterprise_level === null
+        ? NOT_SCORED
+        : r.tier_evidence
+          ? evidenceByTier(r.tier_evidence)
+          : "", // an API from before migration 0074 sends none
   },
+  // C13 (#736 6205956728): no Rule column here; the XLSX keeps it, in words.
   {
     key: "target",
     header: "Target",
@@ -553,7 +581,7 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
       r.target_not_measured === true
         ? NOT_MEASURED
         : r.target_level
-          ? `L${r.target_level}`
+          ? levelName(r.target_level)
           : "—",
   },
   {
@@ -561,6 +589,8 @@ const COLUMNS: DataTableColumn<EnterpriseSubcategory>[] = [
     header: "Gap",
     align: "center",
     cell: (r) => {
+      if (r.enterprise_level === null)
+        return <span className="text-ink-tertiary">{NOT_SCORED}</span>;
       if (r.target_not_measured === true)
         return <span className="text-ink-tertiary">{NOT_MEASURED}</span>;
       if (!r.gap) return <span className="text-ink-tertiary">—</span>;
@@ -755,8 +785,7 @@ export function CsfPlaybookPanel({
           <CardDescription>
             Tiered (HIGH / MODERATE / LOW) five-dimension scoring rolled up to
             one Enterprise level per subcategory via the weighted-floor rules.
-            AI suggests the dimensions; code computes every level, the cap, and
-            the roll-up.
+            {PANEL_DESCRIPTION}
           </CardDescription>
         </CardHeader>
         <CardBody className="flex flex-col gap-4">
@@ -800,7 +829,7 @@ export function CsfPlaybookPanel({
                   >
                     {busy === "run" || runInProgress
                       ? "Running…"
-                      : "Run AI (csf_score)"}
+                      : RUN_AI_LABEL}
                   </button>
                 )}
               </RunAiGuard>

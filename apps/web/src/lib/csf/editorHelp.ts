@@ -10,7 +10,9 @@
  *   in apps/api/app/csf/playbook.py;
  * - the level bands: `maturity_level` ("0-2 -> L1, 3-5 -> L2, 6-7 -> L3,
  *   8-9 -> L4, 10 -> L5");
- * - the evidence cap: `score_tier` (Implementation at most 1, level at most 2);
+ * - the evidence cap: `score_tier` (Implementation at most 1, level at most 2),
+ *   since CSF Option 3 only on an assessment approved under rules 1 or 2
+ *   (`csf/rules.py::evidence_cap_applies`); `CAPPED_NOTE` says it there;
  * - "Run AI never ticks this box": `_RUN_FIELDS` in apps/api/app/routes/csf.py
  *   is the five dimensions and `what_we_found`, and only
  *   `patch_dimension_score` writes `has_evidence`. If Gene rules that the
@@ -36,16 +38,19 @@ export const HELP_SCALE =
 export const HELP_LEVELS_INTRO =
   "The five scores add up to a total from 0 to 10, and the total sets the maturity level:";
 
+/** W1 (#736 6205956728): the bands by level name. */
 export const HELP_LEVEL_BANDS: readonly string[] = [
-  "0 to 2: L1",
-  "3 to 5: L2",
-  "6 to 7: L3",
-  "8 to 9: L4",
-  "10: L5",
+  "0 to 2: Ad hoc",
+  "3 to 5: Developing",
+  "6 to 7: Defined",
+  "8 to 9: Managed",
+  "10: Optimized",
 ];
 
+/** C7 (#736 6205956728). The frozen cap of an assessment approved before
+ * Option 3 is said beside its capped rows instead (`CAPPED_NOTE`). */
 export const HELP_EVIDENCE =
-  'Tick "Evidence on file" only when evidence for this subcategory and tier is held. Without it, Implementation counts as no more than 1 and the level cannot exceed L2, whatever the scores. Run AI never ticks this box, and a file the client attached to the questionnaire does not tick it either: a consultant has to.';
+  'Choose "Evidence on file" only when evidence for this subcategory and tier is held, or "Confirmed in discussion" when the client confirmed it with you but nothing is held. Neither changes the scores or the level. With "Neither", the level is shown as not validated by evidence, and a Managed or Optimized level is shown as notional. Run AI never sets this, and a file the client attached to the questionnaire does not set it either: a consultant has to.';
 
 export const HELP_TARGET =
   'Target is the level the client should reach for this subcategory in this tier. The Enterprise profile reads the in-scope tiers that have been scored, or every in-scope tier while none has been scored. It compares their rolled-up level, usually the lowest, with the highest target among them. Below the target is a gap. If none of them has a target, the subcategory is not checked for a gap: it is counted as "not measured" when another in-scope tier has a target, and as "with no target" otherwise, never as met.';
