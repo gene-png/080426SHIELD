@@ -170,6 +170,56 @@ def test_each_row_gets_the_single_confirms_own_audit_row(app_client) -> None:  #
     }
 
 
+def _audit_written(sessions, before: set, names_by_id: dict[str, str]) -> list[tuple]:
+    """Every audit row written since `before` (a set of ids), as (action,
+    target type, the target's NAME, details, actor): the target id differs
+    between two lists, the row it names does not."""
+    with sessions() as s:
+        rows = s.execute(select(AuditEntry)).scalars().all()
+        return sorted(
+            (
+                a.action,
+                a.target_type,
+                names_by_id.get(str(a.target_id), str(a.target_id)),
+                json.dumps(a.details, sort_keys=True),
+                str(a.actor_user_id),
+            )
+            for a in rows
+            if a.id not in before
+        )
+
+
+def _audit_ids(sessions) -> set:
+    with sessions() as s:
+        return set(s.execute(select(AuditEntry.id)).scalars())
+
+
+def test_one_bulk_confirm_writes_what_n_single_confirms_write(app_client) -> None:  # noqa: F811
+    """Parity, not a hand-typed expectation: the same two rows in two lists of
+    the same extraction, one list signed off row by row through the single
+    route, the other in one bulk call. Their audit trails must match row for
+    row; one list-level row in place of the per-row ones would differ."""
+    c, sessions, h, list_id, ids, _svc = _world(app_client)
+    other_list, other_ids, _other_svc = _extract_list(c, h, "Second portfolio")
+    picked = ["Tool HR", "Tool Old"]
+
+    before = _audit_ids(sessions)
+    for name in picked:
+        r = c.post(
+            f"/tech-debt/capability-items/{ids[name]}/security-classification/confirm",
+            headers=h,
+        )
+        assert r.status_code == 200, r.text
+    singles = _audit_written(sessions, before, {v: k for k, v in ids.items()})
+
+    before = _audit_ids(sessions)
+    assert _confirm(c, h, other_list, [other_ids[n] for n in picked]).status_code == 200
+    bulk = _audit_written(sessions, before, {v: k for k, v in other_ids.items()})
+
+    assert len(singles) == len(picked), singles  # POSITIVE CONTROL: one per row
+    assert bulk == singles
+
+
 def test_the_revision_moves_once(app_client) -> None:  # noqa: F811
     c, sessions, h, list_id, ids, svc_id = _world(app_client)
     before = _revision(sessions, list_id)

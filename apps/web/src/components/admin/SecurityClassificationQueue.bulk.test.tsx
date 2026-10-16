@@ -155,8 +155,15 @@ describe("SecurityClassificationQueue bulk confirm (#1174)", () => {
       "1 of the 3 selected rows do not need sign-off.",
     );
     expect(onUpdated).not.toHaveBeenCalled();
-    // The rows are still in the queue, unconfirmed.
-    expect(c.getByRole("checkbox", { name: "Select hr" })).toBeInTheDocument();
+    // The list prop is the parent's and never changes here, so "the rows are
+    // still listed" could not fail. What the component owns is the
+    // selection: it is kept, and the bulk confirm can be sent again.
+    await waitFor(() =>
+      expect(
+        c.getByRole("button", { name: "Not security: confirm 3" }),
+      ).toBeEnabled(),
+    );
+    expect(c.getByRole("checkbox", { name: "Select hr" })).toBeChecked();
   });
 
   it("disables every row's own controls while a bulk confirm is in flight", async () => {
@@ -183,8 +190,10 @@ describe("SecurityClassificationQueue bulk confirm (#1174)", () => {
     fireEvent.click(c.getByRole("button", { name: "Not security: confirm 3" }));
     await waitFor(() => expect(rowConfirms[0]).toBeDisabled());
     for (const b of rowConfirms) expect(b).toBeDisabled();
-    expect(c.getByRole("checkbox", { name: "Select hr" })).toBeDisabled();
-    finish(list([]));
+    // ...and they come back once the request has finished.
+    finish(list(NOT_SECURITY));
+    await waitFor(() => expect(rowConfirms[0]).toBeEnabled());
+    for (const b of rowConfirms) expect(b).toBeEnabled();
   });
 
   it("offers no selection on a locked list", () => {
