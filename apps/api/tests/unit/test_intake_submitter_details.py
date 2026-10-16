@@ -71,3 +71,26 @@ def test_submitter_equals_contact_without_an_override(app_client) -> None:  # no
     body = r.json()
     assert body["contact"]["is_override"] is False
     assert body["submitter"] == body["contact"]
+
+
+def test_submit_answers_with_the_submitter_too(app_client) -> None:  # noqa: F811
+    """The submit site sets `submitter` as well (review of 9e435608)."""
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    assert _patch(client, bearer, {"title": "Own Title"}).status_code == 200
+    r = client.post(
+        "/intake/submit",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={
+            "client": {
+                "legal_name": "Atlas Defense Solutions",
+                "primary_contact_name": "Dana Director",
+                "primary_contact_title": "Override Title",
+            },
+            "service_requests": [{"service_type": "consultation"}],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["contact"]["title"] == "Override Title"
+    assert body["submitter"]["title"] == "Own Title"

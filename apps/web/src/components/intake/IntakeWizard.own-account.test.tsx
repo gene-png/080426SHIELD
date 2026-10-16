@@ -93,6 +93,21 @@ function input(id: string): HTMLInputElement {
 }
 
 describe("IntakeWizard Step 3 under a primary-contact override (#1282)", () => {
+  it("never fills the own inputs from an override when the answer carries no submitter (review of 9e435608)", async () => {
+    const { submitter: _omitted, ...withoutSubmitter } =
+      overriddenState() as IntakeStateResponse & { submitter?: unknown };
+    void _omitted;
+    vi.mocked(intakeClient.fetchIntake).mockResolvedValue(
+      withoutSubmitter as IntakeStateResponse,
+    );
+    await openContactStep();
+    expect(input("title").value).not.toBe("Override Title");
+    expect(input("phone").value).not.toBe("555-0199");
+    expect(input("display_name").value).not.toBe("Dana Director");
+    // With no own details to show, the name falls back to the session's.
+    expect(input("display_name").value).toBe("Pat Own");
+  });
+
   it("shows the submitter's own details in their own inputs, not the override's", async () => {
     await openContactStep();
     expect(input("display_name").value).toBe("Pat Own");
@@ -110,6 +125,10 @@ describe("IntakeWizard Step 3 under a primary-contact override (#1282)", () => {
     const sent = JSON.stringify(
       vi.mocked(intakeClient.patchIntake).mock.calls.map((c) => c[0]),
     );
+    // What must appear first (review of 9e435608): the blurs did save, and
+    // what they saved is the submitter's own.
+    expect(sent).toContain("Pat Own");
+    expect(sent).toContain("Own Title");
     expect(sent).not.toContain("Dana Director");
     expect(sent).not.toContain("Override Title");
     expect(sent).not.toContain("555-0199");
