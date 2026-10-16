@@ -1,0 +1,12 @@
+{
+ "incident": "Control: what CI's xdist run must produce on a green suite -- every certified test reported once, by the identity pytest's junit writes (a class and a parametrized id among them). A skip and an xfail are accounted for, and the skip is named as not run (#689: a skip must not read as a run).",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "2 passed, 1 skipped, 0 xfailed"
+}

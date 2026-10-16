@@ -6635,3 +6635,27 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 - **"Released numbers never move" returns as a requirement at launch.** Track7's post-MVP note from #1044 carries it: any rule change made after real data arrives needs a freeze.
 
 **What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
+
+## D-113 — An agent merges a PR whose checks all pass; an extra-care PR needs the advisor's merge approval first
+
+**2026-10-16 UTC · governance, the merge rule** (Decision: Gene, directly in the coordinator session: "change the rule itself so PRs can be merged if they pass the checks", then "update the rule so that extra care files go to the advisor to review and approve and merge". Shaped by the advisor's rulings on #736: 6207034866, 6207058275 and 6207123538.)
+
+**The decision.**
+
+- **Plain PRs.** An agent merges a PR, pinned to its head (`--match-head-commit`; see auto-merge below), once:
+  - every check on that head has finished green, required or not;
+  - the adversarial reviewer has run on that head;
+  - every existing-test edit, user-facing string and prompt in it carries an advisor approval naming its hash or its text.
+- **Extra-care PRs.** A PR tripping condition 4 (migration), 5 (the path list) or 6 (client content) also needs an advisor merge approval: a #736 comment naming the PR and its exact head SHA, posted after the advisor's own review of that head.
+  - The coordinator then merges at exactly that head and posts the merge SHA.
+  - If the head moves, the approval lapses.
+  - The agent that built a PR never approves it.
+- **The red-by-design gates.** "Merge rule text" and "compose content changed" go red when they report a CHANGE (exit 1). That red is the extra-care trigger, cleared only by the advisor approval. A red that means the gate could not look (exit 2) is a defect, and nobody clears it.
+- **Condition 3.** Status documents are updated in a batched docs-only PR, not in every PR (6202079854).
+- **Roles.** Who the advisor and coordinator are is the `## Current roles` table at the top of #736's description. CLAUDE.md names no session id, because ids change at every handover. Sessions can share a GitHub account, so a header is a convention, not proof of identity.
+- **Self-protection.** The merge-rule section, the reviewer-exception bullet in Rules of the road, the D-records that change either, and `.claude/agents/**` are condition-5 paths. A PR cannot clear itself under a rule it rewrites (#572).
+- **Oversight.** The advisor audits every merge afterwards. Branch protection and the required checks are never bypassed or edited.
+
+**Auto-merge, with a head guard** (Gene, #736 6207756046 item 1). The command is `gh pr merge --squash --auto --match-head-commit <sha>`. It is enabled only after the reviewer has run at that head and every non-required gate has finished green, and on an extra-care PR only after the advisor's approval at that SHA. The first draft dropped `--auto`, because auto-merge waits only for REQUIRED checks and might merge a later, unreviewed push. Gene chose to keep it, with those preconditions and the head guard. **As first written, until the guard was proven** by a throwaway PR showing that a later push does not merge, merges were done by hand with `--match-head-commit`. The probe never ran; instead the rule now says a push after auto-merge is enabled disables it at once, with re-review and re-enabling only at the new head. On 2026-10-16 that probe could not run, because the repository's "Allow auto-merge" setting is off. Later that day Gene turned the setting on ("allow auto merge if all checks are passed and the adversarial review also passed"), and auto-merge has since been used at advisor-approved heads, read with `gh pr view <n> --json headRefOid`. **When a main run goes red, merging pauses** until the cause is named and fixed: no merge by hand, and pending auto-merge requests are disabled. **Why the coordinator clicks:** Gene's words were "go to the advisor to review and approve and merge"; the advisor's permission system refuses its merge calls, so it decides and the coordinator merges at exactly the approved SHA (#736 6207058275).
+
+**What would reopen this:** an extra-care PR merged without an advisor approval naming its head, or a plain merge that should have been extra care.

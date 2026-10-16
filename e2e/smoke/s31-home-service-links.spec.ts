@@ -32,6 +32,30 @@ test("client home: every service card is a link, routed by its own phase", async
   page,
 }) => {
   await signIn(page, CLIENT_EMAIL, CLIENT_PASSWORD);
+
+  // The spec MINTS the in-progress service it routes rather than relying on
+  // one. Every seeded Atlas service is released; serially, s3 (which sorts
+  // first) had already started self-assessments in Atlas, so "In progress" was
+  // always there. Under sharding s31 ran on a fresh seed without s3 and failed
+  // (#680, shard 3/4 of run 38176987278). CLAUDE.md: seed the precondition,
+  // don't depend on another spec for it. Started as the client does, through
+  // the proxy route /assessments posts to; the service opens with a v1 DRAFT.
+  const started = await page.request.post("/api/proxy/intake/assessments", {
+    data: { service_type: "zero_trust_dod", zt_target_stage: 2 },
+  });
+  expect(
+    started.ok(),
+    `start a self-assessment (${started.status()})`,
+  ).toBeTruthy();
+  const mine = (await started.json()) as {
+    service_id: string;
+    service_type: string;
+    assessment_status: string | null;
+  };
+  expect(mine.assessment_status, "a just-started self-assessment").toBe(
+    "draft",
+  );
+
   await page.goto("/home");
 
   const heading = page.getByRole("heading", { name: "Your services" });
@@ -39,6 +63,13 @@ test("client home: every service card is a link, routed by its own phase", async
 
   // The grid is the <ul> that follows the section heading.
   const cards = page.locator("section", { has: heading }).locator("li");
+  // The minted card is on the page before the grid is read: the positive
+  // state first, so the count below is not taken mid-render.
+  await expect(
+    cards.locator(
+      `a[href="/self-assessment/${mine.service_id}?type=${mine.service_type}"]`,
+    ),
+  ).toHaveCount(1);
   const count = await cards.count();
   expect(
     count,
@@ -81,10 +112,10 @@ test("client home: every service card is a link, routed by its own phase", async
     }
   }
 
-  // The seeded tenant carries both phases; if it stops doing so the routing
-  // above would silently go unexercised, so pin that too.
+  // Both phases must have been exercised, or the routing above went
+  // unchecked: the seed carries the released one, this test minted the other.
   expect(sawReportReady, "seed should include a released service").toBe(true);
-  expect(sawInProgress, "seed should include an in-progress service").toBe(
+  expect(sawInProgress, "the minted service should read in progress").toBe(
     true,
   );
 });
