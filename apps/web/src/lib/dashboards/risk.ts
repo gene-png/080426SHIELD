@@ -85,6 +85,12 @@ export interface RiskDashboardData {
    */
   zt_capped_target_note?: string | null;
   /**
+   * #1343: the API's own lines (`risk/zt_target_origin.py`), one per ZT
+   * finding whose target has no recorded origin, rendered as given. Absent or
+   * empty when none.
+   */
+  zt_unrecorded_target_notes?: string[];
+  /**
    * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
    * as given. Null when the register has no CSF findings.
    */

@@ -461,6 +461,13 @@ export interface RiskRegister {
   /** #915 (S3): the API's own sentence built from it, rendered as given. */
   zt_capped_target_note?: string | null;
   /**
+   * #1343: per ZT source, the finding codes whose target has no recorded
+   * origin. Null when not recorded.
+   */
+  unrecorded_target_codes?: Record<string, string[]> | null;
+  /** #1343: the API's own lines, `{code}: <sentence>`, rendered as given. */
+  zt_unrecorded_target_notes?: string[];
+  /**
    * #474 D': the API's own CSF source note (`risk/csf_source.py`), rendered
    * as given. Null when the register has no CSF findings.
    */
