@@ -41,6 +41,7 @@ from app.ai.runs import (
 from app.attack import added_since_base, scenario, scenario_intent
 from app.attack.citations import Candidate
 from app.attack.computed import awaiting_review_sentence
+from app.attack.pending import row_tools
 from app.attack.rules import parents_computed
 from app.audit import audit
 from app.config import get_settings
@@ -552,8 +553,14 @@ def create_scenario(
         raise _refuse(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_empty_change", EMPTY_MESSAGE
         ) from exc
+    # #1080: every name `covers` is asked about here, the base rows' tools,
+    # redacted in the same one call as the removals.
     spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
+        removed,
+        client_org_name=client.legal_name,
+        redaction_mode=mode,
+        name_hints=hints,
+        also=[t for r in base_rows for t in row_tools(r)],
     )
     affected = sorted(
         set(scenario.affected_codes(base_rows, spellings))
@@ -1163,10 +1170,20 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # Every spelling of a removed tool goes, the redacted one included (F2),
     # from what the model is offered AND from what the resolver may confirm,
     # so a removed tool the AI names anyway is counted, never credited.
-    spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
-    )
     membership = _client_capability_membership(db, ctx.client_id)
+    # #1080: every name `covers` is asked about below -- the base rows' tools
+    # and the client's offered tools -- redacted in the same one call as the
+    # removals (through the redaction child: this build carries hints).
+    spellings = scenario.removed_spellings(
+        removed,
+        client_org_name=client.legal_name,
+        redaction_mode=mode,
+        name_hints=hints,
+        also=[
+            *(t for r in base_rows for t in row_tools(r)),
+            *(p.capability.name for p in membership.sent),
+        ],
+    )
     kept_offers = [p for p in membership.sent if not spellings.covers(p.capability.name)]
     kept = [p.capability for p in kept_offers]
     indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
