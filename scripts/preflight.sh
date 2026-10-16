@@ -36,8 +36,10 @@
 #   --unit full      CI's whole unit selection, under CI's own options. Only in a
 #                    hold the coordinator has scheduled for it.
 #   --pr N           an open PR: its real closing links are fetched with `gh`.
-#                    Without it the linked set is taken as EMPTY, and the summary
-#                    says so.
+#                    Without it the close guard runs WITHOUT --linked (GitHub's
+#                    answer does not exist yet), and the summary says the linked
+#                    closes are NOT VERIFIED. With it, the set comes from the
+#                    PR's LIVE body, not your drafted one.
 #   --base REF       default origin/main
 #
 # Take a container slot first (see the track brief); this starts one container
@@ -150,8 +152,9 @@ cp "$BODY" "$T/in/body"
 # base is already an ancestor); a branch behind main is then tested with main's
 # newer gates, as CI will test it. A conflict is could-not-look.
 git -C "$T/repo" -c user.email=preflight@example.invalid -c user.name=preflight \
-  merge -q --no-edit "refs/remotes/origin/$BASE_BRANCH" > /dev/null 2>&1 || {
-  echo "$P COULD NOT LOOK -- $BASE does not merge cleanly into HEAD; merge it in first" >&2
+  merge -q --no-edit "refs/remotes/origin/$BASE_BRANCH" > "$T/merge.log" 2>&1 || {
+  echo "$P COULD NOT LOOK -- merging $BASE into HEAD failed; git said:" >&2
+  sed 's/^/  /' "$T/merge.log" >&2
   exit 2
 }
 MERGED_TREE="$(git -C "$T/repo" rev-parse 'HEAD^{tree}')"
@@ -185,6 +188,7 @@ fi
 
 # Paths handed to python, a native Windows executable under Git Bash, are in
 # the mixed form: an MSYS path reaches it as \tmp\... and does not resolve.
+command -v python > /dev/null 2>&1 || { echo "$P COULD NOT LOOK -- python is not on PATH" >&2; exit 2; }
 python "$TM/repo/apps/api/scripts/preflight_plan.py" --root "$TM/repo" --out "$TM/plan" \
   --base-branch "$BASE_BRANCH" --pr-number "$PR" --unit "$UNIT" "${NARROW[@]}" > /dev/null
 
@@ -267,22 +271,29 @@ if grep -q "^PREFLIGHT-SETUP-FAILED" "$LOG"; then
   exit 2
 fi
 
-# The web checks, by their own route, against the same committed tree.
+# The web checks, by their own route, against the SAME MERGED CLONE: the
+# prettier version from its lockfile, and verify-in-worktree.sh run from inside
+# it, so it mounts the clone. Only `packages/*/node_modules` comes from this
+# worktree's primary tree, as verify-in-worktree.sh always takes it.
 glob="$(python -c "import json,re,sys; s=json.load(open(sys.argv[1]))['scripts']['format:check']; m=re.fullmatch(r'prettier --check \"([^\"]+)\"', s); print(m.group(1) if m else '')" "$TM/repo/package.json")"
 [ -n "$glob" ] || { echo "$P COULD NOT LOOK -- package.json's format:check is not \`prettier --check \"<glob>\"\`" >&2; exit 2; }
-v="$(bash scripts/prettier-hook.sh --print-version)" || { echo "$P COULD NOT LOOK -- could not read prettier's version from the lockfile" >&2; exit 2; }
+v="$(cd "$T/repo" && bash scripts/prettier-hook.sh --print-version)" || { echo "$P COULD NOT LOOK -- could not read prettier's version from the lockfile" >&2; exit 2; }
+PRIMARY_TREE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 set +e
 command -v npx > /dev/null 2>&1 || { echo "$P COULD NOT LOOK -- npx is not on PATH, so prettier cannot run" >&2; exit 2; }
 (cd "$T/repo" && npx -y "prettier@$v" --check "$glob") > "$T/prettier.log" 2>&1
 prc=$?
 # eslint, tsc and vitest take minutes. A NARROW run skips them when the branch
-# touches nothing they read, and says so; FULL always runs them.
+# touches nothing they read, and says so; FULL always runs them. The diff goes
+# to a FILE first: `git diff | grep -q` under pipefail reads git's SIGPIPE as
+# "no match" on a large diff, and would skip the checks on a web change.
+git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$T/changed.txt" || { echo "$P COULD NOT LOOK -- git diff failed" >&2; exit 2; }
 web_note="eslint, tsc, vitest"
-if [ "$UNIT" = "narrow" ] && ! git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE '^(apps/web/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'; then
+if [ "$UNIT" = "narrow" ] && ! grep -qE '^(apps/web/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)' "$T/changed.txt"; then
   wrc="-"
   web_note="NOT RUN: NARROW, and the branch changes nothing under apps/web, packages or the pnpm files"
 else
-  bash scripts/verify-in-worktree.sh > "$T/web.log" 2>&1
+  (cd "$T/repo" && SHIELD_PRIMARY_TREE="$PRIMARY_TREE" bash scripts/verify-in-worktree.sh) > "$T/web.log" 2>&1
   wrc=$?
 fi
 set -e

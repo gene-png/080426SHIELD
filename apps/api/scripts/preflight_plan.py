@@ -246,11 +246,15 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                 # GitHub runs an EXPLICIT `shell: bash` as `bash -eo pipefail`,
                 # the default as `bash -e`; the runner reads this marker.
                 pipefail = shell is not None and str(shell) == "bash"
-                if pr_number == "0" and _LINKED.search(script):
+                if pr_number == "0" and "--linked" in script:
                     # Before a PR exists GitHub links nothing, and an empty set
                     # would read as "verified: closes nothing". The flag is
                     # dropped and the step says so; the prose check still runs.
                     script = _LINKED.sub("", script)
+                    if "--linked" in script:
+                        # A respelling (`--linked=FILE`) the pattern missed would
+                        # run against an empty set and print "verified".
+                        raise CouldNotLook(f"{where}: a --linked this planner cannot remove")
                     label += " [NO PR: --linked dropped, GitHub's linked set NOT verified]"
                 if unit == "narrow" and UNIT_STEP.match(script.strip()):
                     unit_steps += 1

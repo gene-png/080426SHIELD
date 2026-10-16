@@ -305,8 +305,10 @@ def test_bad_usage_is_could_not_look(argv: list[str], capsys) -> None:
     assert "COULD NOT LOOK" in capsys.readouterr().err
 
 
-GUARD = """\
-    on: pull_request
+# RAW, so the backslash continuations reach the planner as the workflow has them
+# (review of d4ace8ef: a plain string folded them away, and the pattern's
+# continuation branch was never exercised).
+GUARD = r"""    on: pull_request
     jobs:
       j:
         runs-on: ubuntu-latest
@@ -326,7 +328,33 @@ def test_before_a_pr_exists_the_close_guard_runs_without_linked_and_says_so(tmp_
     (name,) = [n for n in step if n.startswith("close guard")]
     assert "NOT verified" in name
     assert "--linked" not in step[name]["script"]
+    # The continuation before --linked goes with it: no dangling backslash.
     assert step[name]["script"].rstrip().endswith("--title /tmp/t.txt"), step[name]["script"]
+
+
+def test_the_real_close_guard_step_loses_linked_and_nothing_else() -> None:
+    wf = find_workflows_dir(Path(__file__).resolve())
+    assert wf is not None, "no .github/workflows above this file: run from a full checkout"
+    without = [
+        s for s in pp.plan(wf.parent.parent, "main", "0", "full", []) if "NOT verified" in s["name"]
+    ]
+    with_pr = {s["name"]: s for s in pp.plan(wf.parent.parent, "main", "5", "full", [])}
+    assert len(without) == 1, [s["name"] for s in without]
+    step = without[0]
+    original = with_pr[step["name"].split(" [NO PR")[0]]["script"]
+    assert "--linked /tmp/pr_linked.txt" in original
+    assert "--linked" not in step["script"]
+    assert not step["script"].rstrip().endswith("\\"), step["script"]
+    # Everything else in the command is untouched.
+    assert [ln.strip(" \\") for ln in original.splitlines() if "--linked" not in ln] == [
+        ln.strip(" \\") for ln in step["script"].splitlines()
+    ]
+
+
+def test_a_linked_the_pattern_cannot_remove_is_could_not_look(tmp_path: Path) -> None:
+    root = _repo(tmp_path, **{"ci.yml": GUARD.replace("--linked /tmp", "--linked=/tmp")})
+    with pytest.raises(pp.CouldNotLook, match="a --linked this planner cannot remove"):
+        pp.plan(root, "main", "0", "full", [])
 
 
 def test_with_a_pr_the_close_guard_keeps_linked(tmp_path: Path) -> None:

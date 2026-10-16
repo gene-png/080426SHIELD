@@ -128,14 +128,26 @@ check "advisory failure"      advisory 0 "preflight: PASS at"           ""      
 check "e2e stays on GitHub"   pass     0 "github"                       ""               "${ARGS[@]}"
 check "no title"              pass     2 "--title"                      "preflight: PASS" --body "$TMP/body"
 check "unknown flag"          pass     2 "unknown argument"             "preflight: PASS" "${ARGS[@]}" --bogus
-# The web checks count: prettier always; eslint/tsc/vitest under --unit full.
+# The web checks count: prettier always; eslint/tsc/vitest unless a NARROW run
+# finds no web change (this fixture has none, so --unit full forces them).
 STUB_PRETTIER_RC=1 check "prettier failed" pass 1 "preflight: FAIL at" "preflight: PASS" "${ARGS[@]}"
 STUB_WEB_RC=1 check "web checks failed" pass 1 "preflight: FAIL at" "preflight: PASS" "${ARGS[@]}" --unit full
 STUB_WEB_RC=2 check "web could not look" pass 2 "preflight: COULD-NOT-LOOK" "preflight: PASS" "${ARGS[@]}" --unit full
 check "narrow skips web, and says so" pass 0 "eslint/tsc/vitest NOT RUN" "" "${ARGS[@]}"
 # CI tests the MERGE with the base: a base that conflicts with HEAD is
 # could-not-look; one that merges cleanly is merged in, and the summary says so.
-check "the base is merged in" pass 0 "(the tree under test)" "" "${ARGS[@]}"
+# A base that moved on with a NEW GATE: the merged plan must run it, as CI's
+# merge checkout would (review of d4ace8ef: a no-op merge proved nothing).
+BASE0="$(git -C "$REPO" rev-parse refs/remotes/origin/main)"
+git -C "$REPO" checkout -q -b ahead "$BASE0"
+sed -i 's/^      - name: first gate$/      - name: a gate only main has\n        run: python -m scripts.check_b\n      - name: first gate/' "$REPO/.github/workflows/ci.yml"
+grep -q "a gate only main has" "$REPO/.github/workflows/ci.yml" || { echo "FAIL: could not look -- the base's new gate was not written" >&2; exit 2; }
+git -C "$REPO" -c commit.gpgsign=false commit -qam "main adds a gate"
+git -C "$REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$REPO" checkout -q -
+check "the base's new gate runs" pass 0 "a gate only main has" "" "${ARGS[@]}"
+git -C "$REPO" update-ref refs/remotes/origin/main "$BASE0"
+check "without it, it does not" pass 0 "preflight: PASS at" "a gate only main has" "${ARGS[@]}"
 git -C "$REPO" checkout -q -b conflicting refs/remotes/origin/main
 mkdir -p "$REPO/apps/api/tests/unit"
 printf 'base side\n' > "$REPO/apps/api/tests/unit/test_x.py"
@@ -143,8 +155,8 @@ git -C "$REPO" add -A
 git -C "$REPO" -c commit.gpgsign=false commit -qm "base adds test_x differently"
 git -C "$REPO" update-ref refs/remotes/origin/main HEAD
 git -C "$REPO" checkout -q -
-check "base conflicts with HEAD" pass 2 "does not merge cleanly" "preflight: PASS" "${ARGS[@]}"
-git -C "$REPO" update-ref refs/remotes/origin/main conflicting~1
+check "base conflicts with HEAD" pass 2 "merging origin/main into HEAD failed" "preflight: PASS" "${ARGS[@]}"
+git -C "$REPO" update-ref refs/remotes/origin/main "$BASE0"
 printf 'x\n' >> "$REPO/apps/api/tests/unit/test_x.py"
 check "a dirty tree"          pass     2 "uncommitted"                  "preflight: PASS" "${ARGS[@]}"
 git -C "$REPO" checkout -q -- apps/api/tests/unit/test_x.py
