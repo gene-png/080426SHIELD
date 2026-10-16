@@ -223,7 +223,11 @@ const TWO_CHANGED = [
   { technique_code: "T1003" },
 ] as unknown as AttackRunAiResponse["changed"];
 
-function loadCompleted(appliedCount: number, batchesFailed: number) {
+function loadCompleted(
+  appliedCount: number,
+  batchesFailed: number,
+  reaskBatchesFailed = 0,
+) {
   const done = run({
     status: "completed",
     finished_at: "2026-10-01T12:10:00Z",
@@ -232,6 +236,7 @@ function loadCompleted(appliedCount: number, batchesFailed: number) {
       tools_available: 2,
       changed: TWO_CHANGED,
       batches_failed: batchesFailed,
+      reask_batches_failed: reaskBatchesFailed,
     }),
   });
   m.fetchLatestAssessment.mockResolvedValue(draftAfterOfflineRun());
@@ -251,6 +256,13 @@ describe("AttackWorkspace: the Mapping done line's counts (#1182)", () => {
 
   it("adds the mappable catalog total when a batch failed", async () => {
     loadCompleted(5, 1);
+    expect(await screen.findByTestId("attack-mapping-done")).toHaveTextContent(
+      /^Mapping done for 2 tools across 5 of 6 ATT&CK techniques and sub-techniques\.$/,
+    );
+  });
+
+  it("adds the total when only a re-ask batch failed (A4 option (b))", async () => {
+    loadCompleted(5, 0, 1);
     expect(await screen.findByTestId("attack-mapping-done")).toHaveTextContent(
       /^Mapping done for 2 tools across 5 of 6 ATT&CK techniques and sub-techniques\.$/,
     );

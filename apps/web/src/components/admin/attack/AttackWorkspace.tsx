@@ -984,7 +984,10 @@ export function AttackWorkspace({
                 <AttackMappingDone
                   toolsAvailable={runResult.tools_available}
                   techniquesMapped={aiRun.lastCompleted.applied_count}
-                  batchesFailed={runResult.batches_failed ?? 0}
+                  batchesFailed={
+                    (runResult.batches_failed ?? 0) +
+                    (runResult.reask_batches_failed ?? 0)
+                  }
                   catalog={catalog.techniques}
                 />
               ) : runResult ? (

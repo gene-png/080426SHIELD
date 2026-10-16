@@ -48,6 +48,12 @@ function line(props: Partial<Parameters<typeof AttackMappingDone>[0]>) {
 }
 
 describe("AttackMappingDone (#1182)", () => {
+  it("says tool, not tools, for one (advisor 6220638526 item 5)", () => {
+    expect(line({ toolsAvailable: 1 })).toBe(
+      "Mapping done for 1 tool across 2 ATT&CK techniques and sub-techniques.",
+    );
+  });
+
   it("states the tools and the techniques the run covered", () => {
     expect(line({})).toBe(
       "Mapping done for 3 tools across 2 ATT&CK techniques and sub-techniques.",

@@ -6,8 +6,9 @@ import type { CatalogTechnique } from "@/lib/attack/types";
  * #1182, Gene's 2026-10-15 test-run item 14: what the run covered, in place of
  * "Updated N fields across M techniques". `techniquesMapped` is the run's
  * applied count (`ai_runs.applied_count`: techniques the AI gave a status to),
- * not the changed ones. "of {total}" shows only when a batch failed, and the
- * total is the MAPPABLE catalog count -- every technique that is not a
+ * not the changed ones. "of {total}" shows only when a batch failed, first
+ * pass or re-ask (`batchesFailed` is their sum, advisor 6220638526 item 5,
+ * A4 option (b)), and the total is the MAPPABLE catalog count -- every technique that is not a
  * computed parent, the codes `mitre_map` is asked about -- derived from the
  * catalog, never typed (advisor, #736 comment 6216024281). The workspace
  * renders this only once the catalog has loaded, so the catalog is required.
@@ -38,7 +39,7 @@ export function AttackMappingDone({
       aria-live="polite"
       data-testid="attack-mapping-done"
     >
-      {`Mapping done for ${n(toolsAvailable)} tools across ${across} ATT&CK techniques and sub-techniques.`}
+      {`Mapping done for ${n(toolsAvailable)} ${toolsAvailable === 1 ? "tool" : "tools"} across ${across} ATT&CK techniques and sub-techniques.`}
     </p>
   );
 }
