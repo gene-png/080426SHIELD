@@ -201,13 +201,22 @@ export interface CsfDimensionScore {
   in_scope: boolean;
   rationale: string | null;
   what_we_found: string | null;
+  /** Three values since migration 0075; none changes `level` (Option 3).
+   * Optional so an older API parses: read it through `evidenceStatusOf`. */
+  evidence_status?: CsfEvidenceStatus;
+  /** `evidence_status === "on_file"`, kept for older readers. */
   has_evidence: boolean;
   target_level: number | null;
   locked: boolean;
   total: number;
   level: number;
+  /** True only on an assessment approved before Option 3, where the frozen
+   * evidence cap changed this row. */
   evidence_capped: boolean;
 }
+
+export type CsfEvidenceStatus =
+  "on_file" | "confirmed_in_discussion" | "neither";
 
 export interface CsfProfile {
   tier: string;
@@ -223,7 +232,7 @@ export interface CsfDimensionScorePatch {
   in_scope?: boolean;
   rationale?: string | null;
   what_we_found?: string | null;
-  has_evidence?: boolean;
+  evidence_status?: CsfEvidenceStatus;
   target_level?: number | null;
   locked?: boolean;
 }
@@ -233,11 +242,19 @@ export interface EnterpriseSubcategory {
   name: string;
   function: string;
   tier_levels: Record<string, number>;
-  enterprise_level: number;
-  rollup_rule: number;
+  /** null when no in-scope tier is scored (Option 1, #1073): no level, no gap. */
+  enterprise_level: number | null;
+  rollup_rule: number | null;
   target_level: number | null;
   gap: boolean;
   priority: string | null;
+  /** At least one in-scope tier has a recorded value besides its target.
+   * This and the next two are optional so an older API parses. */
+  scored?: boolean;
+  /** The client's self-rating (1-4) on the current answer, or null. */
+  self_rating?: number | null;
+  /** Per rolled-up tier, its `evidence_status`. */
+  tier_evidence?: Record<string, CsfEvidenceStatus>;
   /**
    * #1000: the subcategory's interview answer has no notes, so a LIVE run does
    * not assess its rows. From current notes, at read time. Read as
@@ -256,9 +273,42 @@ export interface EnterpriseSubcategory {
   target_not_measured?: boolean;
 }
 
+/** The C3 counts: scored + notes_not_scored + self_reported + not_answered
+ * === total. The E3 counts are over the scored subcategories:
+ * evidence_on_file + evidence_confirmed + evidence_neither + evidence_mixed
+ * === scored (`csf/enterprise.py::coverage`). */
+export interface CsfCoverage {
+  total: number;
+  scored: number;
+  notes_not_scored: number;
+  self_reported: number;
+  not_answered: number;
+  evidence_on_file: number;
+  evidence_confirmed: number;
+  evidence_neither: number;
+  evidence_mixed: number;
+  notional: number;
+}
+
+/** A row's evidence value. An API from before migration 0075 sends only
+ * `has_evidence`, whose two values 0075 mapped onto `on_file` and `neither`;
+ * this reads them the same way, never as a third value. */
+export function evidenceStatusOf(row: {
+  evidence_status?: CsfEvidenceStatus;
+  has_evidence: boolean;
+}): CsfEvidenceStatus {
+  return row.evidence_status ?? (row.has_evidence ? "on_file" : "neither");
+}
+
 export interface EnterpriseProfile {
   tiers_in_use: string[];
   subcategories: EnterpriseSubcategory[];
+  /** The C3 counts. Optional so an older API parses; rendered only when present. */
+  coverage?: CsfCoverage;
+  /** True on an assessment approved before Option 3, whose levels the frozen
+   * evidence cap still limits (`csf/rules.py::evidence_cap_applies`). The E3
+   * line renders only on `false`, so an older API that omits it shows none. */
+  evidence_cap?: boolean;
   /**
    * #852: Working Profile rows kept on a subcategory the catalog no longer
    * has, not rolled up, with the API's approved sentence (`csf/retired.py`).
@@ -366,7 +416,7 @@ export interface CsfGapAction {
   subcategory_code: string;
   name: string;
   function: string;
-  enterprise_level: number;
+  enterprise_level: number | null;
   target_level: number | null;
   /** Code-computed default from gap_priority() via the Enterprise roll-up. */
   default_priority: string | null;
