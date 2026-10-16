@@ -153,6 +153,8 @@ export function IntakeWizard(): JSX.Element {
     if (Object.keys(entered).length > 0) {
       setEnteredClient((prev) => ({ ...prev, ...entered }));
     }
+    // Discarded on purpose: a throw from `onUpdate` is re-thrown by the hook
+    // and so surfaces here as an unhandled rejection, loudly (#1093 item 2).
     void autoSave.save(patch);
   }
 

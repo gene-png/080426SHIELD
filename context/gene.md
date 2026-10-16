@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-16 (track T5): #1262, the /intake residual (tier-1)._ An admin working in /intake while a workspace for another client was open in a second tab could save that intake's fields, upload its documents and submit it under the other client. The intake page now sticks to the client it loaded. It comes back to you: condition 5.
+_2026-10-16 (track T5): #1093 item 2, a save answered 2xx is no longer shown as "Network error."._ If a save's success answer cannot be read (only possible from something in front of the app, such as a network sign-in page), the intake now says it could not confirm the save. The typed value stays on screen for the organization and systems fields; a contact-step field shows what the server holds when the step reopens. A bug in the wizard's own state update now shows up loudly instead of as a failed save. It comes back to you: condition 5.
 
 _2026-10-16 (coordinator, session_018WJ…): D-113, the merge rule, at your instruction._ An agent merges a PR once every check on its head has finished green and the reviewer has run on that head, with auto-merge and a head guard at the guarded head (you turned the repository's "Allow auto-merge" setting on on 2026-10-16; a push after it is enabled disables it until re-review). Anything with a migration, an extra-care path or client-facing content first needs the advisor's merge approval naming its head SHA, and then the coordinator merges at exactly that head. Status docs are batched. You can still merge anything yourself.
 

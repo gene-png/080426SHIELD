@@ -50,10 +50,18 @@ export async function patchIntake(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const payload = await safeJson(res);
   if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as IntakeStateResponse;
+  // #1093 item 2: a 2xx whose body is not JSON. Thrown with its status, so
+  // the caller can tell it from no answer at all; a bare parse error carried
+  // none and read as "Network error.". The proxy never sends one, so the hook
+  // calls its outcome unknown.
+  if (typeof payload === "string") {
+    throw new ProxyError(res.status, payload);
+  }
+  return payload as IntakeStateResponse;
 }
 
 export async function submitIntake(

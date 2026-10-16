@@ -79,6 +79,14 @@ function hasApiEnvelope(err: unknown): boolean {
 function fallbackFor(err: unknown, kept: boolean): string {
   const status = statusOf(err);
   if (status === null) return "Network error.";
+  // #1093 item 2, review of e85890b3: a 2xx we cannot attribute to the api.
+  // Our proxy answers every 2xx with JSON, and an unreadable api 2xx already
+  // arrives as the typed 504, so this came from something in front of the app
+  // (a captive portal, a proxy's block page, a sign-in interstitial) and the
+  // PATCH may never have arrived. Not "a write that landed with an unreadable
+  // answer", the issue's first framing, which does not survive that trace.
+  // Unknown, never "Saved" and never "Network error.".
+  if (status >= 200 && status < 300) return UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
   if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
   if (status >= 500 && status < 600) {
     return hasApiEnvelope(err)
@@ -149,11 +157,10 @@ export function useIntakeAutoSave(
       pending.current += 1;
       setSavesInFlight((n) => n + 1);
       publish();
+      let next: IntakeStateResponse;
       try {
-        const next = await patchIntake(patch, clientId);
+        next = await patchIntake(patch, clientId);
         for (const f of own()) errors.current.delete(f);
-        onUpdate?.(next);
-        return next;
       } catch (err) {
         // IN-1 (#1049): "Network error." only when no answer came back. An
         // answer with no usable server message gets copy for its class, by
@@ -171,6 +178,19 @@ export function useIntakeAutoSave(
         setSavesInFlight((n) => n - 1);
         publish();
       }
+      // OUTSIDE the try (#1093 item 2): a throw here is the caller's bug, not
+      // a failed save, so it is logged and re-thrown as itself rather than
+      // reported to the client as "Network error.". The wizard calls
+      // `void autoSave.save(...)`, so the re-throw surfaces as an unhandled
+      // rejection in the console: loud, on purpose. Its `onUpdate` is a
+      // `setState`, which does not throw today.
+      try {
+        onUpdate?.(next);
+      } catch (err) {
+        console.error("[intake] onUpdate threw after a save landed", err);
+        throw err;
+      }
+      return next;
     },
     [onUpdate, onRefused, keeps, clientId, publish],
   );
