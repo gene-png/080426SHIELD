@@ -101,3 +101,46 @@ def test_the_preview_shows_the_same_redacted_note(app_client) -> None:  # noqa: 
     assert "Access reviews are approved by" in note, note
     assert "[NAME]" in note, note
     _no_person_in(json.dumps(r.json()["payload"]))
+
+
+#: A user of ANOTHER tenant. Their name is not this tenant's to redact: the
+#: hints are `User.client_id == client.id` only, so another client's staff
+#: never enter this tenant's dictionary (or leak through it).
+OTHER_NAME = "Morgan Ellery"
+
+
+def test_another_tenants_user_is_not_in_this_tenants_hints(app_client) -> None:  # noqa: F811
+    from app.models.client import Client
+
+    c, provider = app_client
+    h, svc_id = _world(c)
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as db:
+        other = Client(legal_name="Other Tenant")
+        db.add(other)
+        db.flush()
+        db.add(
+            User(
+                email="m.ellery@other.example",
+                password_hash="x" * 64,
+                role=UserRole.CLIENT,
+                display_name=OTHER_NAME,
+                client_id=other.id,
+            )
+        )
+        db.commit()
+    latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()
+    answer_id = next(a["id"] for a in latest["answers"] if a["subcategory_code"] == CODE)
+    r = c.patch(
+        f"/csf/answers/{answer_id}",
+        headers=h,
+        json={"notes": f"{NOTE} Reviewed with {OTHER_NAME}."},
+    )
+    assert r.status_code == 200, r.text
+
+    r = c.post("/ai/preview", headers=h, json={"service_id": svc_id})
+
+    assert r.status_code == 200, r.text
+    note = r.json()["payload"]["answers"][CODE]["notes"]
+    assert "[NAME]" in note, note  # positive first: this tenant's user is redacted
+    assert f"Reviewed with {OTHER_NAME}." in note, note
