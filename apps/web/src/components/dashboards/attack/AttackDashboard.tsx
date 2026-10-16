@@ -392,16 +392,20 @@ export function AttackDashboard({
           </div>
           {/* #1324: P-1, approved verbatim (#736 6225076633). The chart's
               counts and the blind-spot categories below count differently;
-              this says how, where the chart is read. */}
-          <p
-            data-testid="attack-tactic-bar-counting"
-            style={{ margin: "10px 0 0", color: C.muted, fontSize: 12 }}
-          >
-            This chart counts a technique under every tactic it belongs to, and
-            a parent technique as well as its sub-techniques, so its uncovered
-            counts can be higher than the categories under &quot;What
-            you&apos;re blind to today&quot;, which list each technique once.
-          </p>
+              this says how, where the chart is read. Shown only when that
+              section is on the page, since it names it (review F2). */}
+          {blind.length > 0 ? (
+            <p
+              data-testid="attack-tactic-bar-counting"
+              style={{ margin: "10px 0 0", color: C.muted, fontSize: 12 }}
+            >
+              This chart counts a technique under every tactic it belongs to,
+              and a parent technique as well as its sub-techniques, so its
+              uncovered counts can be higher than the categories under
+              &quot;What you&apos;re blind to today&quot;, which list each
+              technique once.
+            </p>
+          ) : null}
         </Section>
         <Section
           title="Overall coverage mix"

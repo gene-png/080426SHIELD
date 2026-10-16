@@ -74,4 +74,16 @@ describe("the Coverage by tactic chart says how it counts (#1324)", () => {
       .closest("section") as HTMLElement;
     expect(section).toContainElement(note);
   });
+
+  it("is not shown when nothing is uncovered, since it names a section that is then absent", () => {
+    render(
+      <AttackDashboard
+        data={data([tech({ code: "T1059", status: "covered" })])}
+      />,
+    );
+    // Positive first: the chart's section rendered.
+    expect(screen.getByText("Coverage by tactic")).toBeInTheDocument();
+    expect(screen.queryByText("What you're blind to today")).toBeNull();
+    expect(screen.queryByTestId("attack-tactic-bar-counting")).toBeNull();
+  });
 });
