@@ -284,3 +284,18 @@ def test_a_stale_assessment_with_no_run_names_the_catalog_not_the_missing_run(
     r = _draft(c, h, svc_id)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "attack_catalog_mismatch"
+
+
+def test_reading_the_draft_writes_nothing(app_client) -> None:  # noqa: F811
+    """The rows the draft rebuilds are in memory only. The writer scan
+    (`test_approved_record_writers.py`) sees the model constructed and is told
+    this; this pins it: the stored rows are byte-for-byte what they were."""
+    c, provider, h, svc_id, rows = _setup(app_client)
+    a = rows[0]["technique_code"]
+    _answer_only(provider, {a: "gap"})
+    _run(c, h, svc_id)
+    c.patch(f"/attack/coverage/{rows[0]['id']}", headers=h, json={"rationale": "Edited after."})
+    before = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    assert _draft(c, h, svc_id).status_code == 200
+    after = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    assert after["coverage"] == before["coverage"]
