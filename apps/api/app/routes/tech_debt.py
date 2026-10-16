@@ -1891,6 +1891,15 @@ def _cost_estimate_run_work(
         lost = len(refs) - len(answered)
         if lost:
             refused[BATCH_FAILED] = lost
+        # The list row's lock BEFORE any item row's: every edit route takes it
+        # first (`_record_edit`; sessions do not autoflush, so their item
+        # UPDATEs reach the database at commit). Writing items first and the
+        # revision after would invert that order and can deadlock a consultant's
+        # edit against this run on Postgres. SQLite ignores FOR UPDATE and
+        # locks the whole database, so the order cannot invert there.
+        db.execute(
+            select(CapabilityList.id).where(CapabilityList.id == cap_list.id).with_for_update()
+        )
         for ref, estimate in estimates.items():
             # ONE conditional UPDATE per row, so the check and the write are
             # atomic: Tech Debt's edit routes are not locked by a run, and a
