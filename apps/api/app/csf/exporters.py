@@ -42,7 +42,8 @@ if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
 from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
-from app.models.csf_assessment import CsfAnswer, CsfAssessment, CsfAssessmentStatus
+from app.deliverable_priority import floored_priority, priority_text
+from app.models.csf_assessment import CsfAnswer, CsfAssessment
 
 
 @dataclass(frozen=True)
@@ -175,37 +176,6 @@ def _tier_name(tier: int) -> str:
 def _tier_change(g: Gap) -> str:
     """W5's form, as the gap list has it: "Partial → Adaptive"."""
     return f"{_tier_name(g.current_tier)} → {_tier_name(g.target_tier)}"
-
-
-def _released(ctx: CsfDeliverableContext) -> bool:
-    """A re-export of a released assessment keeps the numbers it was delivered
-    with (advisor, #736 6216024281 item 3c); only an unreleased deliverable
-    takes the one-decimal priority."""
-    return ctx.assessment.status == CsfAssessmentStatus.RELEASED
-
-
-def _floored_priority(g: Gap) -> float:
-    """The priority to one decimal, ROUNDED DOWN, as W6 shows it on the gap
-    list (`lib/csf/ratingCopy.ts::priorityWorking`). In integer hundredths of
-    the weight, so the floor is exact by construction: a float product can sit
-    just below a tenth (3 x 1.2 is 3.5999...). Measured: over today's weights
-    and gaps of 1 to 3, `floor(gap * weight * 10)` happens to agree, so this
-    guards a weight change rather than a case reachable now."""
-    tenths = (g.gap_size * round(g.weight * 100)) // 10
-    return tenths / 10
-
-
-def _priority_value(ctx: CsfDeliverableContext, g: Gap) -> float:
-    """The XLSX Priority cell: as delivered when released, else floored."""
-    return g.priority_score if _released(ctx) else _floored_priority(g)
-
-
-def _priority_text(ctx: CsfDeliverableContext, g: Gap) -> str:
-    """The PDF/DOCX Priority cell: `3.45` as delivered when released, else
-    one decimal (`3.4`)."""
-    if _released(ctx):
-        return f"{g.priority_score:.2f}"
-    return f"{_floored_priority(g):.1f}"
 
 
 def _fmt_tier(value: float | None) -> str:
@@ -347,7 +317,7 @@ def render_xlsx(ctx: CsfDeliverableContext) -> bytes:
                 g.current_tier,
                 g.target_tier,
                 g.gap_size,
-                _priority_value(ctx, g),
+                floored_priority(g.gap_size, g.weight),
                 g.notes or "",
             ],
         )
@@ -443,7 +413,7 @@ def render_docx(ctx: CsfDeliverableContext) -> bytes:
                     g.function.value,
                     g.name,
                     _tier_change(g),
-                    _priority_text(ctx, g),
+                    priority_text(g.gap_size, g.weight),
                 ]
                 for g in ctx.gap.gaps
             ],
@@ -542,7 +512,7 @@ def render_pdf(ctx: CsfDeliverableContext) -> bytes:
                     g.function.value,
                     g.name,
                     _tier_change(g),
-                    _priority_text(ctx, g),
+                    priority_text(g.gap_size, g.weight),
                 ]
             )
         gap_table = Table(

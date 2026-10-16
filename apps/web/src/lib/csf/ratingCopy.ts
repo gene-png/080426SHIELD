@@ -37,7 +37,7 @@ export function ratingGap(current: number, target: number): string {
  * product can sit just below a tenth (3 × 1.2 is 3.5999…). Measured: over
  * today's weights and gaps of 1 to 3, flooring `gap × weight × 10` happens to
  * agree, so this guards a weight change rather than a case reachable now.
- * `csf/exporters.py::_floored_priority` computes it the same way.
+ * `app/deliverable_priority.py::floored_priority` (API) computes it the same way.
  */
 export function priorityWorking(
   gapSize: number,
