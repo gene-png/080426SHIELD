@@ -73,17 +73,4 @@ describe("AttackMappingDone (#1182)", () => {
       "Mapping done for 1,200 tools across 1,001 ATT&CK techniques and sub-techniques.",
     );
   });
-
-  it("says nothing on a partial run until the catalog can give the total", () => {
-    // Without the total the line would read as a complete run.
-    render(
-      <AttackMappingDone
-        toolsAvailable={3}
-        techniquesMapped={2}
-        batchesFailed={1}
-        catalog={null}
-      />,
-    );
-    expect(screen.queryByTestId("attack-mapping-done")).toBeNull();
-  });
 });

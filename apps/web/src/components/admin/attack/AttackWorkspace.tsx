@@ -985,7 +985,7 @@ export function AttackWorkspace({
                   toolsAvailable={runResult.tools_available}
                   techniquesMapped={aiRun.lastCompleted.applied_count}
                   batchesFailed={runResult.batches_failed ?? 0}
-                  catalog={catalog?.techniques ?? null}
+                  catalog={catalog.techniques}
                 />
               ) : runResult ? (
                 <p className="text-sm text-ink-secondary" aria-live="polite">
