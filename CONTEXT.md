@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1225 item 1, the admin documents panel shows no untyped server text.** On a failed document list the admin panel shows a server sentence only when it is typed (`{reason, message}`), and its own "Couldn't load documents." otherwise. Status: the 2026-10-16 #1225 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1223, a failed upload list says it failed.** The intake review step no longer shows a failed upload list as "No documents uploaded", and the admin documents panel no longer shows "Upload failed: <status>" for a failed read. Status: the 2026-10-16 #1223 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1213, the intake sites.** An intake submit, assessment start or upload answered by a 2xx the browser cannot read now says its outcome is unknown, instead of its own failure message; an intake read in the same case fails as a load. Status: the 2026-10-16 #1213 entry in `DELIVERY_PLAN.md`'s MVP completion path.
