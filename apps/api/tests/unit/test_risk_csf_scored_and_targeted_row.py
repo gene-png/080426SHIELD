@@ -240,8 +240,9 @@ def test_the_partial_case_raises_the_finding_and_states_the_count(
     # #474 E: `findings` is keyed by `source_id` (ruling 6).
     csf = [{"source_id": sid, **f} for sid, f in payload["findings"].items() if f["kind"] == "csf"]
     assert [f["source_id"] for f in csf] == [A], csf
-    assert csf[0]["label"].startswith(f"CSF {A}: level "), csf
-    assert csf[0]["label"].endswith(" of target 4"), csf
+    # Levels by name since #736 6216024281 item 3c (4 is Managed).
+    assert csf[0]["label"].startswith(f"CSF {A}: "), csf
+    assert csf[0]["label"].endswith(", below target Managed"), csf
     body = _latest(c, bearer, cid)
     assert _csf_target(body)["source"] == "playbook"
     inp = _csf_input(c, bearer, cid)

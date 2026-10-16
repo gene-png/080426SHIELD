@@ -94,7 +94,7 @@ describe("GET /api/proxy/artifacts keeps the cookie (review of f9975caa)", () =>
     // A guard: this branch changes only the upload; the list's cookie read
     // must survive the shared helper's rewrite.
     const { GET } = await import("./artifacts/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/proxy/artifacts"));
     expect(res.status).toBe(200);
     expect(sent()).toEqual({ path: "/artifacts", clientId: COOKIE_CLIENT });
   });

@@ -124,7 +124,8 @@ def test_csf_says_nothing_about_unscored_rows_when_every_row_was_scored() -> Non
     for fmt, text in _every_format(csf_xlsx, csf_docx, csf_pdf, ctx).items():
         assert "not scored" not in text, f"{fmt} claims unscored rows that do not exist"
         # The caption itself still renders: this is not a test of silence.
-        assert "All 0 gaps at target T3." in text, f"{fmt}: {text[:400]!r}"
+        # Tier 3 by name since #736 6216024281 item 3c.
+        assert "All 0 gaps at target Repeatable." in text, f"{fmt}: {text[:400]!r}"
 
 
 # ---------------------------------------------------------------------------
