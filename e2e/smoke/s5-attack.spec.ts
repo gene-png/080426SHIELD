@@ -1,7 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { atlasServiceId } from "../helpers/ids";
+import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
@@ -41,10 +46,24 @@ interface RunAiBody {
 }
 
 /** Sign in, open the workspace, and layer a fresh draft assessment on top. */
-async function openFreshDraft(page: Page): Promise<void> {
+async function openFreshDraft(
+  page: Page,
+  request: APIRequestContext,
+): Promise<string> {
+  // #1123 item 1: a plain create over released work is refused, and the
+  // seeded Atlas ATT&CK service's only version is RELEASED. So this spec
+  // mints a PRIVATE ATT&CK service under Atlas, as s11 does, and opens a
+  // genuinely fresh draft on it (the changed>0 assertions need a clean grid).
+  const token = await adminApiToken(request);
+  const clientId = await atlasClientIdViaApi(request, token);
+  const svc = await (
+    await request.post(`${API_BASE}/attack/services`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Client-Id": clientId },
+      data: { kind: "attack_coverage", title: "E2E ATT&CK Run AI" },
+    })
+  ).json();
+  const attackServiceId = svc.id as string;
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-  // Seeded Atlas Defense "MITRE ATT&CK Coverage" service (scripts/seed_demo.py).
-  const attackServiceId = await atlasServiceId(page, "attack_coverage");
   await page.goto(`/admin/services/${attackServiceId}/attack-coverage`);
   // The header only renders once EnsureActiveClient has set the active-client
   // cookie to Atlas, so the proxy POST below is correctly tenant-scoped.
@@ -52,22 +71,6 @@ async function openFreshDraft(page: Page): Promise<void> {
     page.getByRole("heading", { name: "MITRE ATT&CK Coverage" }),
   ).toBeVisible({ timeout: 30000 });
 
-  // Discard any open draft first, then mint. SPRINT_3 T1 added a draft-exists
-  // guard: POST now REUSES an open draft instead of minting a new version, so a
-  // plain POST would hand back a previous run's already-AI-drafted draft and
-  // Run AI would diff to zero changes (the changed>0 assertions below need a
-  // clean grid). Discarding throws any open DRAFT away (Sprint 9 T0 / D-031;
-  // ignored when nothing is open), so the following POST cuts a genuinely fresh
-  // draft — this retires the old approve-first dance.
-  const prior = await page.request.get(
-    `/api/proxy/attack/services/${attackServiceId}/assessments/latest`,
-  );
-  if (prior.ok()) {
-    const p = (await prior.json()) as { id: string; status: string };
-    if (p.status === "draft") {
-      await page.request.post(`/api/proxy/attack/assessments/${p.id}/discard`);
-    }
-  }
   const created = await page.request.post(
     `/api/proxy/attack/services/${attackServiceId}/assessments`,
   );
@@ -78,6 +81,7 @@ async function openFreshDraft(page: Page): Promise<void> {
   // Let the (StrictMode-duplicated) initial loads finish so none of their
   // stale responses land mid-test and clobber fresher state.
   await page.waitForLoadState("networkidle").catch(() => undefined);
+  return attackServiceId;
 }
 
 /**
@@ -127,11 +131,12 @@ async function selectTechnique(page: Page, code: string): Promise<void> {
 
 test("matrix + heatmap render, Run AI reports updated fields, and the panel shows D/P/R + rationale", async ({
   page,
+  request,
 }) => {
   // Long flow (sign-in + create + run + reload) against a next-dev server that
   // is also serving the other smoke specs; triple the budget.
   test.slow();
-  await openFreshDraft(page);
+  await openFreshDraft(page, request);
 
   // Matrix + coverage-rollup heatmap both render.
   await expect(
@@ -190,11 +195,12 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
 
 test("a locked technique is untouched by Run AI and absent from the what-changed diff (C2)", async ({
   page,
+  request,
 }) => {
   // Long flow with two auto-save PATCHes; next-dev queues requests for tens of
   // seconds when the other smoke specs share the server, so triple the budget.
   test.slow();
-  await openFreshDraft(page);
+  await openFreshDraft(page, request);
 
   // A STANDALONE technique: T1003 has sub-techniques, so since #554 (D-094)
   // its status is computed and the status radios are disabled.
