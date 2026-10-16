@@ -160,6 +160,14 @@ class ClientProfilePatch(BaseModel):
     primary_contact_phone: str | None = Field(default=None, max_length=64)
 
 
+def _blank_to_none(value: Any) -> Any:
+    """#1198: an emptied title or phone is a clear, stored as NULL, as
+    `ClientProfilePatch` does for the client fields (#1093)."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
 class IntakePatchRequest(BaseModel):
     """Auto-save body: any subset of client fields plus optional profile bits."""
 
@@ -168,6 +176,11 @@ class IntakePatchRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("title", "phone", mode="before")
+    @classmethod
+    def _blank_clears(cls, value: Any) -> Any:
+        return _blank_to_none(value)
 
 
 class ServiceRequestInput(BaseModel):
@@ -200,6 +213,13 @@ class IntakeSubmitRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
+
+    # #1198: the twin of `IntakePatchRequest`'s. Submit applies the same
+    # profile fields through `_apply_profile_fields`.
+    @field_validator("title", "phone", mode="before")
+    @classmethod
+    def _blank_clears(cls, value: Any) -> Any:
+        return _blank_to_none(value)
 
 
 class ClientProfileResponse(BaseModel):
