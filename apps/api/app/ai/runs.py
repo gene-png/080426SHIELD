@@ -178,17 +178,18 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
 
 
 def _charged_likely_for(db: Session, ctx: RunContext) -> bool | None:
-    """`_charged_likely`, plus the cases the ledger cannot see (#1219): a job
-    that DECLARED it made no provider call (`RunContext.declare_no_call`), or
-    one that never entered `LLMClient.invoke` -- the only way to a provider --
-    sent nothing, so it is "not charged", False. Never None, which the
+    """`_charged_likely`, plus the case the ledger cannot see (#1219): a job
+    that never entered `LLMClient.invoke` -- the only way to a provider; a
+    batch worker marks it before its stop check, `batching._one` -- sent
+    nothing, so it is "not charged", False. That covers a ZT run whose every
+    capability is blank (#1084), which skips the call. Never None, which the
     workspace prints on a failed run as "may have made a live AI call": a run
     refused before its first call (an assessment discarded between the 202 and
     the job) said so beside a message that it never started. A committed live
     row still wins, and a job that entered `invoke` with no committed row stays
     None: it may have reached the provider."""
     charged = _charged_likely(db, ctx.run_id, ctx.mode)
-    if charged is None and (ctx.declared_no_call or not ctx.invoke.entered):
+    if charged is None and not ctx.invoke.entered:
         return False
     return charged
 
@@ -466,13 +467,6 @@ class RunOutcome:
     accounting: tuple[str, dict[str, Any]] | None = None
 
 
-@dataclass
-class _NoCallMark:
-    """The one mutable bit a frozen `RunContext` carries (#1219)."""
-
-    declared: bool = False
-
-
 @dataclass(frozen=True)
 class RunContext:
     """Plain values a job needs. Never request-bound ORM objects: the request
@@ -486,24 +480,10 @@ class RunContext:
     deadline_at: datetime
     llm: LLMClient
     extra: dict[str, Any] = field(default_factory=dict)
-    # Not a constructor argument and not part of equality: only the job sets it.
-    _no_call: _NoCallMark = field(
-        default_factory=_NoCallMark, init=False, compare=False, repr=False
-    )
-    # Set by `LLMClient.invoke` through `invoke_mark_var`, which `_execute`
-    # points at this object (#1219).
+    # Not a constructor argument and not part of equality: set by
+    # `LLMClient.invoke` through `invoke_mark_var`, which `_execute` points at
+    # this object (#1219).
     invoke: InvokeMark = field(default_factory=InvokeMark, init=False, compare=False, repr=False)
-
-    def declare_no_call(self) -> None:
-        """The job decided, before any provider call, to make none (#1219):
-        e.g. a ZT run whose every capability is blank (#1084). The run then
-        records `charged_likely` False, not "not known". Call it only on a
-        path that has made no call and will make none."""
-        self._no_call.declared = True
-
-    @property
-    def declared_no_call(self) -> bool:
-        return self._no_call.declared
 
     @property
     def mode(self) -> LLMCallMode:
