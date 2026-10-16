@@ -270,3 +270,57 @@ def test_a_sentence_after_an_opener_still_ends_the_lookahead(sentence: str, scop
     # Other rules may rewrite words of it ("Way" reads as a street), but the
     # sign-off line and what follows it are not deleted.
     assert "\nBest\n" in cleaned and cleaned.endswith("Dana Whitfield\n"), sentence
+
+
+# --- #1256: the line classes, as a TABLE written before the logic -----------
+#
+# CLAUDE.md: a predicate rewritten three times is a design problem, so the
+# state space is written down first. Each row is a line that follows a bare
+# opener ("Best,"), then a name line that only a scan reaching PAST it would
+# find. "cut" means the signature rule fires on it (a name, removed); "keep"
+# means it is a sentence: the lookahead stops there and nothing is cut.
+_LINE_CLASSES = [
+    # Names: rank or honorific, then a stopped last token.
+    ("cut", "rank, suffix last", "Lt. Col. Dana M. Whitfield Jr."),
+    ("cut", "rank, ordinal suffix last", "Lt. Col. Dana M. Whitfield 3rd."),
+    ("cut", "rank, bracketed suffix and stop", "Lt. Col. Dana M. Whitfield (Ret.)."),
+    ("cut", "four words, bracketed suffix and stop", "Col. Dana Marie Whitfield, USAF (Ret.)."),
+    ("cut", "four words, bracketed suffix, no stop", "Col. Dana Marie Whitfield, USAF (Ret.)"),
+    ("cut", "suffix before a comma, not last", "Lt. Col. Dana Whitfield Jr., USAF, CISO"),
+    ("cut", "credential with inner stops last", "Dr. Dana M. Whitfield, M.D."),
+    ("cut", "service abbreviation last", "Lt. Col. Dana M. Whitfield, USAF."),
+    ("cut", "certification last", "Maj. Dana M. Whitfield, CISSP."),
+    ("cut", "job title last", "Dr. Dana M. Whitfield, CISO."),
+    # Sentences.
+    ("keep", "Title-Case, short final word", "Phase Two Is Under Way."),
+    ("keep", "Title-Case, abbreviation mid-line", "Section A. Overview Of Findings."),
+    ("keep", "Title-Case, leading abbreviations", "U.S. Gov. Systems Are Affected."),
+    ("keep", "Title-Case, two-letter final word", "All Systems Are Now Up."),
+    ("keep", "honorific, sentence case", "Dr. Smith approved the change."),
+    ("keep", "Roman numeral last, sentence case", "Patching resumes in Phase II."),
+    ("keep", "Roman numeral mid-line, sentence case", "Hosts move to Tier III next quarter."),
+    ("keep", "ordinal last, sentence case", "The patch window opens on the 3rd."),
+]
+# Accepted residuals, recorded on #1256 rather than pinned either way: an
+# all-Title-Case stopped line of four words or fewer reads as a name ("Next
+# Steps Below.", "Hosts Move To Tier III."), and a name of more than four
+# words ("Dana van der Berg Jr.") reads as a sentence.
+
+
+@pytest.mark.parametrize(
+    ("verdict", "shape", "line"), _LINE_CLASSES, ids=[c[1] for c in _LINE_CLASSES]
+)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_each_line_class_is_cut_or_kept(verdict: str, shape: str, line: str, scope: str) -> None:
+    # A "cut" row is followed by a SENTENCE, so the cut can only come from the
+    # row itself; a "keep" row by a NAME, which only a scan reaching past the
+    # row would find.
+    after = "The scan of every host is now complete." if verdict == "cut" else "Alex Morgan"
+    text = "Findings follow.\nBest,\n" + line + "\n" + after + "\n"
+    cleaned, counts = redact_for_ai(text, mode="strict", signature_scope=scope)
+    if verdict == "cut":
+        assert counts.get("signature_block") == 1, f"{shape}: not cut"
+        assert "Whitfield" not in cleaned and "Dana" not in cleaned, f"{shape}: the name survived"
+    else:
+        assert "signature_block" not in counts, f"{shape}: a sentence was cut"
+        assert cleaned.endswith("Alex Morgan\n"), f"{shape}: text after it was lost"

@@ -527,6 +527,27 @@ def _is_name_shaped(stripped: str) -> bool:
     )
 
 
+def _substantive_words(stripped: str) -> list[str]:
+    """The words of a line that count toward the signatory cap: every token but
+    an abbreviation (a rank, an initial, a suffix). ONE definition, used by
+    `_looks_like_a_signatory` and by `_looks_like_prose` for a name-shaped
+    line, so the two cannot measure the same line differently (#1256)."""
+    return [w for w in stripped.split() if not _is_abbreviation(w)]
+
+
+def _is_name_tail(token: str) -> bool:
+    """A last token that ends a NAME rather than a sentence (#1256): a suffix
+    (`_NAME_SUFFIXES`), a credential with inner stops (`M.D.`, `Ph.D.`), or a
+    capitalised designation of two or more letters (`USAF.`, `CISSP.`).
+    A short Title-Case word (`Way.`, `Up.`) is none of these."""
+    core = token.strip("().,")
+    if core.lower() in _NAME_SUFFIXES:
+        return True
+    if "." in core and core.replace(".", "").isalpha():
+        return True
+    return len(core) >= 2 and core.isalpha() and core.isupper()
+
+
 def _looks_like_a_signatory(line: str) -> bool:
     stripped = line.strip()
     if not stripped or len(stripped) > _MAX_SIGNATORY_CHARS:
@@ -582,8 +603,7 @@ def _looks_like_a_signatory(line: str) -> bool:
     # are ABBREVIATIONS -- an honorific, a rank, an initial -- so they are not
     # counted toward the cap. A heading of seven ordinary words still exceeds
     # it, which is the case the cap was added for.
-    words = stripped.split()
-    substantive = [w for w in words if not _is_abbreviation(w)]
+    substantive = _substantive_words(stripped)
     if not 1 <= len(substantive) <= _MAX_SIGNATORY_WORDS:
         return False
     return stripped[0].isupper()
@@ -619,24 +639,27 @@ def _looks_like_prose(line: str) -> bool:
     if not stripped[0].isupper():
         return True
     words = stripped.split()
-    # A name that ENDS IN A GENERATIONAL OR RETIRED SUFFIX ends in a full stop
-    # because the suffix is an abbreviation, not because the line is a sentence:
-    # "Lt. Col. Dana M. Whitfield Jr." counted raw is six words and a stop, so
-    # the signature cut stopped before it and the name went to the model
-    # (#1256). It needs BOTH a suffix last and a name-shaped line:
-    #   - suffix last, not "has abbreviations": "Phase Two Is Under Way." ends
-    #     in a short stopped word too, and dropping every abbreviation-shaped
-    #     token made it a "name" (review of 96b41f97);
-    #   - name-shaped, not suffix alone: "Patching resumes in Phase II." ends
-    #     in a suffix word but has lowercase words, so it is a sentence
-    #     (review of 8310931d).
-    # Then the line is counted as `_looks_like_a_signatory` counts it, through
-    # the same `_is_abbreviation`. Residual, accepted: an ALL-Title-Case
-    # sentence of four words or fewer ending in a suffix word ("Hosts Move To
-    # Tier III.") reads as a name, and errs toward removing.
-    suffix = words[-1].strip("().,").lower() in _NAME_SUFFIXES
-    if suffix and _is_name_shaped(stripped):
-        words = [w for w in words[:-1] if not _is_abbreviation(w)]
+    # A NAME can end in a full stop that is not a sentence's: a suffix ("Jr.",
+    # "(Ret.)."), a credential ("M.D.") or a capitalised designation ("USAF.",
+    # "CISSP.", "CISO."). Counted raw, "Lt. Col. Dana M. Whitfield Jr." is six
+    # words and a stop, so the signature cut stopped before it and the name
+    # went to the model (#1256). Such a line -- name-shaped, with a name tail --
+    # is counted as `_looks_like_a_signatory` counts it, through the SAME
+    # `_substantive_words`. The line classes this was decided against are the
+    # table in test_redact_signature_bound.py, written before this logic.
+    #
+    # Why each condition is needed (each was missing in an earlier round):
+    #   - a name TAIL, not "has abbreviations": "Phase Two Is Under Way." ends
+    #     in a short stopped word, which `_is_abbreviation` cannot tell from a
+    #     rank (review of 96b41f97);
+    #   - name-SHAPED, not a tail alone: "Patching resumes in Phase II." ends
+    #     in a suffix word but has lowercase words (review of 8310931d).
+    # Residual, accepted: ANY all-Title-Case stopped line of four words or
+    # fewer is not prose here, tail or not ("Next Steps Below."), so after an
+    # opener it can read as a signatory -- that predates #1256, and errs toward
+    # removing.
+    if _is_name_shaped(stripped) and _is_name_tail(words[-1]):
+        return len(_substantive_words(stripped)) > _MAX_SIGNATORY_WORDS
     return len(words) > _MAX_SIGNATORY_WORDS
 
 
