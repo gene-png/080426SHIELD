@@ -364,7 +364,7 @@ export function CsfDimensionEditor({
                         .value as CsfEvidenceStatus,
                     })
                   }
-                  className="rounded-md border border-border bg-surface px-2 py-1 text-sm"
+                  className="rounded-md border border-border bg-surface-card px-2 py-1 text-sm text-ink-primary"
                 >
                   {EVIDENCE_OPTIONS.map(([value, label]) => (
                     <option key={value} value={value}>
