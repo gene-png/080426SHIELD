@@ -25,6 +25,7 @@ from scripts.measure_ai_consistency import measure_zt
 from app.ai.llm import LLMClient, LLMResponse
 from app.routes.zt import _validated_stage
 from tests._ai_runs import zt_run_ai
+from tests._zt_notes import noted_assessment
 from tests.unit.test_measure_ai_consistency import world  # noqa: F401  (fixture)
 from tests.unit.test_zt_run_ai import _admin_service, app_client  # noqa: F401  (fixture)
 
@@ -111,8 +112,7 @@ def test_the_run_refuses_what_the_measure_refuses(app_client) -> None:  # noqa: 
     for the same reason, and 1.2's current lands."""
     c, provider = app_client
     h, svc_id, _ = _admin_service(c, "zero_trust_dod")
-    a = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
-    assert a.status_code in (200, 201), a.text
+    noted_assessment(c, h, svc_id)  # a capability is sent only with notes (#1084)
     provider.register_static("zt_score", LLMResponse(RESPONSE))
     body = zt_run_ai(c, svc_id, h)
     by_code = {r["capability_code"]: r for r in body["answers"]}

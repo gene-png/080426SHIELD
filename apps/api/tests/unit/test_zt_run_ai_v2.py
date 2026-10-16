@@ -34,6 +34,7 @@ from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.zt_assessment import ZtAnswer
 from tests._ai_runs import zt_run_ai
 from tests._paths import find_zt_source
+from tests._zt_notes import NOTE, note_rows
 
 pytestmark = pytest.mark.unit
 
@@ -170,6 +171,9 @@ def world(tmp_path) -> Iterator[World]:
 
 
 def _sent_details(world: World) -> dict:
+    # #1084: a blank-notes capability is never sent, so every row gets a note
+    # and the run sends the whole catalog's details.
+    note_rows(world.c, world.h, world.answers)
     seen = world.capture({"capabilities": []})
     zt_run_ai(world.c, world.svc_id, world.h)
     assert len(seen) == 1, "the provider was not called exactly once"
@@ -248,7 +252,7 @@ def test_ai_preview_shows_the_same_details_unaltered_by_redaction(world, kind, f
 def test_a_stray_target_is_counted_as_unknown_field_and_never_applied(world) -> None:
     world.service("zero_trust_cisa")
     code = world.answers[0]["capability_code"]
-    world.patch(0, target_stage=3)
+    world.patch(0, target_stage=3, notes=NOTE)  # a note, so it is sent (#1084)
     world.capture({"capabilities": [{"code": code, "current": 2, "target": 4}]})
 
     result = zt_run_ai(world.c, world.svc_id, world.h)
