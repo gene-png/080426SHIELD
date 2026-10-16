@@ -152,13 +152,14 @@ exceptions.
 `GET /clients/{client_id}/attack/{service_id}/dashboard`. They belong to
 `clients-dev`.
 
-**SHARED — required by merge-rule condition 3, and both tracks must write them:**
+**SHARED — since D-113, condition 3 batches these into a docs-only PR; do not write them in every PR:**
 
 ```
 DELIVERY_PLAN.md   CONTEXT.md   context/gene.md
 ```
 
-Write these **only in the landing commit**, never earlier, and **rebase on
+When you DO write them (in the batched docs-only PR), write them
+**only in its landing commit**, never earlier, and **rebase on
 `origin/main` immediately before pushing** — the other track is editing the same
 files and PRs merge one at a time. Read every count live; never carry one
 forward. If a rebase is needed after the PR is open, that push needs
@@ -315,5 +316,5 @@ not fight it with `--no-verify` without saying so.
   advisor** (merge rule, D-113), unconditionally — everything you touch trips
   merge-rule condition 5. Merging is not yours to
   sequence. (Tracks take turns in one tree, so only one PR is ever in flight; the advisor
-  merges it and re-runs CI before the other track starts. That is its sequencing, not a
+  approves it and the coordinator merges it and re-runs CI before the other track starts. That is their sequencing, not a
   condition you evaluate.)

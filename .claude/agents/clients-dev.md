@@ -121,13 +121,14 @@ apps/web/src/components/admin/attack/**
 apps/web/src/lib/attack/**       apps/web/src/app/api/proxy/attack/**
 ```
 
-**SHARED — required by merge-rule condition 3, and both tracks must write them:**
+**SHARED — since D-113, condition 3 batches these into a docs-only PR; do not write them in every PR:**
 
 ```
 DELIVERY_PLAN.md   CONTEXT.md   context/gene.md   DECISIONS.md
 ```
 
-Write these **only in the landing commit**, and **rebase on `origin/main`
+When you DO write them (in the batched docs-only PR), write them
+**only in its landing commit**, and **rebase on `origin/main`
 immediately before pushing** — the other track edits the same files and PRs merge
 one at a time. Read every count live; never carry one forward. If a rebase is
 needed after the PR is open, that push needs `--force-with-lease` — never a
@@ -266,8 +267,8 @@ python apps/api/scripts/check_separator_classes.py
 python apps/api/scripts/leave_row_oracle.py --check-registry
 ```
 
-`check_plan_totals` matters directly here: condition 3 makes you edit
-`DELIVERY_PLAN.md`, and that gate's recorded failure mode is steering an author
+`check_plan_totals` matters directly here: whoever writes the batched
+`DELIVERY_PLAN.md` update (condition 3, D-113) edits it, and that gate's recorded failure mode is steering an author
 into changing the total to a wrong sum.
 
 e2e is host-run: `cd e2e && npx playwright test <file>`. Your three dashboard

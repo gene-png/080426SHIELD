@@ -142,7 +142,8 @@ other copy. No session id is written here, because ids change at every
 handover.
 
 **An agent merges a plain PR when conditions 1 to 6 hold**, and an
-extra-care PR when conditions 1 to 3 hold AND the advisor has approved it.
+extra-care PR is merged by the COORDINATOR once conditions 1 to 3 hold AND
+the advisor has approved it (the advisor decides; it cannot run merges itself).
 Every merge is pinned to the head that was checked:
 
     gh pr merge <n> --squash --auto --match-head-commit <head sha>
@@ -155,11 +156,16 @@ Every merge is pinned to the head that was checked:
 - **Until the guard is proven, merge by hand** with the same command minus
   `--auto`, once every check has finished green. Proof means a throwaway PR
   posted on #736 showing that a push after auto-merge was enabled does NOT
-  merge. On 2026-10-16 the probe could not run: the repository's "Allow
+  merge, read only AFTER every required check on the NEW head has finished
+  green (earlier, "not merged" only means "not yet"). On 2026-10-16 the probe could not run: the repository's "Allow
   auto-merge" setting is off (`gh api repos/gene-png/080426SHIELD --jq
   .allow_auto_merge` returned `false`). Turning it on is Gene's call.
+- **If a PR's body is edited after auto-merge is enabled,** disable it
+  (`gh pr merge <n> --disable-auto`) and re-enable only once the body-reading
+  gates have finished green again; the head guard cannot see a body edit.
 - **When a main run goes red, merging pauses** until the cause is named and
-  fixed. Auto-merge requests may stay, but no new one is enabled.
+  fixed: no merge by hand, and every pending auto-merge request is disabled
+  with `--disable-auto` until then.
 - **Never** `--admin`, never bypass branch protection, never edit the
   required checks.
 - A PR that cannot merge (a red check, a conflict, BLOCKED) is reported on
