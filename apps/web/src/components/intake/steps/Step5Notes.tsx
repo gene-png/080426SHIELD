@@ -60,12 +60,22 @@ export function Step5Notes({
   const [openCards, setOpenCards] = React.useState<
     Partial<Record<ServiceType, boolean>>
   >({});
-  const [artifacts, setArtifacts] = React.useState<ArtifactSummary[]>([]);
+  // #1223: null until the list has LOADED. An empty array means the client
+  // has no uploads; a failed or pending load is not that, and must not show
+  // "No documents uploaded yet".
+  const [artifacts, setArtifacts] = React.useState<ArtifactSummary[] | null>(
+    null,
+  );
   const [listError, setListError] = React.useState<string | null>(null);
 
   const refreshArtifacts = React.useCallback(async () => {
     try {
       const res = await listArtifacts();
+      // A 200 with no item list is a failed load (as on the review step).
+      if (!Array.isArray(res.items)) {
+        setListError("Failed to load uploads.");
+        return;
+      }
       setArtifacts(res.items);
       setListError(null);
     } catch (err) {
@@ -146,7 +156,7 @@ export function Step5Notes({
         <RedactionDisclosure />
         <Dropzone
           onUploaded={(a) => {
-            setArtifacts((prev) => [a, ...prev]);
+            setArtifacts((prev) => [a, ...(prev ?? [])]);
           }}
         />
         {listError ? (
@@ -154,8 +164,11 @@ export function Step5Notes({
             {listError}
           </p>
         ) : null}
-        {artifacts.length === 0 ? (
-          <EmptyArtifactsHint />
+        {artifacts === null || artifacts.length === 0 ? (
+          // The empty-list hint only for a list that loaded empty.
+          artifacts !== null && !listError ? (
+            <EmptyArtifactsHint />
+          ) : null
         ) : (
           <ul aria-label="Uploaded artifacts" className="flex flex-col gap-1">
             {artifacts.map((a) => (
