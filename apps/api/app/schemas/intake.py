@@ -234,6 +234,10 @@ class IntakeStateResponse(BaseModel):
     service_requests: list[ServiceRequestResponse]
     intake_completed_at: datetime | None
     contact: IntakeContactResponse | None = None
+    # #1282: the submitter's own account details, apart from `contact`, which
+    # is the primary-contact override once one names someone. Step 3's own
+    # inputs read this, so a blur never writes the override onto the account.
+    submitter: IntakeContactResponse | None = None
 
 
 class EngagementCreateRequest(BaseModel):
