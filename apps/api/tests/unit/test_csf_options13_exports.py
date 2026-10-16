@@ -78,9 +78,11 @@ def test_a_draft_export_has_no_cap_and_states_not_scored(app_client) -> None:  #
         f"0 self-reported only, not validated; {total - 1} not answered."
     ) in cover, cover
     assert (
-        "Of the 1 scored subcategories: 0 with evidence on file for every scored tier, "
-        "0 confirmed in discussion for every scored tier, 0 mixed, "
-        "1 with neither on any scored tier; 0 at Managed or Optimized are notional."
+        "Of the 1 scored subcategories: 0 with evidence on file for every scored tier; "
+        "0 confirmed in discussion (every scored tier on file or confirmed, at least one "
+        "confirmed); 0 mixed (at least one scored tier with neither, and at least one with "
+        "evidence on file or confirmed); 1 with neither on any scored tier; 0 at Managed or "
+        "Optimized are notional."
     ) in cover, cover
     tier = _table_row(sheets["High"], CODE)
     assert tier["Evidence"] == "Neither", tier

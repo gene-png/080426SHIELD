@@ -107,15 +107,27 @@ _MIXED = "mixed"
 
 
 def _evidence_class(r: EnterpriseSubcategory) -> str:
-    """One evidence value for a scored subcategory: the value every rolled-up
-    tier carries, or `mixed` when they differ."""
+    """E3's class for a scored subcategory, as Gene approved it (#736
+    6205956728), over its rolled-up tiers:
+
+    - `on_file`: every tier has evidence on file;
+    - `confirmed_in_discussion`: every tier on file or confirmed, at least one
+      confirmed;
+    - `mixed`: at least one tier with neither, and at least one on file or
+      confirmed;
+    - `neither`: neither on every tier."""
     values = set(r.tier_evidence.values())
-    if len(values) == 1:
-        return values.pop()
     if not values:
         # A scored subcategory rolls up at least one tier by construction.
         raise ValueError(f"scored subcategory {r.subcategory_code} has no tier evidence")
-    return _MIXED
+    neither = CsfEvidenceStatus.NEITHER.value
+    if values == {neither}:
+        return neither
+    if neither in values:
+        return _MIXED
+    if CsfEvidenceStatus.CONFIRMED_IN_DISCUSSION.value in values:
+        return CsfEvidenceStatus.CONFIRMED_IN_DISCUSSION.value
+    return CsfEvidenceStatus.ON_FILE.value
 
 
 #: E2: a level at or above Managed (4) with `neither` is notional.
@@ -226,6 +238,7 @@ def enterprise_subcategories(
                 function=str(getattr(sc, "function", "")),
                 tier_levels=tier_levels,
                 tier_evidence_capped={t: r.evidence_capped for t, r in results.items()},
+                evidence_cap=cap,
                 enterprise_level=rollup.score,
                 rollup_rule=rollup.rule,
                 target_level=target,

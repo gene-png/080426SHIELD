@@ -399,6 +399,11 @@ class EnterpriseSubcategory(BaseModel):
     #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
     #: (`score_tier(...).evidence_capped`). Never serialized.
     tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
+    #: Options 1 and 3: the subcategory's assessment was approved before them
+    #: (rules 1 or 2), so its levels are under the frozen evidence cap
+    #: (`csf/rules.py::evidence_cap_applies`). Never serialized; the risk
+    #: payload sends `evidence_capped` only then (risk_synthesize v5).
+    evidence_cap: bool = Field(default=False, exclude=True)
     #: #1031: in-scope tiers left out of the roll-up because nobody scored
     #: them; every screen and file shows each as "Not scored". Empty under the
     #: every-tier rule and for a subcategory none of whose tiers is scored

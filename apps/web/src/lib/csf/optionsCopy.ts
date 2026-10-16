@@ -15,10 +15,10 @@ export function coverageLine(c: CsfCoverage): string {
   return `${c.scored} of ${c.total} subcategories scored; ${c.notes_not_scored} with notes, not yet scored; ${c.self_reported} self-reported only, not validated; ${c.not_answered} not answered.`;
 }
 
-/** E3: the evidence line beside C3, stated at zero too, "mixed" its own
- * count (6205425122 item 3). */
+/** E3: the evidence line beside C3, approved verbatim (#736 6205956728),
+ * stated at zero too. */
 export function evidenceLine(c: CsfCoverage): string {
-  return `Of the ${c.scored} scored subcategories: ${c.evidence_on_file} with evidence on file for every scored tier, ${c.evidence_confirmed} confirmed in discussion for every scored tier, ${c.evidence_mixed} mixed, ${c.evidence_neither} with neither on any scored tier; ${c.notional} at Managed or Optimized are notional.`;
+  return `Of the ${c.scored} scored subcategories: ${c.evidence_on_file} with evidence on file for every scored tier; ${c.evidence_confirmed} confirmed in discussion (every scored tier on file or confirmed, at least one confirmed); ${c.evidence_mixed} mixed (at least one scored tier with neither, and at least one with evidence on file or confirmed); ${c.evidence_neither} with neither on any scored tier; ${c.notional} at Managed or Optimized are notional.`;
 }
 
 /** E1: the evidence control's label and its three options. */

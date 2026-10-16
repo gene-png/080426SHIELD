@@ -1585,22 +1585,29 @@ def _attack_evidence(row: object, *, computed: bool) -> dict:
 
 
 def _csf_evidence(e: object, tier_rows: dict[str, CsfDimensionScore]) -> dict:
-    """The approved `csf` evidence (#474 E, rulings 2, 3 and 6), from the
-    Playbook roll-up `_gather_findings` already called. `evidence_capped` is
-    `tier_evidence_capped`, true only where the cap CHANGED that tier's result
-    (`csf/playbook.py::score_tier`), never "has no evidence". `tier_notes` are
-    the in-scope rows' own, keyed like `tier_levels`; a tier the roll-up scored
-    has a row by construction, so a missing one raises."""
-    return {
+    """The approved `csf` evidence (#474 E, rulings 2, 3 and 6; risk_synthesize
+    v5, #736 6205956728), from the Playbook roll-up `_gather_findings` already
+    called. `evidence` is each rolled-up tier's three-valued `evidence_status`
+    (migration 0074). `evidence_capped` is sent ONLY for an assessment approved
+    before Options 1 and 3 (`e.evidence_cap`), the one kind whose levels the
+    former cap can still have lowered: `tier_evidence_capped`, true only where
+    the cap CHANGED that tier's result (`csf/playbook.py::score_tier`), never
+    "has no evidence". `tier_notes` are the in-scope rows' own, keyed like
+    `tier_levels`; a tier the roll-up scored has a row by construction, so a
+    missing one raises."""
+    out: dict = {
         "enterprise_level": e.enterprise_level,
         "target_level": e.target_level,
         "tier_levels": dict(e.tier_levels),
-        "evidence_capped": {t: e.tier_evidence_capped[t] for t in e.tier_levels},
-        "tier_notes": {
-            t: {"rationale": tier_rows[t].rationale, "what_we_found": tier_rows[t].what_we_found}
-            for t in e.tier_levels
-        },
+        "evidence": {t: e.tier_evidence[t] for t in e.tier_levels},
     }
+    if e.evidence_cap:
+        out["evidence_capped"] = {t: e.tier_evidence_capped[t] for t in e.tier_levels}
+    out["tier_notes"] = {
+        t: {"rationale": tier_rows[t].rationale, "what_we_found": tier_rows[t].what_we_found}
+        for t in e.tier_levels
+    }
+    return out
 
 
 def _record_drafted_from(snap: _InputSnapshot, findings: list[dict], src: _Source) -> None:

@@ -273,19 +273,22 @@ FOURTH = SUBCATEGORIES[3].code
 FIFTH = SUBCATEGORIES[4].code
 SIXTH = SUBCATEGORIES[5].code
 SEVENTH = SUBCATEGORIES[6].code
+EIGHTH = SUBCATEGORIES[7].code
 
 
 def test_the_coverage_counts_add_up_to_the_in_scope_total(app_client) -> None:  # noqa: F811
     """Every count is worked out here from the world, never from the code.
 
     C3, over the in-scope subcategories:
-    - scored: CODE, FOURTH, FIFTH, SIXTH, SEVENTH (5);
+    - scored: CODE, FOURTH, FIFTH, SIXTH, SEVENTH, EIGHTH (6);
     - with notes, not yet scored: THIRD (1);
     - self-reported only: OTHER, a rating and no notes (1);
     - not answered: the rest.
 
-    E3, over the five scored:
-    - on file on every scored tier: FIFTH; confirmed in discussion: SEVENTH;
+    E3, over the six scored, as Gene approved the classes (#736 6205956728):
+    - on file on every scored tier: FIFTH;
+    - confirmed in discussion (every tier on file or confirmed, at least one
+      confirmed): SEVENTH, and EIGHTH (on file on high, confirmed on moderate);
     - neither: CODE (level 3) and FOURTH (level 5);
     - mixed: SIXTH, on file on high and neither on moderate;
     - notional (Managed or Optimized, and `neither` on a rolled-up tier):
@@ -299,6 +302,10 @@ def test_the_coverage_counts_add_up_to_the_in_scope_total(app_client) -> None:  
     _ok_patch(c, h, svc, "high", SIXTH, {**ALL_TWOS, "evidence_status": "on_file"})
     _ok_patch(c, h, svc, "moderate", SIXTH, ALL_TWOS)
     _ok_patch(c, h, svc, "high", SEVENTH, {**LEVEL_3, "evidence_status": "confirmed_in_discussion"})
+    _ok_patch(c, h, svc, "high", EIGHTH, {**LEVEL_3, "evidence_status": "on_file"})
+    _ok_patch(
+        c, h, svc, "moderate", EIGHTH, {**LEVEL_3, "evidence_status": "confirmed_in_discussion"}
+    )
     _answer(c, h, svc, OTHER, {"maturity_tier": 2})  # self-reported only
     _answer(c, h, svc, THIRD, {"maturity_tier": 3, "notes": "Asked, nothing scored yet."})
     profile = _profile(c, h, svc)
@@ -307,12 +314,12 @@ def test_the_coverage_counts_add_up_to_the_in_scope_total(app_client) -> None:  
     cov = profile["coverage"]
     assert cov == {
         "total": total,
-        "scored": 5,
+        "scored": 6,
         "notes_not_scored": 1,
         "self_reported": 1,
-        "not_answered": total - 7,
+        "not_answered": total - 8,
         "evidence_on_file": 1,
-        "evidence_confirmed": 1,
+        "evidence_confirmed": 2,
         "evidence_neither": 2,
         "evidence_mixed": 1,
         "notional": 2,
@@ -320,6 +327,13 @@ def test_the_coverage_counts_add_up_to_the_in_scope_total(app_client) -> None:  
     assert (
         cov["scored"] + cov["notes_not_scored"] + cov["self_reported"] + cov["not_answered"]
         == cov["total"]
+    )
+    assert (
+        cov["evidence_on_file"]
+        + cov["evidence_confirmed"]
+        + cov["evidence_mixed"]
+        + cov["evidence_neither"]
+        == cov["scored"]
     )
     assert profile["evidence_cap"] is False
     other = _sub(c, h, svc, OTHER)

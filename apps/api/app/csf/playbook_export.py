@@ -642,13 +642,14 @@ def coverage_line(coverage: Any) -> str:
 
 
 def evidence_line(coverage: Any) -> str:
-    """E3, stated at zero too, with "mixed" as its own count (6205425122 item
-    3)."""
+    """E3, approved verbatim (#736 6205956728), stated at zero too."""
     return (
         f"Of the {coverage.scored} scored subcategories: "
-        f"{coverage.evidence_on_file} with evidence on file for every scored tier, "
-        f"{coverage.evidence_confirmed} confirmed in discussion for every scored tier, "
-        f"{coverage.evidence_mixed} mixed, "
+        f"{coverage.evidence_on_file} with evidence on file for every scored tier; "
+        f"{coverage.evidence_confirmed} confirmed in discussion (every scored tier on file "
+        "or confirmed, at least one confirmed); "
+        f"{coverage.evidence_mixed} mixed (at least one scored tier with neither, and at "
+        "least one with evidence on file or confirmed); "
         f"{coverage.evidence_neither} with neither on any scored tier; "
         f"{coverage.notional} at Managed or Optimized are notional."
     )

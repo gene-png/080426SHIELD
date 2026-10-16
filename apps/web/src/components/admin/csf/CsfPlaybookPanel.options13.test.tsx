@@ -119,7 +119,7 @@ function profile(evidenceCap: boolean): EnterpriseProfile {
 const C3 =
   "2 of 9 subcategories scored; 1 with notes, not yet scored; 3 self-reported only, not validated; 3 not answered.";
 const E3 =
-  "Of the 2 scored subcategories: 0 with evidence on file for every scored tier, 1 confirmed in discussion for every scored tier, 0 mixed, 1 with neither on any scored tier; 1 at Managed or Optimized are notional.";
+  "Of the 2 scored subcategories: 0 with evidence on file for every scored tier; 1 confirmed in discussion (every scored tier on file or confirmed, at least one confirmed); 0 mixed (at least one scored tier with neither, and at least one with evidence on file or confirmed); 1 with neither on any scored tier; 1 at Managed or Optimized are notional.";
 
 function rowOf(code: string): HTMLElement {
   const tr = screen.getByText(code).closest("tr");
