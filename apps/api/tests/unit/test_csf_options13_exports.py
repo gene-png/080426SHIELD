@@ -101,6 +101,11 @@ def test_a_draft_export_has_no_cap_and_states_not_scored(app_client) -> None:  #
     assert "Rule" not in _flat_text("full_docx", files["full_docx"]).split("Appendix")[-1]
     for kind in ("full_docx", "exec_docx", "exec_pdf"):
         assert CAP_SENTENCE not in _flat_text(kind, files[kind]), kind
+    # C3 on every cover of a draft, not only the XLSX About sheet (#1203 review
+    # round 2): the positive control for the frozen test's absence below.
+    for kind in ("full_pdf", "full_docx", "exec_pdf", "exec_docx"):
+        flat = _flat_text(kind, files[kind])
+        assert f"1 of {total} subcategories scored; " in flat, kind
 
 
 @pytest.mark.parametrize("rules", [1, 2])
