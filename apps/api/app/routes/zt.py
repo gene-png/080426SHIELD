@@ -559,6 +559,7 @@ def get_catalog(
                 name=c.name,
                 outcome=c.outcome,
                 kind=c.kind,
+                max_stage=max_stage_for(cat_fw, c.code),
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code
@@ -781,8 +782,7 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             # a staff member named in notes is sent as [NAME] (as #863/#865
             # do for ATT&CK). Here, in the one builder, so the preview and the
             # run (`name_hints=req.preview.name_hints`) cannot differ. Its CSF
-            # twin (`routes/csf.py`, csf_score) is deliberately left to the
-            # CSF track and is still open on #1006.
+            # twin (`routes/csf.py`, csf_score) landed in #1261.
             name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
@@ -931,6 +931,9 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             assessment_id=str(a.id),
             capabilities=len(rows),
         )
+        # #1219: so the run records "not charged" rather than "not known" (a
+        # run the reaper ends stays "not known": the reaper never sees ctx).
+        ctx.declare_no_call()
         data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while

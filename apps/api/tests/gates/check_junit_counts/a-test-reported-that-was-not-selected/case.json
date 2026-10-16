@@ -1,0 +1,12 @@
+{
+ "incident": "The other direction of #540: a test the run reported that the gate never certified means the run and the certificate selected different sets, so neither describes the other.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "reported but not selected: tests.unit.test_a::test_extra"
+}
