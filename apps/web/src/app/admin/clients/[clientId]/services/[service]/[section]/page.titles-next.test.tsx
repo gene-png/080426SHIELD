@@ -94,8 +94,11 @@ describe("tab titles: {section} · {service}", () => {
 });
 
 /** The fake API, with the stages read answering `stages` for every service. */
-function serveStages(stages: { key: string; state: string }[]): void {
-  installFakeApi(baseWorld());
+function serveStages(
+  stages: { key: string; state: string }[],
+  world = baseWorld(),
+): void {
+  installFakeApi(world);
   const fake = globalThis.fetch;
   globalThis.fetch = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -147,6 +150,8 @@ describe("the header's Next: line, from the current stage", () => {
     ["prepare", "Next: add the inputs", "inputs"],
     ["analyze", "Next: run the AI draft", "ai-draft"],
     ["review", "Next: review the AI draft", "review"],
+    // The API never makes `approve` current today (derive_stages sets
+    // reviewed = approved); the approved line is pinned for when it does.
     ["approve", "Next: approve the assessment", "approve-and-release"],
     ["generate", "Next: generate the deliverable", "generate"],
     ["release", "Next: release to the client", "approve-and-release"],
@@ -169,6 +174,26 @@ describe("the header's Next: line, from the current stage", () => {
     expect(screen.getByRole("link", { name: line.slice(6) })).toHaveAttribute(
       "href",
       hrefTo("csf", "overview", CSF_A),
+    );
+  });
+
+  it("Zero Trust at prepare waits for the client, linking to Overview", async () => {
+    const ZTC_A = "5e000000-0000-4000-8000-0000000000e1";
+    const world = baseWorld();
+    world.services.push({
+      id: ZTC_A,
+      client_id: A,
+      kind: "zero_trust_cisa",
+      status: "draft",
+      created_at: "2026-09-04T10:00:00Z",
+    });
+    serveStages(at("prepare"), world);
+    await renderSection("zero-trust-cisa", ZTC_A);
+    const line = "Next: wait for the client's self-assessment";
+    expect(screen.getByTestId("service-header-next").textContent).toBe(line);
+    expect(screen.getByRole("link", { name: line.slice(6) })).toHaveAttribute(
+      "href",
+      hrefTo("zero-trust-cisa", "overview", ZTC_A),
     );
   });
 
