@@ -3,13 +3,13 @@ reaches the provider redacted, through the run AND `/ai/preview`.
 
 The tenant's user names are the redactor's name dictionary
 (`name_hints_for_tenant`), as #863 and #865 use them for ATT&CK (ZT's twin is
-T2's #1235, open). `csf_score` sent `answers[*].notes` with no dictionary at all. The
+T2's #1235, merged). `csf_score` sent `answers[*].notes` with no dictionary at all. The
 shared builder (`_csf_ai_request_for`) now carries it, so the preview, the run
 and the measure script cannot differ.
 
 Every expected value is the scenario's literal (the user's name and email
 local part, the placeholder "[NAME]"), never a call to the redactor. The
-harness is T2's ZT test's (`test_zt_name_hints.py` on #1235).
+harness is T2's ZT test's (`test_zt_name_hints.py`, from #1235).
 """
 
 from __future__ import annotations

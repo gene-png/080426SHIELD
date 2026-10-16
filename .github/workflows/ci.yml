@@ -25,6 +25,11 @@ jobs:
   python:
     name: Python (ruff + black + pytest + bandit)
     runs-on: ubuntu-latest
+    # #739: without one, GitHub's 6-hour default lets a hung test hold this
+    # required check that long. The unit suite under `-n 4` measured 11-16 min
+    # on run 38802579958 (2026-10-15), and the steps around it about 2; 45 is
+    # well over twice that.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -73,6 +78,11 @@ jobs:
       # It cannot be closed by a pytest test: a test living in the tree that
       # skips itself skips with it. So it is asserted from OUTSIDE, in the one
       # place a full checkout is guaranteed.
+      #
+      # THREE skips rely on this step, not one: the audit-gate module,
+      # test_ci_selection_gate.py and test_junit_counts.py all skip on the same
+      # `find_workflows_dir(...) is None`, from the same tests/unit directory.
+      # Moving or removing this step un-guards all three (#1221).
       - name: the audit-gate tests must not skip on a full checkout
         working-directory: apps/api
         run: |
@@ -543,17 +553,32 @@ jobs:
       - name: every e2e env gate is set or exempted (#540)
         run: python apps/api/scripts/check_e2e_env_gates.py
 
-      # IMMEDIATELY before pytest, and that position is load-bearing: any step
-      # between the two could change pytest's environment and not this one's,
-      # narrowing CI while the gate certifies the wider set (#544). Pinned by
-      # `pin_violations` in test_ci_selection_gate.py.
+      # The gate WRITES the set it certified, and only on a clean verdict, and
+      # pytest runs IMMEDIATELY after it in the same job, with the same env,
+      # working-directory and shell (#544, pinned by test_ci_selection_gate.py),
+      # so nothing can narrow one and not the other. Its run is exactly
+      # CI_SELECTOR, which is the selection, plus CI_RUN_OPTIONS, which select
+      # nothing: `-n 4` spreads the selection over four workers on this one
+      # runner (pytest-xdist), and `--junitxml` records one outcome per test.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
-        run: python -m scripts.check_ci_selection
+        run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: pytest -m unit
         working-directory: apps/api
-        run: pytest -m unit tests/unit
+        run: pytest -m unit tests/unit -n 4 --junitxml="$RUNNER_TEMP/pytest-unit.xml"
+
+      # A worker that crashes is replaced: xdist reports its running test as
+      # failed and hands its pending tests to the others, so the summary line
+      # alone does not say which tests ran. So the run
+      # is checked against the certified set, test by test, from the junit XML
+      # rather than the summary line: every selected test reported exactly once,
+      # nothing reported that was not selected, and passed + skipped + xfailed
+      # equal to the selection. `always()` so the counts print on a red run too.
+      - name: every selected test ran exactly once
+        if: always()
+        working-directory: apps/api
+        run: python -m scripts.check_junit_counts --junit "$RUNNER_TEMP/pytest-unit.xml" --selected "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: bandit
         run: bandit -q -c pyproject.toml -r apps/api/app
@@ -642,18 +667,151 @@ jobs:
   # SHIELD_EMAIL_DELIVERY_ENABLED=true (Sprint 7 T3), so `docker compose up -d`
   # brings up MailHog and the s21 email-verify/reset spec RUNS here (no longer
   # self-skips). The runner has Docker + Compose v2.
-  e2e:
-    name: E2E (Playwright smoke suite)
+  e2e-shard:
+    # The Playwright suite, split 4 ways with Playwright's own `--shard`,
+    # each leg on its own runner with its own composed stack and a fresh seed.
+    # Each leg uploads the list of tests its shard selects; the aggregate `e2e`
+    # below checks their union is the full list, each test exactly once.
+    name: E2E (Playwright shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # 30 was not enough once the suite reached 73 tests: the 2026-08-05 run on
-    # PR #5 was terminated at 30m18s with Playwright still going (no assertion
-    # failures — the job simply ran out of budget), while the same suite takes
-    # ~37 min locally. The specs share one seeded database and run
-    # `workers: 1` deliberately, so wall-clock scales with the spec count and
-    # will keep growing. Sharding is the real fix and needs per-shard database
-    # isolation; until then this ceiling has to clear a full serial run with
-    # headroom for a slow runner.
-    timeout-minutes: 55
+    # Sized for ONE shard on its own stack, not the serial run this ceiling
+    # was first set for (40 min, when the whole suite ran here). Each leg
+    # composes and seeds its own database, and within a leg the specs share it
+    # and run `workers: 1`. Measured legs: 5-11 min, including stack bring-up,
+    # on #680's run 38176987278 (2026-10-11).
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Bring up postgres/redis/minio/keycloak/mailhog/api/web from the repo
+      # compose file. NEXTAUTH_SECRET mirrors the web job's ci-only value so we
+      # don't ship the literal dev placeholder; every other var uses the
+      # compose-file default, all of which are ci-safe.
+      - name: Compose up
+        env:
+          NEXTAUTH_SECRET: ci-only-not-a-real-secret-1234567890
+        run: docker compose up -d
+
+      # The api container only serves after `alembic upgrade head`; Keycloak
+      # cold start is the slow gate. Poll with a generous budget and FAIL LOUDLY
+      # (dump logs, non-zero exit) if the stack never becomes healthy.
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health >/dev/null; then
+              echo "api healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::api did not become healthy within budget"
+          docker compose logs api keycloak
+          exit 1
+
+      - name: Seed demo tenant
+        run: docker compose exec -T api python scripts/seed_demo.py
+
+      # web's first boot installs pnpm deps into the container before next dev
+      # starts listening. Poll on :3000 with the same fail-loud contract.
+      - name: Wait for web
+        run: |
+          for i in $(seq 1 72); do
+            if curl -sf http://localhost:3000 >/dev/null; then
+              echo "web up after ${i} attempt(s)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::web did not come up within budget"
+          docker compose logs web
+          exit 1
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # #540/#579: every script-suffixed file under e2e/ must be in CI's run or
+      # declared non-suite (a rename dropping every script suffix is unseen,
+      # #605). `--list` applies the config's selection (testIgnore / testMatch / grep / projects) exactly as
+      # the run step below does, with the same cwd and no arguments -- pinned by
+      # test_e2e_spec_listing_gate.py -- and needs no browser or stack.
+      - name: List this shard's tests
+        working-directory: e2e
+        run: npx playwright test --list --shard=${{ matrix.shard }}/4 > "$RUNNER_TEMP/e2e-shard-${{ matrix.shard }}.txt"
+
+      # #734: an upload is retried, twice, because a transient upload error
+      # (ETIMEDOUT) turned a required check red on a green suite. Still fail
+      # closed: the first two attempts may fail (`continue-on-error`), each
+      # retry runs only if the attempt before it FAILED, and the last attempt
+      # has no `continue-on-error`, so three failures fail the job. `overwrite`
+      # replaces whatever a failed attempt left half-written. Pinned by
+      # test_ci_upload_retry.py, which walks every outcome of the attempts.
+      - name: Upload this shard's test list
+        id: upload-list
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this shard's test list (retry 1, #734)
+        id: upload-list-retry-1
+        if: steps.upload-list.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this shard's test list (retry 2, #734)
+        if: steps.upload-list-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e-shard-${{ matrix.shard }}.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Run Playwright suite (shard)
+        working-directory: e2e
+        run: npx playwright test --shard=${{ matrix.shard }}/4
+
+      - name: Upload Playwright report and traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-session:
+    # The #487 pair needs the stack recreated with a 60-second access token,
+    # so it runs on its own runner rather than after one shard. The #540
+    # spec-listing check runs here too, and this job uploads the FULL test
+    # list the aggregate checks the shards against.
+    name: E2E session expiry (#487)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -726,9 +884,38 @@ jobs:
           python ../apps/api/scripts/check_e2e_spec_listing.py --list-file "$RUNNER_TEMP/playwright-list.txt" --root ..
 
       # GitHub Actions sets CI=true, so playwright.config.ts applies retries: 1.
-      - name: Run Playwright suite
-        working-directory: e2e
-        run: npx playwright test
+      - name: Upload the full test list
+        id: upload-full-list
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the full test list (retry 1, #734)
+        id: upload-full-list-retry-1
+        if: steps.upload-full-list.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload the full test list (retry 2, #734)
+        if: steps.upload-full-list-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-list-full
+          path: ${{ runner.temp }}/playwright-list.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
       # #487: a user working on one page was signed out once the access token
       # expired, because a server-side `auth()` rotated the refresh token and
@@ -768,13 +955,58 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-487
           path: |
             e2e/playwright-report/
-            e2e/test-results/
             e2e/test-results-487/
           retention-days: 7
           if-no-files-found: ignore
+
+  e2e:
+    # THE REQUIRED CHECK, by its exact name. `if: always()` so it runs when a
+    # leg failed or was skipped (a skipped required job reports success); it
+    # fails unless every leg succeeded and the shard lists partition the suite.
+    name: E2E (Playwright smoke suite)
+    needs: [e2e-shard, e2e-session]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every E2E job succeeded
+        env:
+          SHARDS: ${{ needs.e2e-shard.result }}
+          SESSION: ${{ needs.e2e-session.result }}
+        run: |
+          echo "e2e shards: $SHARDS; e2e session: $SESSION"
+          if [ "$SHARDS" != "success" ] || [ "$SESSION" != "success" ]; then
+            echo "::error::an E2E job did not succeed (failed, cancelled or skipped), so this required check is red"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-list-*
+          path: ${{ runner.temp }}/e2e
+          merge-multiple: true
+
+      # A Playwright `--list` test line carries " › "; the header and the
+      # "Total:" line do not. grep's exit 1 (no line matched) is allowed through
+      # so an empty list reaches the verifier, which calls it could-not-look.
+      - name: The shards listed every test exactly once
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/e2e"
+          for f in playwright-list.txt e2e-shard-*.txt; do
+            grep ' › ' "$f" > "ids-$f" || [ "$?" -eq 1 ]
+          done
+          cd "$GITHUB_WORKSPACE/apps/api"
+          python -m scripts.shard_partition verify --full "$RUNNER_TEMP/e2e/ids-playwright-list.txt" --of 4 --ran "$RUNNER_TEMP"/e2e/ids-e2e-shard-*.txt
 
   # Hosted-demo bring-up job (Sprint 9 T9). Runs the one-command reset in its
   # own isolated runner so its `docker compose down -v` cannot touch the e2e

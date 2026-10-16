@@ -781,8 +781,7 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             # a staff member named in notes is sent as [NAME] (as #863/#865
             # do for ATT&CK). Here, in the one builder, so the preview and the
             # run (`name_hints=req.preview.name_hints`) cannot differ. Its CSF
-            # twin (`routes/csf.py`, csf_score) is deliberately left to the
-            # CSF track and is still open on #1006.
+            # twin (`routes/csf.py`, csf_score) landed in #1261.
             name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
