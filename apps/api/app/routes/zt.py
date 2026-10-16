@@ -2384,6 +2384,9 @@ def release_zt_deliverable(
 ) -> DeliverableResponse:
     # #1123 (a) guards a FIRST release only: its refusal says nothing was
     # released, which is false for the repair re-release of a delivered report.
+    # So a repair skips check (a) entirely: a version approved after its
+    # report was finalized would still be flipped to RELEASED. No writer can
+    # produce that state until #1120's unlock lands; revisit (a) then.
     first_release = require_deliverable_in_tenant(db, deliverable_id, client.id).released_at is None
     deliv = release_deliverable(
         db,
