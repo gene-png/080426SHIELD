@@ -38,6 +38,11 @@ function result(
   };
 }
 
+// #1083: the "No notes recorded" line (Z2) became Z-1083-1, PENDING the
+// advisor's ruling on #736 comment 6205228372.
+const noNotes = (n: number): string =>
+  `No notes recorded (${n}). The AI scores only capabilities that have notes, so these were not scored. To score them, record notes and run the AI again:`;
+
 function paragraphs(container: HTMLElement): string[] {
   return [...container.querySelectorAll("p")].map((p) => p.textContent ?? "");
 }
@@ -61,7 +66,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     );
     const ps = paragraphs(container);
     const z1 = ps.indexOf("3 capabilities got no stage from the AI this run.");
-    const z2 = ps.indexOf("No notes recorded (2):");
+    const z2 = ps.indexOf(noNotes(2));
     const z3 = ps.indexOf(
       'Notes recorded, but no stage given (1). This includes notes such as "N/A" or "TBD":',
     );
@@ -81,7 +86,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     expect(paragraphs(container)).toContain(
       "1 capability got no stage from the AI this run.",
     );
-    expect(paragraphs(container)).toContain("No notes recorded (1):");
+    expect(paragraphs(container)).toContain(noNotes(1));
   });
 
   it("Z4 and Z6 in the notes group, as an alert, only when a stage is kept there", () => {
@@ -128,7 +133,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     const ps = paragraphs(container);
     expect(ps[0]).toMatch(/^The AI returned no suggestions at all/);
     expect(ps).toContain("2 capabilities got no stage from the AI this run.");
-    expect(ps).toContain("No notes recorded (2):");
+    expect(ps).toContain(noNotes(2));
   });
 
   it.each([
@@ -263,7 +268,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
     expect(items).toHaveLength(11);
     expect(items[9]).toBe("C.10: no stage, so it stays unscored.");
     expect(items[10]).toBe("and 1 more");
-    expect(paragraphs(container)).toContain("No notes recorded (11):");
+    expect(paragraphs(container)).toContain(noNotes(11));
   });
 
   it("caps each group on its own: 12 with notes ends 'and 2 more'", () => {
@@ -302,7 +307,7 @@ describe("ZtRunAiAccounting, capabilities with no result (#840)", () => {
       "DS.2: keeps stage 2, recorded earlier. This run did not confirm it.",
     );
     expect(item.closest("[role]")).toBeNull();
-    expect(paragraphs(container)).toContain("No notes recorded (1):");
+    expect(paragraphs(container)).toContain(noNotes(1));
   });
 
   it("Z6 renders once when both groups kept a stage", () => {
