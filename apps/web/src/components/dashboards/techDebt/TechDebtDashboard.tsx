@@ -198,6 +198,13 @@ function th(align: "left" | "right" = "left"): React.CSSProperties {
   };
 }
 
+/** #1299 (TD-5): the approved E6 sentence after a savings line, when the
+ * figure includes an AI-estimated cost; the line unchanged otherwise. */
+function withEstimates(text: string, k: number | undefined): string {
+  const estimates = aiEstimateSentence(k ?? 0);
+  return estimates === null ? text : `${text} · ${estimates}`;
+}
+
 function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
   return (
     <div
@@ -231,6 +238,8 @@ function RedundancyCard({ r }: { r: Redundancy }): JSX.Element {
                 as "—", so a $0 floor is written in full. */}
             {r.savings_cost_known === true ? "" : "≥ "}
             {r.savings_usd > 0 ? usdCompact(r.savings_usd) : usdFull(0)}/yr
+            {/* #1299 (TD-5): savings including an AI estimate say so (E6). */}
+            {withEstimates("", r.savings_ai_estimate_count)}
           </span>
         ) : null}
       </div>
@@ -294,11 +303,12 @@ export function TechDebtDashboard({
         <KpiCard
           label="Identified savings"
           value={usdFull(data.identified_savings_usd)}
-          sub={
+          sub={withEstimates(
             data.savings_cost_known
               ? "From tools marked to cut"
-              : "Floor — some cut tools lacked a cost"
-          }
+              : "Floor — some cut tools lacked a cost",
+            data.savings_ai_estimate_count,
+          )}
           accent={C.green}
         />
       </KpiRow>

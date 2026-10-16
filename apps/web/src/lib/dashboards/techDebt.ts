@@ -41,6 +41,8 @@ export interface Redundancy {
    * flag (an API older than the field) is unconfirmed, never confirmed.
    */
   savings_cost_known: boolean;
+  /** #1299 (TD-5): AI-estimated costs `savings_usd` includes. */
+  savings_ai_estimate_count: number;
   items: TechDebtItem[];
 }
 
@@ -86,6 +88,8 @@ export interface TechDebtDashboardData {
    * `annual_spend_usd` INCLUDES. Any one makes spend "partial" (E7).
    */
   ai_estimate_count: number;
+  /** #1299 (TD-5): AI-estimated costs `identified_savings_usd` includes. */
+  savings_ai_estimate_count: number;
   redundant_category_count: number;
   spend_by_category: CategorySpend[];
   sprawl_by_category: CategorySpend[];

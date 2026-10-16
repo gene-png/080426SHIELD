@@ -136,7 +136,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
-from app.tech_debt.cost_estimate import is_ai_estimate
+from app.tech_debt.cost_estimate import is_ai_estimate, savings_estimate_count
 from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
@@ -726,6 +726,8 @@ class _TechDebtTotal(NamedTuple):
     value: float | None
     cost_known: bool
     unresolved: bool
+    # #1299 (TD-5): AI-estimated costs the savings include.
+    ai_estimate_count: int = 0
 
 
 def _csf_gap_total(db: Session, service_ids: list[uuid.UUID]) -> _TargetedKindTotal:
@@ -1007,6 +1009,7 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
         return _TechDebtTotal(None, True, False)
     total = 0.0
     cost_known = True
+    estimated = 0
     for sid in service_ids:
         # #114: the released deliverable's parent, not the latest APPROVED list.
         # See `_csf_gap_total` above for why the `found` flag went with it.
@@ -1031,7 +1034,9 @@ def _tech_debt_savings(db: Session, service_ids: list[uuid.UUID]) -> _TechDebtTo
         found = estimated_savings((it.disposition, savings_cost(it)) for it in items)
         total += found.amount
         cost_known = cost_known and found.known
-    return _TechDebtTotal(total, cost_known, False)
+        # #1299 (TD-5): the same released rows, the same one rule.
+        estimated += savings_estimate_count(items)
+    return _TechDebtTotal(total, cost_known, False, estimated)
 
 
 @router.get(
@@ -1096,6 +1101,7 @@ def value_summary(
         tech_debt_savings_usd=td.value,
         tech_debt_savings_cost_known=td.cost_known,
         tech_debt_savings_unresolved=td.unresolved,
+        tech_debt_savings_ai_estimate_count=td.ai_estimate_count,
         zt_gap_count=zt.value,
         zt_gap_unresolved=zt.unresolved,
         zt_services=zt.services,
@@ -1834,6 +1840,8 @@ def tech_debt_dashboard(
             # renders it ("≥ "), even at $0, so a category whose counted row
             # has no usable cost reads as a floor, as the headline does.
             savings_cost_known=b["savings"].known,
+            # #1299 (TD-5): the estimated costs this category's savings include.
+            savings_ai_estimate_count=savings_estimate_count(b["items"]),
             items=[_td_item(i, names) for i in b["items"]],
         )
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
@@ -1927,6 +1935,8 @@ def tech_debt_dashboard(
         excluded_count=excluded_count,
         no_cost_count=no_cost_count,
         ai_estimate_count=ai_estimate_count,
+        # #1299 (TD-5): the estimated costs the identified savings include.
+        savings_ai_estimate_count=savings_estimate_count(items),
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,

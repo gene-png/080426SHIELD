@@ -29,6 +29,7 @@ from app.models.capability import COST_SOURCE_AI_ESTIMATE, CapabilityItem
 from app.tech_debt.bounds import cost_problem
 from app.tech_debt.components import is_component
 from app.tech_debt.overlap import no_cost_items
+from app.tech_debt.savings import SAVINGS_DISPOSITIONS
 
 #: The job's registry name and its `llm_calls.purpose` / fixture key.
 JOB_NAME = "tech_debt_cost_estimate"
@@ -94,6 +95,14 @@ def is_ai_estimate(item: CapabilityItem) -> bool:
         and item.annual_cost_usd is not None
         and not is_component(item)
     )
+
+
+def savings_estimate_count(items: Iterable[CapabilityItem]) -> int:
+    """#1299 (folded into TD-5): how many AI-estimated costs a savings figure
+    INCLUDES -- rows counted as savings (`savings.SAVINGS_DISPOSITIONS`) whose
+    cost is an AI estimate. Every savings surface calls this, so the dashboard,
+    the redundancy cards, the home card and the files cannot disagree."""
+    return sum(1 for it in items if it.disposition in SAVINGS_DISPOSITIONS and is_ai_estimate(it))
 
 
 def estimate_targets(items: Iterable[CapabilityItem]) -> list[CapabilityItem]:
