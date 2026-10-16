@@ -424,7 +424,10 @@ def test_csf_dashboard_numbers_come_from_the_version_the_header_claims(app_clien
     v2 = v2.json()
     assert v2["version"] == 2, "the preamble did not actually cut a second version"
     for ans in v2["answers"]:
-        c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 4})
+        # Asserted: a revision copies v1 forward, so a failed patch would leave
+        # v2 equal to v1 and the #114 check below could not fail.
+        r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 4})
+        assert r.status_code == 200, r.text
     assert c.post(f"/csf/assessments/{v2['id']}/approve", headers=h).status_code == 200
 
     c.headers["X-Client-Id"] = client_id
