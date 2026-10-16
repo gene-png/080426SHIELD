@@ -46,7 +46,11 @@ def test_a_push_to_main_has_a_group_of_its_own() -> None:
 def test_ci_runs_on_both_events_the_group_tells_apart() -> None:
     # The group's two arms are only meaningful while CI runs on both events.
     on = _ci().get("on", _ci().get(True))
-    # A SUBSET, not equality: any other trigger (e.g. `merge_group`, which #659
-    # adds) falls to the commit arm, a group of its own, which is safe.
-    assert {"push", "pull_request"} <= set(on), on
+    # BOUNDED, not equality: `merge_group` (which #659 adds) is the one extra
+    # trigger allowed, because each queue entry is its own temporary commit, so
+    # the commit arm gives it a group of its own. Others are NOT safe there:
+    # `pull_request_target`'s sha is the base tip (every PR would share one
+    # group), and `schedule` / `workflow_dispatch` on main would land in main's
+    # push group and cancel its run (review of 7c9d2535).
+    assert {"push", "pull_request"} <= set(on) <= {"push", "pull_request", "merge_group"}, on
     assert on["push"] == {"branches": ["main"]}, on["push"]
