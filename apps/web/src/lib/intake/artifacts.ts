@@ -53,8 +53,15 @@ export async function uploadArtifact(
   return (await res.json()) as ArtifactSummary;
 }
 
-export async function listArtifacts(): Promise<ArtifactListResponse> {
-  const res = await fetch("/api/proxy/artifacts", { cache: "no-store" });
+/** `clientId`: #1262's `/intake` residual; the client the wizard loaded, so
+ *  the list cannot follow the shared cookie to another tenant. */
+export async function listArtifacts(
+  clientId?: string,
+): Promise<ArtifactListResponse> {
+  const url = clientId
+    ? `/api/proxy/artifacts?client_id=${encodeURIComponent(clientId)}`
+    : "/api/proxy/artifacts";
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new ArtifactUploadError(res.status, await safeJson(res));
   }

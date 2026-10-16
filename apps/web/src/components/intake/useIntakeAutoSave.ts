@@ -103,11 +103,16 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * screen after a failed save, which decides whether the client may be told it
  * is "still in the form". Its default, true, suits a caller with no fields of
  * its own (the hook's tests); the wizard passes its real answer.
+ *
+ * `clientId` (#1262, the `/intake` residual) is the client every save is
+ * scoped to: the wizard passes the client it loaded, so a save never follows
+ * the shared active-client cookie to another tenant.
  */
 export function useIntakeAutoSave(
   onUpdate?: (next: IntakeStateResponse) => void,
   onRefused?: (patch: IntakePatchRequest) => void,
   keeps: (patch: IntakePatchRequest) => boolean = () => true,
+  clientId?: string,
 ): AutoSaveHandle {
   const [saveState, setSaveState] = React.useState<SaveState>({ kind: "idle" });
   const [savesInFlight, setSavesInFlight] = React.useState(0);
@@ -145,7 +150,7 @@ export function useIntakeAutoSave(
       setSavesInFlight((n) => n + 1);
       publish();
       try {
-        const next = await patchIntake(patch);
+        const next = await patchIntake(patch, clientId);
         for (const f of own()) errors.current.delete(f);
         onUpdate?.(next);
         return next;
@@ -167,7 +172,7 @@ export function useIntakeAutoSave(
         publish();
       }
     },
-    [onUpdate, onRefused, keeps, publish],
+    [onUpdate, onRefused, keeps, clientId, publish],
   );
 
   return { saveState, savesInFlight, save, setSaveState };

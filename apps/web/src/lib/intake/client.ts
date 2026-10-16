@@ -24,6 +24,15 @@ class ProxyError extends Error {
   }
 }
 
+/**
+ * #1262, the `/intake` residual: the client a call is scoped to. The wizard
+ * passes the client it LOADED, so a later call never follows the shared
+ * active-client cookie to another tenant; with none, the cookie, as before.
+ */
+function scoped(path: string, clientId?: string): string {
+  return clientId ? `${path}?client_id=${encodeURIComponent(clientId)}` : path;
+}
+
 export async function fetchIntake(): Promise<IntakeStateResponse> {
   const res = await fetch("/api/proxy/intake", { cache: "no-store" });
   if (!res.ok) {
@@ -34,8 +43,9 @@ export async function fetchIntake(): Promise<IntakeStateResponse> {
 
 export async function patchIntake(
   body: IntakePatchRequest,
+  clientId?: string,
 ): Promise<IntakeStateResponse> {
-  const res = await fetch("/api/proxy/intake", {
+  const res = await fetch(scoped("/api/proxy/intake", clientId), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -48,8 +58,9 @@ export async function patchIntake(
 
 export async function submitIntake(
   body: IntakeSubmitRequest,
+  clientId?: string,
 ): Promise<IntakeStateResponse> {
-  const res = await fetch("/api/proxy/intake/submit", {
+  const res = await fetch(scoped("/api/proxy/intake/submit", clientId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
