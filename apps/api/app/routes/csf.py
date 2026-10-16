@@ -72,7 +72,7 @@ from app.csf.exporters import render_xlsx as render_csf_xlsx
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as analyze_gaps
 from app.csf.gap import resolve_target_tier
-from app.csf.maturity import TIER_DEFINITIONS
+from app.csf.maturity import TIER_DEFINITIONS, tier_label
 from app.csf.playbook import (
     Tier,
     score_tier,
@@ -160,6 +160,8 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    latest_released_version,
+    refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
 )
@@ -546,6 +548,12 @@ def create_assessment(
         )
         response.status_code = status.HTTP_200_OK
         return _serialize_assessment(db, prior, viewer=user)
+    # #1123 item 1: never a plain draft over released work; a revision only.
+    # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
+    # its next list by extraction and has no Start a revision, so it does not.
+    released = latest_released_version(db, CsfAssessment, CsfAssessmentStatus.RELEASED, svc.id)
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = CsfAssessment(
         service_id=svc.id,
@@ -1168,6 +1176,7 @@ def gap_analysis(
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
                 notes=g.notes,
+                weight=g.weight,
             )
             for g in analysis.gaps
         ],
@@ -3250,7 +3259,7 @@ def finalize_csf_deliverable(
     summary_line = (
         f"Overall maturity: {score.overall_maturity_label}. "
         f"{score.answered_subcategories}/{score.total_subcategories} subcategories scored; "
-        f"{gap.total_gap_count} gap(s) at target T{gap.target_tier}."
+        f"{gap.total_gap_count} gap(s) at target {tier_label(gap.target_tier)}."
     )
     # #783: `/results` shows this line to the client, so it says what the
     # document says when the target is a default.

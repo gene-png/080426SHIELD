@@ -45,6 +45,8 @@ export interface ZtAnswer {
   capability_code: string;
   maturity_stage: number | null;
   target_stage?: number | null;
+  /** #982: who set `target_stage`; null = origin not recorded. */
+  target_source?: string | null;
   locked?: boolean;
   notes: string | null;
   evidence_artifact_id: string | null;

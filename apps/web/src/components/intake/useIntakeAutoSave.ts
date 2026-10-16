@@ -54,11 +54,13 @@ function statusOf(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-/** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
- *  409 (the intake will never take it) or a 422. Only these let the typed
- *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
- *  so the client keeps what they typed and can save it again. */
-const JUDGED_THE_VALUE = new Set([400, 409, 422]);
+/** #1115 (advisor 6207611148), narrowed by #1207 item 1 (option (A),
+ *  6216024281): the status that JUDGED the value is a 422 only, the schema's
+ *  or the route's typed 422s. On PATCH /intake a 400 comes from
+ *  `current_client` or the proxy's "Invalid JSON body.", and nothing returns
+ *  a 409, so neither says anything about the value. Only a 422 lets the typed
+ *  value go; any other answer keeps it, so the client can save it again. */
+const JUDGED_THE_VALUE = new Set([422]);
 
 function isValueRefusal(err: unknown): boolean {
   const status = statusOf(err);
@@ -79,6 +81,14 @@ function hasApiEnvelope(err: unknown): boolean {
 function fallbackFor(err: unknown, kept: boolean): string {
   const status = statusOf(err);
   if (status === null) return "Network error.";
+  // #1093 item 2, review of e85890b3: a 2xx we cannot attribute to the api.
+  // Our proxy answers every 2xx with JSON, and an unreadable api 2xx already
+  // arrives as the typed 504, so this came from something in front of the app
+  // (a captive portal, a proxy's block page, a sign-in interstitial) and the
+  // PATCH may never have arrived. Not "a write that landed with an unreadable
+  // answer", the issue's first framing, which does not survive that trace.
+  // Unknown, never "Saved" and never "Network error.".
+  if (status >= 200 && status < 300) return UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
   if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
   if (status >= 500 && status < 600) {
     return hasApiEnvelope(err)
@@ -95,7 +105,7 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * `null` on failure. The SaveStatus indicator reads `saveState` directly.
  *
  * `onRefused(patch)` is called when the api ANSWERED and judged the value (a
- * 400, 409 or 422, #1115), so a caller holding the typed value can let it go:
+ * 422, #1115 and #1207), so a caller holding the typed value can let it go:
  * the server does not hold it and never will (review of #757, finding 2).
  * Any other answer keeps it.
  *
@@ -103,11 +113,16 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * screen after a failed save, which decides whether the client may be told it
  * is "still in the form". Its default, true, suits a caller with no fields of
  * its own (the hook's tests); the wizard passes its real answer.
+ *
+ * `clientId` (#1262, the `/intake` residual) is the client every save is
+ * scoped to: the wizard passes the client it loaded, so a save never follows
+ * the shared active-client cookie to another tenant.
  */
 export function useIntakeAutoSave(
   onUpdate?: (next: IntakeStateResponse) => void,
   onRefused?: (patch: IntakePatchRequest) => void,
   keeps: (patch: IntakePatchRequest) => boolean = () => true,
+  clientId?: string,
 ): AutoSaveHandle {
   const [saveState, setSaveState] = React.useState<SaveState>({ kind: "idle" });
   const [savesInFlight, setSavesInFlight] = React.useState(0);
@@ -144,11 +159,10 @@ export function useIntakeAutoSave(
       pending.current += 1;
       setSavesInFlight((n) => n + 1);
       publish();
+      let next: IntakeStateResponse;
       try {
-        const next = await patchIntake(patch);
+        next = await patchIntake(patch, clientId);
         for (const f of own()) errors.current.delete(f);
-        onUpdate?.(next);
-        return next;
       } catch (err) {
         // IN-1 (#1049): "Network error." only when no answer came back. An
         // answer with no usable server message gets copy for its class, by
@@ -166,8 +180,21 @@ export function useIntakeAutoSave(
         setSavesInFlight((n) => n - 1);
         publish();
       }
+      // OUTSIDE the try (#1093 item 2): a throw here is the caller's bug, not
+      // a failed save, so it is logged and re-thrown as itself rather than
+      // reported to the client as "Network error.". The wizard calls
+      // `void autoSave.save(...)`, so the re-throw surfaces as an unhandled
+      // rejection in the console: loud, on purpose. Its `onUpdate` is a
+      // `setState`, which does not throw today.
+      try {
+        onUpdate?.(next);
+      } catch (err) {
+        console.error("[intake] onUpdate threw after a save landed", err);
+        throw err;
+      }
+      return next;
     },
-    [onUpdate, onRefused, keeps, publish],
+    [onUpdate, onRefused, keeps, clientId, publish],
   );
 
   return { saveState, savesInFlight, save, setSaveState };

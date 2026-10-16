@@ -72,10 +72,16 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  */
 export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
-    // TD-5: estimates the total includes are stated here too (copy E6).
+    // #1215: the files for the same list state the uncosted count, so the
+    // dashboard does too (approved on #736, 6216024281). TD-5: estimates the
+    // total includes are stated after it (copy E6). Order: the note, then the
+    // no-cost sentence, then E6.
+    const noCost = noCostSentence(data.no_cost_count);
     const estimates = aiEstimateSentence(data.ai_estimate_count);
     const note = "May not be complete - upload not reconciled";
-    return estimates === null ? note : `${note} · ${estimates}`;
+    return [note, noCost, estimates]
+      .filter((part): part is string => part !== null)
+      .join(" · ");
   }
   if (data.spend_completeness === "partial") {
     // TD-10 (for #1048): the count of tools the total leaves out follows any

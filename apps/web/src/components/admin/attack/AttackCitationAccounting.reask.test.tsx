@@ -36,7 +36,7 @@ describe("AttackCitationAccounting: the re-ask line (#1047)", () => {
     render(<AttackCitationAccounting result={result(over)} />);
     // The positive state first: the panel rendered.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /4 tool citations checked against/,
+      /We checked 4 of these\./,
     );
     expect(screen.queryByTestId("attack-reask")).toBeNull();
   });
