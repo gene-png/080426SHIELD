@@ -999,13 +999,6 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
             />
             <DispositionHelp />
-            {categories === "error" ? (
-              // PLACEHOLDER copy (#1176), pending approval on #736. A status,
-              // not an alert: the table stays usable but for this one column.
-              <p className="text-sm text-status-danger-fg" role="status">
-                Categories could not be loaded.
-              </p>
-            ) : null}
             <EditableCapabilityTable
               categories={categories === "error" ? null : categories}
               items={list.items}
@@ -1014,6 +1007,13 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
+            {categories === "error" ? (
+              // PLACEHOLDER copy (#1176), pending approval on #736. A status,
+              // not an alert: the table stays usable but for this one column.
+              <p className="text-sm text-status-danger-fg" role="status">
+                Categories could not be loaded.
+              </p>
+            ) : null}
             {splitError ? (
               <p className="text-sm text-status-danger-fg" role="alert">
                 {splitError}
