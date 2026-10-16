@@ -12,6 +12,8 @@ import { IntakeWizard } from "./IntakeWizard";
  * intake." and never submitted.
  */
 
+const SUBMIT_URL = "/api/proxy/intake/submit?client_id=client-1213";
+
 vi.mock("next-auth/react", () => ({
   useSession: () => ({ data: { user: { email: "c@example.com" } } }),
 }));
@@ -54,7 +56,8 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/proxy/intake/submit" && init?.method === "POST") {
+      // #1262 (on main since #1335): submit names the client the wizard loaded.
+      if (url === SUBMIT_URL && init?.method === "POST") {
         return new Response("<html>Sign in to the network</html>", {
           status: 200,
         });
@@ -89,7 +92,7 @@ describe("IntakeWizard: Submit answered by a 2xx we cannot read (#1213)", () => 
     });
     // The submit really went out, so what follows is about its answer.
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      "/api/proxy/intake/submit",
+      SUBMIT_URL,
       expect.objectContaining({ method: "POST" }),
     );
     expect(await screen.findByText(OUTCOME_UNKNOWN)).toBeVisible();
