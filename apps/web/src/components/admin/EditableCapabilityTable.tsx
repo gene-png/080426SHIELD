@@ -175,7 +175,7 @@ function CategorySelect({
     >
       <option value="">{uncategorized}</option>
       {offList ? (
-        <option value={value}>{`${value} (not on the list)`}</option>
+        <option value={value ?? ""}>{`${value} (not on the list)`}</option>
       ) : null}
       {categories.categories.map((c) => (
         <option key={c} value={c}>

@@ -152,8 +152,11 @@ export function TechDebtWorkspace({
   >(null);
   React.useEffect(() => {
     let cancelled = false;
-    try {
-      fetchCategories().then(
+    // Started inside the chain, so even a synchronous throw arrives as a
+    // rejection and is handled here, after the effect has returned.
+    Promise.resolve()
+      .then(() => fetchCategories())
+      .then(
         (c) => {
           if (!cancelled) setCategories(c);
         },
@@ -164,10 +167,6 @@ export function TechDebtWorkspace({
           if (!cancelled) setCategories("error");
         },
       );
-    } catch (err) {
-      console.warn("[TechDebtWorkspace] category list not loaded", err);
-      setCategories("error");
-    }
     return () => {
       cancelled = true;
     };
@@ -1001,8 +1000,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
             />
             <DispositionHelp />
             {categories === "error" ? (
-              // PLACEHOLDER copy (#1176), pending approval on #736.
-              <p className="text-sm text-status-danger-fg" role="alert">
+              // PLACEHOLDER copy (#1176), pending approval on #736. A status,
+              // not an alert: the table stays usable but for this one column.
+              <p className="text-sm text-status-danger-fg" role="status">
                 Categories could not be loaded.
               </p>
             ) : null}
