@@ -31,7 +31,14 @@ export function EnsureActiveClient({
   } | null>(null);
   const clientId =
     resolved && resolved.serviceId === serviceId ? resolved.clientId : null;
-  const [error, setError] = React.useState<string | null>(null);
+  // #1266: the error belongs to the service whose lookup failed, the same
+  // derivation as the client, so a new service never shows the last one's.
+  const [failed, setFailed] = React.useState<{
+    serviceId: string;
+    message: string;
+  } | null>(null);
+  const error =
+    failed && failed.serviceId === serviceId ? failed.message : null;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -45,6 +52,10 @@ export function EnsureActiveClient({
         }
         const svc = (await res.json()) as { client_id?: string };
         if (!svc.client_id) throw new Error("Service has no client.");
+        // #1266: a lookup a newer service superseded writes nothing. Its
+        // cookie write could otherwise land after the current one's and name
+        // the old client.
+        if (cancelled) return;
 
         // An ADVISORY read: its only job is to decide whether the POST
         // below is redundant. A failure here is safe to absorb because it
@@ -74,6 +85,7 @@ export function EnsureActiveClient({
           // is surfaced.
           cur = null;
         }
+        if (cancelled) return;
         if (cur?.active !== svc.client_id) {
           const set = await fetch("/api/active-client", {
             method: "POST",
@@ -93,9 +105,11 @@ export function EnsureActiveClient({
         if (!cancelled) setResolved({ serviceId, clientId: svc.client_id });
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't open workspace.",
-          );
+          setFailed({
+            serviceId,
+            message:
+              err instanceof Error ? err.message : "Couldn't open workspace.",
+          });
         }
       }
     })();
