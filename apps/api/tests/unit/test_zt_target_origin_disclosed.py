@@ -13,7 +13,7 @@ the two surfaces disclose the same set.
 The world, against an engagement target of 3 (CISA, Stage 4 elsewhere):
 - `a`: Stage 1 under its own target of 4, origin not recorded, notes "kept";
 - `b`: the same, but the consultant set it, notes "own words";
-- `c`: the same as `a` with no notes;
+- `c`: the same as `a` with no notes (None), and `e` with empty notes ("");
 - `d`: Stage 2 under its own target of 2, origin not recorded. It is no gap
   only because of that target (the engagement target would make it one).
 Expected text is written here from the ruling, never imported.
@@ -45,7 +45,7 @@ SENTENCE = "Who set this target is not recorded. An earlier AI run may have set 
 def _ctx():
     fw = ZtFrameworkCode.CISA_ZTMM_2_0
     caps = list(capabilities(fw))
-    a, b, c, d = (cap.code for cap in caps[:4])
+    a, b, c, d, e = (cap.code for cap in caps[:5])
     assessment = ZtAssessment(
         id=uuid.uuid4(),
         service_id=uuid.uuid4(),
@@ -63,6 +63,7 @@ def _ctx():
         },
         c: {"maturity_stage": 1, "target_stage": 4, "target_source": None, "notes": None},
         d: {"maturity_stage": 2, "target_stage": 2, "target_source": None, "notes": None},
+        e: {"maturity_stage": 1, "target_stage": 4, "target_source": None, "notes": ""},
     }
     answers = []
     for cap in caps:
@@ -75,7 +76,7 @@ def _ctx():
     targets = {x.capability_code: x.target_stage for x in answers}
     notes = {x.capability_code: x.notes for x in answers}
     gap = analyze_gaps(fw, stages, notes=notes, targets=targets, target_stage=3)
-    assert sorted(g.code for g in gap.gaps) == sorted([a, b, c]), gap.gaps
+    assert sorted(g.code for g in gap.gaps) == sorted([a, b, c, e]), gap.gaps
     ctx = build_context(
         client_legal_name="Atlas Defense Solutions",
         service_title="Zero Trust Assessment",
@@ -85,15 +86,15 @@ def _ctx():
         score=compute(fw, stages),
         gap=gap,
     )
-    return ctx, a, b, c, d
+    return ctx, a, b, c, d, e
 
 
 def test_the_docx_lists_every_unrecorded_target_under_the_gap_table() -> None:
     from docx import Document
 
-    ctx, a, b, c, d = _ctx()
+    ctx, a, b, c, d, e = _ctx()
     paragraphs = [p.text for p in Document(io.BytesIO(render_docx(ctx))).paragraphs]
-    for code in (a, c, d):
+    for code in (a, c, d, e):
         assert f"{code}: {SENTENCE}" in paragraphs, (code, paragraphs)
     assert f"{b}: {SENTENCE}" not in paragraphs
 
@@ -101,10 +102,10 @@ def test_the_docx_lists_every_unrecorded_target_under_the_gap_table() -> None:
 def test_the_pdf_lists_every_unrecorded_target() -> None:
     from pypdf import PdfReader
 
-    ctx, a, b, c, d = _ctx()
+    ctx, a, b, c, d, e = _ctx()
     raw = render_pdf(ctx)
     text = " ".join(" ".join(p.extract_text() for p in PdfReader(io.BytesIO(raw)).pages).split())
-    for code in (a, c, d):
+    for code in (a, c, d, e):
         assert f"{code}: {SENTENCE}" in text, (code, text)
     assert f"{b}: {SENTENCE}" not in text
 
@@ -112,18 +113,19 @@ def test_the_pdf_lists_every_unrecorded_target() -> None:
 def test_the_xlsx_appends_to_notes_and_lists_a_code_with_no_row() -> None:
     from openpyxl import load_workbook
 
-    ctx, a, b, c, d = _ctx()
+    ctx, a, b, c, d, e = _ctx()
     ws = load_workbook(io.BytesIO(render_xlsx(ctx)))["Gap Plan"]
     assert ws.cell(row=2, column=8).value == "Notes"
-    notes = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=8).value for r in (3, 4, 5)}
-    assert set(notes) == {a, b, c}, notes
+    notes = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=8).value for r in (3, 4, 5, 6)}
+    assert set(notes) == {a, b, c, e}, notes
     # Appended, never replacing the row's own notes.
     assert notes[a] == f"kept {SENTENCE}", notes
     # No notes of its own: exactly the sentence, with no stray separator.
     assert notes[c] == SENTENCE, notes
+    assert notes[e] == SENTENCE, notes  # "" is no notes too: no leading space
     # A recorded origin: the row's notes byte for byte.
     assert notes[b] == "own words", notes
     # `d` has no row, so it gets the line under the table.
-    below = [ws.cell(row=r, column=1).value for r in range(6, ws.max_row + 1)]
+    below = [ws.cell(row=r, column=1).value for r in range(7, ws.max_row + 1)]
     assert f"{d}: {SENTENCE}" in below, below
     assert f"{a}: {SENTENCE}" not in below, "a shown row is disclosed in its Notes"
