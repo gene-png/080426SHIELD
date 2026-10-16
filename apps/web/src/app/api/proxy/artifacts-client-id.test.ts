@@ -2,12 +2,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #1129: the artifacts list proxy takes the client from `?client_id=` when
- * the request names one, so a workspace's document list is scoped to the
- * workspace, not to the active-client cookie another tab may have rewritten.
- * With no `client_id` it keeps the cookie (the client wizard's read names
- * none). The handler is CALLED, with `fetch` standing in for the api, and the
- * cookie names ANOTHER tenant throughout.
+ * #1129 and #1262: the artifacts proxy takes the client from `?client_id=`
+ * when the request names one, for the list (GET) AND the upload (POST), so a
+ * workspace's documents are listed and FILED under the workspace's client,
+ * not the active-client cookie another tab may have rewritten. With no
+ * `client_id` it keeps the cookie (the client wizard names none); an EMPTY one
+ * is refused, as the download proxy does. The handlers are CALLED, with
+ * `fetch` standing in for the api, and the cookie names ANOTHER tenant
+ * throughout.
  */
 
 const COOKIE_CLIENT = "00000000-0000-4000-8000-00000000c00c";
@@ -69,10 +71,53 @@ describe("GET /api/proxy/artifacts and the workspace's client (#1129)", () => {
     });
   });
 
+  it("refuses an EMPTY ?client_id= rather than falling back to the cookie", async () => {
+    const { GET } = await import("./artifacts/route");
+    const res = await GET(
+      new Request("http://localhost/api/proxy/artifacts?client_id="),
+    );
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps the cookie when the request names no client", async () => {
     const { GET } = await import("./artifacts/route");
     const res = await GET(new Request("http://localhost/api/proxy/artifacts"));
     expect(res.status).toBe(200);
     expect(sent().clientId).toBe(COOKIE_CLIENT);
+  });
+});
+
+function uploadRequest(query: string): Request {
+  const form = new FormData();
+  form.append("file", new Blob(["host,os"], { type: "text/csv" }), "a.csv");
+  return new Request(`http://localhost/api/proxy/artifacts${query}`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+describe("POST /api/proxy/artifacts files under the workspace's client (#1262)", () => {
+  it("forwards ?client_id= as X-Client-Id, not the cookie", async () => {
+    const { POST } = await import("./artifacts/route");
+    const res = await POST(uploadRequest(`?client_id=${WORKSPACE_CLIENT}`));
+    expect(res.status).toBe(200);
+    expect(sent()).toEqual({
+      path: "/artifacts",
+      clientId: WORKSPACE_CLIENT,
+    });
+  });
+
+  it("keeps the cookie when the request names no client", async () => {
+    const { POST } = await import("./artifacts/route");
+    await POST(uploadRequest(""));
+    expect(sent().clientId).toBe(COOKIE_CLIENT);
+  });
+
+  it("refuses an EMPTY ?client_id=", async () => {
+    const { POST } = await import("./artifacts/route");
+    const res = await POST(uploadRequest("?client_id="));
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ A guard, not a fix: it holds on main, and pins that it keeps holding.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -120,3 +121,35 @@ def test_a_client_sending_another_tenants_id_still_sees_only_its_own(env) -> Non
     ids = {item["id"] for item in r.json()["items"]}
     assert a_upload in ids
     assert b_upload not in ids
+
+
+def test_a_client_uploading_with_another_tenants_id_files_under_its_own(env) -> None:
+    """#1262's twin guard: the upload's `?client_id=` cannot file a client's
+    document under another tenant either."""
+    app_client, TestSession = env
+    _register(app_client, "admin@example.com")  # first registrant: platform admin
+    a = _register(app_client, "alice@example.com")
+    _register(app_client, "bob@other.example")
+
+    from app.models.artifact import Artifact
+    from app.models.user import User
+
+    with TestSession() as db:
+        tenant = {
+            u.email: u.client_id
+            for u in db.execute(select(User)).scalars()
+            if u.email in {"alice@example.com", "bob@other.example"}
+        }
+    r = app_client.post(
+        "/artifacts",
+        headers={
+            "Authorization": f"Bearer {a['tokens']['access_token']}",
+            "X-Client-Id": str(tenant["bob@other.example"]),
+        },
+        files={"file": ("a.csv", b"host,os\na,linux\n", "text/csv")},
+    )
+    assert r.status_code == 201, r.text
+    with TestSession() as db:
+        row = db.get(Artifact, uuid.UUID(r.json()["id"]))
+        assert row is not None
+        assert row.client_id == tenant["alice@example.com"]

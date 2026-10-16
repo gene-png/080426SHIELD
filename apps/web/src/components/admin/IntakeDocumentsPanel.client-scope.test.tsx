@@ -4,7 +4,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
-import { WorkspaceClientProvider } from "./EnsureActiveClient";
+import { WorkspaceClientProvider } from "./workspaceClient";
 
 /**
  * #1129: the panel's document list is scoped to the workspace's OWN client,
