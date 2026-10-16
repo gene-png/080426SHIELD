@@ -15,6 +15,14 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1198 item 1, intake Step 3's title and phone can be cleared.** An emptied title or phone is stored as NULL on save and on submit; display_name and timezone still cannot be cleared. Status: the 2026-10-16 #1198 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-16: #1207 item 1, intake auto-save lets a typed value go only on a 422.** A 400 or 409 on an intake save no longer drops what the client typed: on that route neither judges the value. Status: the 2026-10-16 #1207 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-16: #1262, the /intake residual: an admin's intake names the client it loaded.** Saves, uploads, upload lists and submit no longer follow the shared active-client cookie to another tenant. Status: the 2026-10-16 #1262 residual entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-16: #1282, intake Step 3 no longer writes a contact override onto the submitter's account.** Status: the 2026-10-16 #1282 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1093 item 2, an intake save answered 2xx is never "Network error."** A save whose 2xx answer cannot be read now says its outcome is unknown, and a bug in the wizard's state update fails loudly instead of being shown as a failed save. Status: the 2026-10-16 #1093 item 2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1115, intake auto-save keeps a value the server did not judge.** A failed intake save drops what the client typed only on a 400, 409 or 422; a 401, 403 or 429 keeps it and says so, and a bare 5xx from in front of the api says the outcome is unknown. Status: the 2026-10-16 #1115 entry in `DELIVERY_PLAN.md`'s MVP completion path.
