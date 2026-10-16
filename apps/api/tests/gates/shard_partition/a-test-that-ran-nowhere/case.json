@@ -1,0 +1,16 @@
+{
+ "incident": "The failure sharding makes possible: a split that loses a test is a test CI never runs -- #540's defect reached through the shard plugin, which narrows by environment where check_ci_selection cannot see. The aggregate must go red and name it.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "verify",
+  "--full",
+  "{dir}/full.txt",
+  "--of",
+  "2",
+  "--ran",
+  "{dir}/ran-1.txt",
+  "{dir}/ran-2.txt"
+ ],
+ "stdout_contains": "selected but ran in no shard: tests/unit/test_b.py::test_1"
+}
