@@ -793,5 +793,6 @@ __all__ = [
     "compute",
     "effective_target_stages",
     "engagement_target_capability_count",
+    "pillar_weight",
     "resolve_target_stage",
 ]

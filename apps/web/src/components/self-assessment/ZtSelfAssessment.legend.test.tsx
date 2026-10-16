@@ -108,6 +108,13 @@ describe("ZtSelfAssessment Z2: the client's legend", () => {
     render(<ZtSelfAssessment serviceId="s1" framework="cisa_ztmm_2_0" />);
     // The positive state first.
     expect(await screen.findAllByText(Z2_CLIENT)).toHaveLength(1);
+    // Z2 sits UNDER the stage buttons: after the last stage picker.
+    const groups = screen.getAllByRole("radiogroup");
+    expect(
+      groups[groups.length - 1].compareDocumentPosition(
+        screen.getByText(Z2_CLIENT),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.queryByText(Z2_ADMIN)).toBeNull();
     expect(screen.queryByText(Z1)).toBeNull();
   });

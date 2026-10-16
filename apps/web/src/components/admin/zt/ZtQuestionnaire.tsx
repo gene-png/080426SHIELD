@@ -109,7 +109,6 @@ export function ZtQuestionnaire({
         active={active}
         onChange={setActive}
       />
-      <p className="text-xs text-ink-tertiary">{LEGEND}</p>
       {activePillar ? (
         <div
           role="tabpanel"
@@ -223,6 +222,8 @@ export function ZtQuestionnaire({
               );
             })}
           </ul>
+          {/* Z2: once, under the stage buttons. */}
+          <p className="text-xs text-ink-tertiary">{LEGEND}</p>
         </div>
       ) : null}
     </section>

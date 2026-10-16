@@ -73,6 +73,13 @@ describe("ZtQuestionnaire Z1 and Z2 (admin)", () => {
     // The positive state first.
     expect(screen.getAllByText(Z1)).toHaveLength(2);
     expect(screen.getAllByText(Z2_ADMIN)).toHaveLength(1);
+    // Z2 sits UNDER the stage buttons: after the last stage picker.
+    const groups = screen.getAllByRole("radiogroup");
+    const legend = screen.getByText(Z2_ADMIN);
+    expect(
+      groups[groups.length - 1].compareDocumentPosition(legend) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const flagged = screen
       .getAllByText(Z1)
       .map((el) => el.closest("li")?.textContent ?? "");
