@@ -1370,6 +1370,19 @@ function RiskRegisterBody({
               {register.zt_capped_target_note}
             </p>
           ) : null}
+          {/* #1343: the API's own lines (`risk/zt_target_origin.py`), one per
+              ZT finding whose target has no recorded origin, beside the cap
+              note, as the files print them. */}
+          {register.zt_unrecorded_target_notes?.length ? (
+            <ul
+              className="rounded-md border border-border bg-surface-sunken p-3 text-sm text-ink-secondary"
+              data-testid="risk-zt-unrecorded-targets"
+            >
+              {register.zt_unrecorded_target_notes.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
           {/* #474 D' (Gene, #736 5984256202): where the register's CSF risks
               come from, in the API's own sentence (`risk/csf_source.py`),
               rendered as given. Null when the register has no CSF findings.
