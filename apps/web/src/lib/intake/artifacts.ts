@@ -32,8 +32,8 @@ export class ArtifactUploadError extends Error {
 /**
  * `clientId`, when given, files the upload under that tenant explicitly
  * (#1262): an admin workspace passes its own client, so a document is not
- * stored under whichever client the shared cookie names. The client wizard
- * passes none.
+ * stored under whichever client the shared cookie names, and the intake
+ * wizard passes the client it loaded (the `/intake` residual).
  */
 export async function uploadArtifact(
   file: File,
@@ -60,8 +60,15 @@ export async function uploadArtifact(
   return payload as ArtifactSummary;
 }
 
-export async function listArtifacts(): Promise<ArtifactListResponse> {
-  const res = await fetch("/api/proxy/artifacts", { cache: "no-store" });
+/** `clientId`: #1262's `/intake` residual; the client the wizard loaded, so
+ *  the list cannot follow the shared cookie to another tenant. */
+export async function listArtifacts(
+  clientId?: string,
+): Promise<ArtifactListResponse> {
+  const url = clientId
+    ? `/api/proxy/artifacts?client_id=${encodeURIComponent(clientId)}`
+    : "/api/proxy/artifacts";
+  const res = await fetch(url, { cache: "no-store" });
   const payload = await safeJson(res);
   if (!res.ok || typeof payload === "string") {
     throw new ArtifactUploadError(res.status, payload);

@@ -56,7 +56,10 @@ const DOT: Record<StageState, string> = {
 const TEXT: Record<StageState, string> = {
   complete: "text-slate-700",
   current: "text-brand-700 font-semibold",
-  pending: "text-slate-400",
+  // #1356: the design token for de-emphasised text, 4.84:1 on the sunken
+  // surface (WCAG AA is 4.5:1) and still lighter than complete. It was
+  // text-slate-400, 2.33:1.
+  pending: "text-ink-tertiary",
 };
 
 /** Screen-reader wording — the dot colours alone are not an accessible status. */

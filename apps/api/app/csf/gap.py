@@ -74,6 +74,10 @@ class Gap:
     gap_size: int
     priority_score: float
     notes: str | None
+    #: The function's weight the priority multiplies by (`FUNCTION_WEIGHTS`),
+    #: as stored, so a screen can show the priority's working (W6, #736
+    #: 6205956728).
+    weight: float
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,7 @@ def _row_for(sc: Subcategory, current: int, target: int, notes: str | None) -> G
         gap_size=gap_size,
         priority_score=priority,
         notes=notes,
+        weight=weight,
     )
 
 

@@ -23,6 +23,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
+**2026-10-16: #1116, intake website "https:8080" is refused.** A website typed as a bare `http`/`https` scheme followed by a digit, or as a bare number that `HttpUrl` would turn into an IP address, is refused instead of being stored with a nonsense host. Status: the 2026-10-16 #1116 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1266, EnsureActiveClient's error and cookie write follow the current service.** Status: the 2026-10-16 #1266 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1262, a workspace upload is filed under the workspace's client.** A document dropped in a client's Tech Debt workspace is stored under that client even if another tab switched the active client. Status: the 2026-10-16 #1262 entry in `DELIVERY_PLAN.md`'s MVP completion path.

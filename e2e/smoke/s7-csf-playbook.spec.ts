@@ -1,17 +1,24 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test, type APIResponse, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type APIResponse,
+  type Page,
+} from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
-import { atlasServiceId } from "../helpers/ids";
+import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
 
 /**
  * SMOKE_TEST.md section 7 (T7): the NIST CSF 2.0 full Playbook (Work Order D4).
  *
- * Admin opens the seeded Atlas CSF service, layers a fresh DRAFT on top (the
- * seeded assessment is RELEASED, i.e. read-only), then walks the Playbook:
+ * Admin opens a private CSF service minted under Atlas for this test (#1123
+ * item 1: the seeded service has released work, so a plain create over it is
+ * refused), opens a fresh DRAFT on it, then walks the Playbook:
  *   1. Seed Working Profiles -> ~106 subcategories x 3 tiers.
  *   2. Run AI drafts the five dimensions + narrative (fixture-mode
  *      LLM, T6b); the panel accounts for every suggestion — "AI applied X of Y
@@ -66,61 +73,42 @@ const DIM_LABELS = [
 ];
 
 /**
- * Open the CSF workspace and make sure the latest assessment is a DRAFT.
- * With `fresh: true` a new draft version is always minted, so seeding and the
- * AI run start from empty rows (deterministic on every re-run).
+ * Mint a private CSF service under Atlas, open its workspace, and create its
+ * first DRAFT. Each call starts from empty rows, so seeding and the AI run are
+ * deterministic on every re-run. Returns the service id.
  */
 async function openWorkspaceOnDraft(
   page: Page,
-  opts: { fresh?: boolean } = {},
-): Promise<void> {
+  request: APIRequestContext,
+): Promise<string> {
+  // #1123 item 1: a plain create over released work is refused, and the
+  // seeded Atlas CSF service has a RELEASED version. So this spec mints a
+  // PRIVATE CSF service under Atlas, as s5, s6 and s11 do, and creates its
+  // first version.
+  const token = await adminApiToken(request);
+  const clientId = await atlasClientIdViaApi(request, token);
+  const svc = await (
+    await request.post(`${API_BASE}/csf/services`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Client-Id": clientId },
+      data: { kind: "nist_csf", title: "E2E CSF Playbook" },
+    })
+  ).json();
+  const csfServiceId = svc.id as string;
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-  // Seeded Atlas Defense "NIST CSF 2.0" service (scripts/seed_demo.py).
-  const csfServiceId = await atlasServiceId(page, "nist_csf");
   await page.goto(`/admin/services/${csfServiceId}/csf`);
   await expect(
     page.getByRole("heading", { name: "NIST CSF 2.0 Assessment" }),
   ).toBeVisible({ timeout: 30000 });
-  // Wait for the status pill so we know the latest-assessment fetch resolved.
-  await expect(
-    page
-      .getByText(/(Draft|Submitted|Approved|Released) v\d+|No assessment yet/)
-      .first(),
-  ).toBeVisible({ timeout: 30000 });
-
-  const draftVisible = await page.getByText(/Draft v\d+/).isVisible();
-  if (opts.fresh) {
-    // The seeded assessment is RELEASED (read-only) and re-runs need clean
-    // rows. T7 added a draft-exists guard: POST now REUSES an open draft
-    // instead of minting a new version, so a plain POST would hand back the
-    // previous run's already-seeded/AI-drafted draft. Close any open draft
-    // first (self-assessment/submit moves it out of DRAFT; a 404/409 when
-    // there's nothing open is expected and ignored), so the following POST
-    // cuts a genuinely fresh v+1 with empty rows.
-    await page.request.post(
-      `/api/proxy/csf/services/${csfServiceId}/self-assessment/submit`,
-      { data: {} },
-    );
-    const created = await page.request.post(
-      `/api/proxy/csf/services/${csfServiceId}/assessments`,
-    );
-    expect(created.ok()).toBeTruthy();
-    await page.reload();
-    await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
-  } else if (!draftVisible) {
-    // No open draft yet: mint one. The T7 guard makes any later POST reuse it,
-    // so this stays idempotent across re-runs (the active-client cookie is
-    // already set by EnsureActiveClient).
-    const created = await page.request.post(
-      `/api/proxy/csf/services/${csfServiceId}/assessments`,
-    );
-    expect(created.ok()).toBeTruthy();
-    await page.reload();
-    await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
-  }
+  const created = await page.request.post(
+    `/api/proxy/csf/services/${csfServiceId}/assessments`,
+  );
+  expect(created.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
   // Let the (StrictMode-duplicated) initial loads settle so a stale duplicate
   // response can't land mid-test and clobber fresher state.
   await page.waitForLoadState("networkidle").catch(() => undefined);
+  return csfServiceId;
 }
 
 /** Wait for one dimension-scores PATCH triggered by `action` to succeed. */
@@ -158,12 +146,13 @@ async function poamSaved(
 
 test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative, editor math is live and evidence does not cap a draft", async ({
   page,
+  request,
 }) => {
   // Long flow (sign-in + draft + seed 318 rows + run-ai + 7 PATCHes) against a
   // next-dev server; requests can queue for tens of seconds under load.
   test.slow();
   test.setTimeout(300_000);
-  await openWorkspaceOnDraft(page, { fresh: true });
+  const csfServiceId = await openWorkspaceOnDraft(page, request);
 
   // --- Seed Working Profiles -> 106 subcategories across 3 tiers -----------
   // A fresh draft is always unseeded (the branch guards a crashed re-entry).
@@ -230,7 +219,6 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   // dimension. Record notes on the first subcategory of the first function,
   // the tab the questionnaire opens on, through the API its notes field saves
   // to; the run under test is the AI's.
-  const csfServiceId = await atlasServiceId(page, "nist_csf");
   const catalogRes = await page.request.get("/api/proxy/csf/catalog");
   expect(catalogRes.ok()).toBeTruthy();
   const catalog = (await catalogRes.json()) as {
@@ -382,12 +370,12 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
 
 test("Enterprise roll-up shows tier levels/rule/target/priority and Export produces 5 downloadable files", async ({
   page,
+  request,
 }) => {
   test.slow();
   test.setTimeout(300_000);
-  // Reuses the seeded + AI-drafted draft from the previous test (same DB);
-  // openWorkspaceOnDraft + the seed fallback below make it self-sufficient.
-  await openWorkspaceOnDraft(page);
+  // Its own private service and fresh draft; the seed step below fills it.
+  const csfServiceId = await openWorkspaceOnDraft(page, request);
 
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
   const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
@@ -403,7 +391,6 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   await page.waitForLoadState("networkidle").catch(() => undefined);
 
   // --- Force a deterministic gap: target L5 on the second subcategory ------
-  // (the first one may carry the previous test's all-2s + evidence = L5 row).
   const subcatSelect = page.getByRole("combobox", { name: "Subcategory" });
   await expect(subcatSelect).toBeVisible({ timeout: 30000 });
   await expect
@@ -422,7 +409,6 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   // target and no gap, and only the noted subcategory was sent to Run AI. So
   // score this one on every tier (governance 1: total 1, level L1), through
   // the API the editor saves to, for the roll-up below to have three tiers.
-  const csfServiceId = await atlasServiceId(page, "nist_csf");
   for (const tier of ["high", "moderate", "low"]) {
     const profileRes = await page.request.get(
       `/api/proxy/csf/services/${csfServiceId}/profile/${tier}`,

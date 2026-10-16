@@ -123,6 +123,12 @@ def build(bundle: dict, version: str) -> tuple[list[tuple], list[tuple]]:
             },
             key=lambda s: order.get(s, len(order)),
         )
+        if not shorts:
+            # #1334: a technique with no tactic has no place in the client
+            # dashboard's blind spots by tactic (#1180), which refuses one
+            # loudly and so would take the whole page down. Refused here, at
+            # build time, instead.
+            raise CouldNotLook(f"{code} maps to no mitre-attack tactic")
         unknown = [s for s in shorts if s not in tid_by_short]
         if unknown:
             raise CouldNotLook(f"{code} names tactics not in the matrix: {unknown}")

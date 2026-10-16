@@ -54,11 +54,13 @@ function statusOf(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-/** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
- *  409 (the intake will never take it) or a 422. Only these let the typed
- *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
- *  so the client keeps what they typed and can save it again. */
-const JUDGED_THE_VALUE = new Set([400, 409, 422]);
+/** #1115 (advisor 6207611148), narrowed by #1207 item 1 (option (A),
+ *  6216024281): the status that JUDGED the value is a 422 only, the schema's
+ *  or the route's typed 422s. On PATCH /intake a 400 comes from
+ *  `current_client` or the proxy's "Invalid JSON body.", and nothing returns
+ *  a 409, so neither says anything about the value. Only a 422 lets the typed
+ *  value go; any other answer keeps it, so the client can save it again. */
+const JUDGED_THE_VALUE = new Set([422]);
 
 function isValueRefusal(err: unknown): boolean {
   const status = statusOf(err);
@@ -103,7 +105,7 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * `null` on failure. The SaveStatus indicator reads `saveState` directly.
  *
  * `onRefused(patch)` is called when the api ANSWERED and judged the value (a
- * 400, 409 or 422, #1115), so a caller holding the typed value can let it go:
+ * 422, #1115 and #1207), so a caller holding the typed value can let it go:
  * the server does not hold it and never will (review of #757, finding 2).
  * Any other answer keeps it.
  *
@@ -111,11 +113,16 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * screen after a failed save, which decides whether the client may be told it
  * is "still in the form". Its default, true, suits a caller with no fields of
  * its own (the hook's tests); the wizard passes its real answer.
+ *
+ * `clientId` (#1262, the `/intake` residual) is the client every save is
+ * scoped to: the wizard passes the client it loaded, so a save never follows
+ * the shared active-client cookie to another tenant.
  */
 export function useIntakeAutoSave(
   onUpdate?: (next: IntakeStateResponse) => void,
   onRefused?: (patch: IntakePatchRequest) => void,
   keeps: (patch: IntakePatchRequest) => boolean = () => true,
+  clientId?: string,
 ): AutoSaveHandle {
   const [saveState, setSaveState] = React.useState<SaveState>({ kind: "idle" });
   const [savesInFlight, setSavesInFlight] = React.useState(0);
@@ -154,7 +161,7 @@ export function useIntakeAutoSave(
       publish();
       let next: IntakeStateResponse;
       try {
-        next = await patchIntake(patch);
+        next = await patchIntake(patch, clientId);
         for (const f of own()) errors.current.delete(f);
       } catch (err) {
         // IN-1 (#1049): "Network error." only when no answer came back. An
@@ -187,7 +194,7 @@ export function useIntakeAutoSave(
       }
       return next;
     },
-    [onUpdate, onRefused, keeps, publish],
+    [onUpdate, onRefused, keeps, clientId, publish],
   );
 
   return { saveState, savesInFlight, save, setSaveState };

@@ -156,7 +156,10 @@ def test_a_regenerate_on_atlas_draws_csf_findings_from_the_playbook(seeded) -> N
         for sid, f in payload["findings"].items()
         if f["kind"] == "csf"
     }
-    assert csf_findings == {code: f"CSF {code}: level 1 of target 2" for code in V2_GAPS}
+    # Levels by name since #736 6216024281 item 3c (1 Ad hoc, 2 Developing).
+    assert csf_findings == {
+        code: f"CSF {code}: Ad hoc, below target Developing" for code in V2_GAPS
+    }
     # And the regenerated register's entries carry them (the drafted entries,
     # one per finding, as the fixture answers). Zero Trust entries share the
     # `questionnaire_response` source, so CSF ones are told apart by code.

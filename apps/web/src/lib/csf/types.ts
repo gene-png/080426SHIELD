@@ -152,6 +152,9 @@ export interface GapItem {
   gap_size: number;
   priority_score: number;
   notes: string | null;
+  /** The function weight `priority_score` multiplies `gap_size` by, as
+   * stored (`csf/gap.py::FUNCTION_WEIGHTS`). */
+  weight: number;
 }
 
 export interface GapAnalysis {
