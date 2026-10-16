@@ -246,6 +246,14 @@ EDIT_DRIVERS: dict[tuple[str, str], Callable[[World], Any]] = {
             f"/tech-debt/capability-items/{w.security_id}", headers=w.h, json={"notes": "renewal"}
         )
     ),
+    # #1174's bulk twin of the single security-classification confirm.
+    ("POST", "/tech-debt/capability-lists/{list_id}/items/security-classification/confirm"): (
+        lambda w: w.c.post(
+            f"/tech-debt/capability-lists/{w.list_id}/items/security-classification/confirm",
+            headers=w.h,
+            json={"item_ids": [w.other_id]},
+        )
+    ),
     # #641's bulk twin of the single-row disposition PATCH.
     ("POST", "/tech-debt/capability-lists/{list_id}/items/disposition"): (
         lambda w: w.c.post(

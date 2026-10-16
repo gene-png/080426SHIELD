@@ -440,6 +440,9 @@ class GapItem(BaseModel):
     target_stage: int
     gap_size: int
     priority_score: float
+    # Z4: the weight `priority_score` multiplied the gap by, as stored, so the
+    # gap list can show the working (`zt.scoring.pillar_weight`).
+    pillar_weight: float
     notes: str | None
 
 

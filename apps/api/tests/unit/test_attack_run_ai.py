@@ -1062,4 +1062,6 @@ def test_run_ai_never_sends_a_computed_parent_to_the_model(app_client) -> None:
     has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
     assert sent, "no batch reached the provider -- the spy saw nothing"
     assert has_children.isdisjoint(sent), sorted(has_children & set(sent))[:5]
-    assert sorted(sent) == sorted(t.id for t in TECHNIQUES if t.id not in has_children)
+    # A set: the spy answers nothing, so since #1047 every code is asked a
+    # second time, and the disjointness above covers that re-ask too.
+    assert sorted(set(sent)) == sorted(t.id for t in TECHNIQUES if t.id not in has_children)
