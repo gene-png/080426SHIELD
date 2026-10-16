@@ -158,13 +158,18 @@ export function EditableCapabilityTable({
       ),
     [items],
   );
-  // DERIVED, not stored: a chosen category no row has any more (an edit moved
-  // its last row) drops out of the filter, so a stale choice can never hide
-  // every row behind a filter that shows nothing selected.
+  // DERIVED for this render: a chosen category no row has any more (an edit
+  // moved its last row) drops out of the filter, so a stale choice can never
+  // hide every row behind a filter that shows nothing selected.
   const activeFilter = React.useMemo(
     () => filterCats.filter((c) => presentCategories.includes(c)),
     [filterCats, presentCategories],
   );
+  // ...and dropped from state too, so a later edit bringing the category back
+  // cannot switch on a filter the user has seen as off.
+  React.useEffect(() => {
+    if (activeFilter.length !== filterCats.length) setFilterCats(activeFilter);
+  }, [activeFilter, filterCats]);
   const ordered = React.useMemo(() => {
     const children = new Map<string, CapabilityItem[]>();
     for (const it of items) {

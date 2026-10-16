@@ -194,5 +194,17 @@ describe("filter by category (#1175)", () => {
     );
     expect(names()).toHaveLength(6);
     expect(screen.queryByText(/^Showing \d+ of \d+ rows$/)).toBeNull();
+    // A later edit brings the category back. The dropped choice must stay
+    // dropped: the user saw the filter as off, so nothing may switch it on.
+    rerender(
+      <EditableCapabilityTable
+        items={ITEMS.map((i) =>
+          i.id === "beta" ? { ...i, category: "SIEM/SOAR" } : i,
+        )}
+        onItemUpdate={() => {}}
+      />,
+    );
+    expect(names()).toHaveLength(6);
+    expect(screen.queryByText(/^Showing \d+ of \d+ rows$/)).toBeNull();
   });
 });
