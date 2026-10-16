@@ -81,9 +81,15 @@ describe("AttackCitationAccounting: the plain-English citation line (#1181)", ()
     );
   });
 
-  it("several rejections stay plural", () => {
-    expect(line({ citations_confirmed: 4, citations_rejected: 2 })).toContain(
-      " 2 were rejected.",
+  it("one on the list and one needing a closer look (singulars, 6220638526 item 5)", () => {
+    expect(
+      line({
+        citations_confirmed: 1,
+        citations_needs_review: 1,
+        citations_rejected: 2,
+      }),
+    ).toBe(
+      `${C1} We checked 4 of these. 1 is on the list. 1 needs a closer look. 2 were rejected.`,
     );
   });
 

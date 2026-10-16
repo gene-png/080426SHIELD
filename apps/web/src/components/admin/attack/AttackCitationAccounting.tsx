@@ -217,7 +217,7 @@ function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
  * Copy C-1 to C-5 approved verbatim (#736 comment 6216024281, from the
  * proposal in 6208173127); counts comma-formatted. C-2a and C-5a keep #115's
  * "completed batches only" qualifier on a partial run, and the singulars at
- * n = 1 are 6219475831 item 5.
+ * n = 1 are 6219475831 item 5 and 6220638526 item 5.
  */
 const CITATION_INTRO =
   "For each attack technique, the AI listed which of the client's tools help stop it, spot it or respond to it. Each time it named a tool, we checked that the tool is really on the client's approved list, so the AI can't make one up.";
@@ -246,14 +246,19 @@ function citationLine(
       total === 1 ? "It is on the list." : `All ${n(total)} are on the list.`;
     return `${CITATION_INTRO} ${checked} ${all} None need a closer look and none were rejected.`;
   }
+  // The singulars at n = 1 are 6219475831 item 5 and 6220638526 item 5.
   const onList =
     confirmed === 0
       ? "None are on the list."
-      : `${n(confirmed)} are on the list.`;
+      : confirmed === 1
+        ? "1 is on the list."
+        : `${n(confirmed)} are on the list.`;
   const closer =
     needsReview === 0
       ? "None need a closer look."
-      : `${n(needsReview)} need a closer look.`;
+      : needsReview === 1
+        ? "1 needs a closer look."
+        : `${n(needsReview)} need a closer look.`;
   const gone =
     rejected === 0
       ? "None were rejected."
