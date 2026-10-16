@@ -24,6 +24,15 @@ class ProxyError extends Error {
   }
 }
 
+/**
+ * #1262, the `/intake` residual: the client a call is scoped to. The wizard
+ * passes the client it LOADED, so a later call never follows the shared
+ * active-client cookie to another tenant; with none, the cookie, as before.
+ */
+function scoped(path: string, clientId?: string): string {
+  return clientId ? `${path}?client_id=${encodeURIComponent(clientId)}` : path;
+}
+
 export async function fetchIntake(): Promise<IntakeStateResponse> {
   const res = await fetch("/api/proxy/intake", { cache: "no-store" });
   if (!res.ok) {
@@ -34,22 +43,32 @@ export async function fetchIntake(): Promise<IntakeStateResponse> {
 
 export async function patchIntake(
   body: IntakePatchRequest,
+  clientId?: string,
 ): Promise<IntakeStateResponse> {
-  const res = await fetch("/api/proxy/intake", {
+  const res = await fetch(scoped("/api/proxy/intake", clientId), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const payload = await safeJson(res);
   if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as IntakeStateResponse;
+  // #1093 item 2: a 2xx whose body is not JSON. Thrown with its status, so
+  // the caller can tell it from no answer at all; a bare parse error carried
+  // none and read as "Network error.". The proxy never sends one, so the hook
+  // calls its outcome unknown.
+  if (typeof payload === "string") {
+    throw new ProxyError(res.status, payload);
+  }
+  return payload as IntakeStateResponse;
 }
 
 export async function submitIntake(
   body: IntakeSubmitRequest,
+  clientId?: string,
 ): Promise<IntakeStateResponse> {
-  const res = await fetch("/api/proxy/intake/submit", {
+  const res = await fetch(scoped("/api/proxy/intake/submit", clientId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

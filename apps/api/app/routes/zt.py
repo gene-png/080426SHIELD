@@ -36,7 +36,7 @@ from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
-from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, SOURCE_CONSULTANT, protected_keys
 from app.ai.runs import (
     RunContext,
     RunFailed,
@@ -50,7 +50,12 @@ from app.ai.runs import (
 from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import (
+    ParentGuard,
+    refuse_parent_changed_after_release,
+    refuse_parent_changed_during_release,
+    release_deliverable,
+)
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
@@ -105,6 +110,8 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    latest_released_version,
+    refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
 )
@@ -559,6 +566,7 @@ def get_catalog(
                 name=c.name,
                 outcome=c.outcome,
                 kind=c.kind,
+                max_stage=max_stage_for(cat_fw, c.code),
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code
@@ -781,8 +789,7 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             # a staff member named in notes is sent as [NAME] (as #863/#865
             # do for ATT&CK). Here, in the one builder, so the preview and the
             # run (`name_hints=req.preview.name_hints`) cannot differ. Its CSF
-            # twin (`routes/csf.py`, csf_score) is deliberately left to the
-            # CSF track and is still open on #1006.
+            # twin (`routes/csf.py`, csf_score) landed in #1261.
             name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
@@ -931,6 +938,9 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             assessment_id=str(a.id),
             capabilities=len(rows),
         )
+        # #1219: so the run records "not charged" rather than "not known" (a
+        # run the reaper ends stays "not known": the reaper never sees ctx).
+        ctx.declare_no_call()
         data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while
@@ -1308,6 +1318,12 @@ def create_assessment(
         )
         response.status_code = status.HTTP_200_OK
         return _serialize_assessment(db, prior, viewer=user)
+    # #1123 item 1: never a plain draft over released work; a revision only.
+    # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
+    # its next list by extraction and has no Start a revision, so it does not.
+    released = latest_released_version(db, ZtAssessment, ZtAssessmentStatus.RELEASED, svc.id)
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = ZtAssessment(
         service_id=svc.id,
@@ -1453,8 +1469,10 @@ def patch_answer(
                 detail=f"target_stage must be 1-{max_stage}.",
             )
         row.target_stage = ts
+        row.target_source = SOURCE_CONSULTANT  # #982: the consultant set it
     elif "target_stage" in data:
         row.target_stage = None
+        row.target_source = None  # no target, so no origin (#982)
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
@@ -2377,6 +2395,9 @@ def release_zt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    # #1123 (a) guards every release, the repair re-release included (#736
+    # 6220094031 item 6). On a repair its miss raises the repair refusal,
+    # which is true for a report the client already has.
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2384,8 +2405,26 @@ def release_zt_deliverable(
         user=user,
         kinds=(ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD),
         action="zt.deliverable.released",
+        parent_guard=_zt_release_guard(deliverable_id),
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _zt_release_guard(deliverable_id: uuid.UUID) -> ParentGuard:
+    """#1123 (a): the approval in force must predate the deliverable's
+    finalize, judged in the flip's own WHERE. A RATCHET: no product path fires
+    it today (an approved ZT version cannot be re-approved, and
+    `start_revision` makes a new version rather than reopening this one). It
+    would fire if #1120's unlock ever re-approves a version after its report
+    was built. CSF's twin is the CSF track's (#1123)."""
+    finalized_at = (
+        select(Deliverable.finalized_at).where(Deliverable.id == deliverable_id).scalar_subquery()
+    )
+    return ParentGuard(
+        condition=lambda _parent_id: ZtAssessment.approved_at <= finalized_at,
+        refusal=lambda _db, _parent_id: refuse_parent_changed_during_release(),
+        repair_refusal=lambda _db, _parent_id: refuse_parent_changed_after_release(),
+    )
 
 
 # ---------------------------------------------------------------------------

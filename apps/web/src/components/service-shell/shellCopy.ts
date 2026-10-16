@@ -7,6 +7,8 @@
  */
 import type { ServiceType } from "@/lib/intake/types";
 
+import type { SectionKey } from "./SectionBar";
+
 /** A service kind a client can have open: every `ServiceType` but consultation. */
 export type FrameKind = Exclude<ServiceType, "consultation">;
 
@@ -55,6 +57,27 @@ export const SHELL_COPY = {
   overviewServicesHeading: "Services",
   /** 13 (new). The picker when there are no clients (ClientSwitcher's words). */
   pickerNone: "No clients yet",
+  /**
+   * 14. A section's tab title (approved in #736 issuecomment-6218890818 item
+   * 4): the section name, then the workspace title. No client name.
+   */
+  sectionTitle: (section: string, service: string) => `${section} · ${service}`,
+  /**
+   * 15. The header's "Next:" action for the current stage (same ruling). The
+   * header prints "Next:" itself. Stage-level for now; a service track may
+   * replace its line with a count line, which goes to the advisor first.
+   * `review` covers sign-off as well, because the API never makes `approve`
+   * current (see #1297): reworded in issuecomment-6220094031 item 4.
+   */
+  next: {
+    prepareInputs: "add the inputs",
+    prepareSelfAssessment: "wait for the client's self-assessment",
+    analyze: "run the AI draft",
+    review: "review and approve the AI draft",
+    approve: "approve the assessment",
+    generate: "generate the deliverable",
+    release: "release to the client",
+  },
 } as const;
 
 /**
@@ -72,10 +95,43 @@ export const STAGE_LABELS: Record<string, string> = {
   release: "Release",
 };
 
+/** Kinds whose `prepare` waits on the client's self-assessment. */
+function preparesWithClient(kind: FrameKind): boolean {
+  return kind !== "tech_debt" && kind !== "attack_coverage";
+}
+
+/**
+ * The "Next:" step for the CURRENT stage: its action and the section it links
+ * to. An unknown stage key throws (the header then shows its failure line).
+ */
+export function nextStep(
+  key: string,
+  kind: FrameKind,
+): { text: string; section: SectionKey } {
+  const n = SHELL_COPY.next;
+  switch (key) {
+    case "prepare":
+      return preparesWithClient(kind)
+        ? { text: n.prepareSelfAssessment, section: "overview" }
+        : { text: n.prepareInputs, section: "inputs" };
+    case "analyze":
+      return { text: n.analyze, section: "ai-draft" };
+    case "review":
+      return { text: n.review, section: "review" };
+    case "approve":
+      return { text: n.approve, section: "approve-and-release" };
+    case "generate":
+      return { text: n.generate, section: "generate" };
+    case "release":
+      return { text: n.release, section: "approve-and-release" };
+    default:
+      throw new Error(`nextStep: unknown stage key "${key}"`);
+  }
+}
+
 /** `ProgressStages`' rule: CSF and ZT's `prepare` waits on the client. */
 export function stageLabel(key: string, kind: FrameKind): string {
-  if (key === "prepare" && kind !== "tech_debt" && kind !== "attack_coverage")
-    return "Self-assessment";
+  if (key === "prepare" && preparesWithClient(kind)) return "Self-assessment";
   const label = STAGE_LABELS[key];
   if (!label) throw new Error(`stageLabel: unknown stage key "${key}"`);
   return label;

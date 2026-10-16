@@ -16,6 +16,7 @@ import {
   type CsfDashboardData,
   type CsfFunction,
 } from "@/lib/dashboards/csf";
+import { CURRENT_MATURITY_SUB, ratingGap } from "@/lib/csf/ratingCopy";
 import { renderedAgainstNote } from "@/lib/dashboards/frozenTarget";
 
 import type { JSX } from "react";
@@ -130,7 +131,8 @@ export function CsfDashboard({
         <KpiCard
           label="Current maturity"
           value={`${data.overall_label} · ${pctText(data.current_pct)}`}
-          sub="Averaged across all functions"
+          // C9 (#736 6205956728): this is the client's self-rating.
+          sub={CURRENT_MATURITY_SUB}
           accent={C.accent2}
         />
         <KpiCard
@@ -220,7 +222,8 @@ export function CsfDashboard({
                 <span style={{ color: "#e5e7eb", flex: 1 }}>{g.name}</span>
                 <span style={{ color: C.muted }}>{g.function_name}</span>
                 <span style={{ color: C.amber, fontWeight: 700 }}>
-                  Tier {g.current_tier} → {g.target_tier}
+                  {/* W5 (#736 6205956728): tiers by name. */}
+                  {ratingGap(g.current_tier, g.target_tier)}
                 </span>
               </div>
             ))}

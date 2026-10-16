@@ -17,10 +17,12 @@ import {
 } from "@/components/service-shell/frameRoutes";
 import {
   SectionBar,
+  SECTIONS,
   type SectionKey,
 } from "@/components/service-shell/SectionBar";
 import { ServiceHeader } from "@/components/service-shell/ServiceHeader";
 import {
+  nextStep,
   SHELL_COPY,
   stageLabel,
   type FrameKind,
@@ -41,8 +43,14 @@ interface Params {
 export async function generateMetadata(props: {
   params: Promise<Params>;
 }): Promise<Metadata> {
-  const kind = kindForSlug((await props.params).service);
-  return kind ? { title: WORKSPACE_TITLES[kind] } : {};
+  const { service, section } = await props.params;
+  const kind = kindForSlug(service);
+  // A section the kind does not have gets no title: the page is not found.
+  if (!kind || !isSectionOf(kind, section)) return {};
+  const label = SECTIONS.find((s) => s.key === section)?.label;
+  if (!label)
+    throw new Error(`client_frame: section "${section}" has no label`);
+  return { title: SHELL_COPY.sectionTitle(label, WORKSPACE_TITLES[kind]) };
 }
 
 /**
@@ -108,7 +116,11 @@ export default async function SectionPage(props: {
         hrefFor={(key) => sectionHref(clientId, kind, key, svc.service_id)}
       />
       <div className="mt-6">
-        <ExistingWorkspace kind={kind} serviceId={svc.service_id} />
+        <ExistingWorkspace
+          kind={kind}
+          serviceId={svc.service_id}
+          section={sectionKey}
+        />
       </div>
     </div>
   );
@@ -129,6 +141,30 @@ function currentStage(body: StagesBody, kind: FrameKind): string {
 }
 
 /**
+ * The header's "Next:" link: the CURRENT stage's step (#736
+ * issuecomment-6218890818 item 4). No current stage means every stage is
+ * complete, and then there is no Next: line.
+ */
+function nextLink(
+  body: StagesBody,
+  frame: ClientFrame,
+  svc: FrameService,
+): { text: string; href: string } | null {
+  const current = body.stages.find((s) => s.state === "current");
+  if (!current) return null;
+  const step = nextStep(current.key, svc.service_type);
+  return {
+    text: step.text,
+    href: sectionHref(
+      frame.client.id,
+      svc.service_type,
+      step.section,
+      svc.service_id,
+    ),
+  };
+}
+
+/**
  * The service header. Its read is the frame's, scoped to the URL's client. A
  * failure is SHOWN, in place of the header, and the workspace still renders:
  * losing the version line must not lose the workspace under it.
@@ -144,7 +180,11 @@ async function header(
     "overview",
     svc.service_id,
   );
-  let facts: { version: string; stage: string };
+  let facts: {
+    version: string;
+    stage: string;
+    next: { text: string; href: string } | null;
+  };
   try {
     const body = await apiFetch<StagesBody>(
       `/services/${encodeURIComponent(svc.service_id)}/stages`,
@@ -153,6 +193,7 @@ async function header(
     facts = {
       version: SHELL_COPY.version(body.version),
       stage: currentStage(body, kind),
+      next: nextLink(body, frame, svc),
     };
   } catch (err) {
     console.error(
@@ -181,7 +222,7 @@ async function header(
       version={facts.version}
       status={SHELL_COPY.status[svc.status] ?? svc.status}
       stage={facts.stage}
-      next={null}
+      next={facts.next}
     />
   );
 }

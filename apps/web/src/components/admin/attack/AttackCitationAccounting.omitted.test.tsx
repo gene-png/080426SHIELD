@@ -56,7 +56,7 @@ describe("AttackCitationAccounting: techniques the AI left out (#853)", () => {
     render(<AttackCitationAccounting result={result(over)} />);
     // The positive state first: the panel rendered.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /4 tool citations checked against/,
+      /We checked 4 of these\./,
     );
     expect(screen.queryByTestId("attack-omitted")).toBeNull();
     expect(screen.queryByText(/got no status from the AI/)).toBeNull();

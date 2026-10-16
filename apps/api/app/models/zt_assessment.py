@@ -123,6 +123,10 @@ class ZtAnswer(UUIDPKMixin, TimestampMixin, Base):
     # Work Order D3: per-capability target stage (gap = current < target).
     # NULL falls back to the assessment/engagement default target.
     target_stage: Mapped[int | None] = mapped_column(SmallInteger)
+    # #982 (migration 0076): who set `target_stage`. 'consultant' from the admin
+    # PATCH; NULL = origin not recorded (every target stored before 0076, some
+    # set by earlier AI runs). Cleared with the target.
+    target_source: Mapped[str | None] = mapped_column(String(16))
     notes: Mapped[str | None] = mapped_column(Text)
 
     # Work Order C2: a locked row is never changed by a Run-AI rerun.
