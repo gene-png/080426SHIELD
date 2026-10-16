@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { cn, EmptyState } from "@shield/design-system";
 
+import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
 import { type ArtifactSummary, uploadArtifact } from "@/lib/intake/artifacts";
 
 import type { JSX } from "react";
@@ -34,6 +35,9 @@ export function Dropzone({
   accept = DEFAULT_ACCEPT,
 }: DropzoneProps): JSX.Element {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // #1262: inside an admin workspace, file uploads under ITS client, never
+  // the shared cookie; null in the client wizard, which names none.
+  const workspaceClientId = useWorkspaceClientId();
   const [dragging, setDragging] = React.useState(false);
   const [items, setItems] = React.useState<UploadingItem[]>([]);
 
@@ -65,7 +69,11 @@ export function Dropzone({
         { id, name: file.name, size: file.size, status: "uploading" },
       ]);
       try {
-        const artifact = await uploadArtifact(file);
+        const artifact = await uploadArtifact(
+          file,
+          undefined,
+          workspaceClientId ?? undefined,
+        );
         setItem(id, { status: "done" });
         onUploaded(artifact);
       } catch (err) {
