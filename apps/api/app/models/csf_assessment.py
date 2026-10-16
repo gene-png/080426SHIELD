@@ -147,15 +147,16 @@ class CsfAnswer(UUIDPKMixin, TimestampMixin, Base):
 def _record_rollup_rules(_mapper: object, _connection: object, target: CsfAssessment) -> None:
     """#1077 review, F3: an APPROVED or RELEASED row never leaves `rollup_rules`
     NULL. Writers that set the status through the ORM without it (the demo
-    seed, fixtures) record 2, which is what NULL reads as
-    (`app/csf/rules.py`), so the stored value and the rendering agree and
-    0070's downgrade guard sees it. An explicit value (the backfill's 1) is
-    never overwritten. The approve route writes 2 itself, through Core.
+    seed, fixtures) record 3, which is what NULL reads as
+    (`app/csf/rules.py`, since Options 1 and 3), so the stored value and the
+    rendering agree and 0070's downgrade guard sees it. An explicit value (the
+    backfill's 1) is never overwritten. The approve route writes 3 itself,
+    through Core.
 
-    The literal 2 is `app.csf.rules.SCORED_TIERS`, not imported: models do not
+    The literal 3 is `app.csf.rules.UNCAPPED`, not imported: models do not
     import from `app.csf`."""
     if target.rollup_rules is None and target.status in (
         CsfAssessmentStatus.APPROVED,
         CsfAssessmentStatus.RELEASED,
     ):
-        target.rollup_rules = 2
+        target.rollup_rules = 3

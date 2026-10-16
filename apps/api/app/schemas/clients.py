@@ -619,6 +619,9 @@ class TechDebtCategorySpend(BaseModel):
     category: str
     total_usd: float
     count: int
+    #: #1214: the category's tools with no cost, by TD-10's one rule
+    #: (`overlap.no_cost_items`). Above 0, `total_usd` is a floor.
+    no_cost_count: int
 
 
 class TechDebtRedundancy(BaseModel):

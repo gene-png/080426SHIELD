@@ -1821,12 +1821,22 @@ def tech_debt_dashboard(
             (i.disposition, savings_cost(i)) for i in bucket["items"]
         )
 
+    def _category_spend(cat: str, b: dict) -> TechDebtCategorySpend:
+        # #1214: the category's own uncosted count, by the same rule as the
+        # headline's, so the categories add up to it.
+        return TechDebtCategorySpend(
+            category=cat,
+            total_usd=round(b["total"], 2),
+            count=b["count"],
+            no_cost_count=len(no_cost_items(b["items"])),
+        )
+
     spend_by_category = [
-        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        _category_spend(cat, b)
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["total"], reverse=True)
     ]
     sprawl_by_category = [
-        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        _category_spend(cat, b)
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
         if b["count"] > 1
     ]

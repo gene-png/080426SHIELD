@@ -1,4 +1,5 @@
 import type { AiSource } from "@/lib/aiSource/types";
+import { noCostSentence } from "@/lib/tech_debt/components";
 import { AI_ESTIMATE_LABEL } from "@/lib/tech_debt/costEstimate";
 
 /**
@@ -29,6 +30,8 @@ export interface CategorySpend {
   category: string;
   total_usd: number;
   count: number;
+  /** #1214: tools in the category with no cost; above 0 the total is a floor. */
+  no_cost_count: number;
 }
 
 export interface Redundancy {
@@ -136,13 +139,29 @@ export interface BarData {
   values: number[];
 }
 
-/** Top-N categories by spend for the horizontal bar. */
-export function spendBar(spend: CategorySpend[], topN = 10): BarData {
+/** Top-N categories by spend for the horizontal bar, each bar's row kept so
+ * its tooltip reads that row (#1214). */
+export function spendBar(
+  spend: CategorySpend[],
+  topN = 10,
+): BarData & { rows: CategorySpend[] } {
   const rows = spend.slice(0, topN);
   return {
     labels: rows.map((s) => s.category),
     values: rows.map((s) => s.total_usd),
+    rows,
   };
+}
+
+/** #1214: a bar's tooltip. A category holding a tool with no cost reads as a
+ * floor ("≥", the marker the redundancy card uses), with TD-10's sentence on
+ * a second line. Approved on #736 (6216024281), option (a): no bar or axis
+ * text changes. */
+export function spendTooltip(s: CategorySpend): string[] {
+  const noCost = noCostSentence(s.no_cost_count);
+  return noCost === null
+    ? [usdFull(s.total_usd)]
+    : [`≥ ${usdFull(s.total_usd)}`, noCost];
 }
 
 /** Tool-count-per-category (only sprawled categories) for the doughnut. */

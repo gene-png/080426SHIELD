@@ -117,7 +117,9 @@ The payload contains:
   - `notes`: the notes recorded on the answer, or null; and
   - `has_evidence`: true when supporting evidence was attached to the answer, false when it was not.
 
-`answers` may contain codes that are not in `subcategories`. Use only the answer whose key is the Subcategory being scored, and return no row for any code that is not in `subcategories`. A Subcategory with no rating, notes, or evidence has no entry in `answers`.
+`answers` may contain codes that are not in `subcategories`. Use only the answer whose key is the Subcategory being scored, and return no row for any code that is not in `subcategories`. SHIELD sends only Subcategories whose answer has notes.
+
+A Subcategory has notes when its entry in `answers` has `notes` that are not null, not empty, and not only whitespace. Only a Subcategory with notes is scored in this request.
 
 The rating and notes may have been entered by the consultant during an interview or by the client in a self-assessment. Treat both the same way, and never state who entered them.
 
@@ -138,7 +140,7 @@ Treat the recorded rating as contextual information only. It is not evidence and
 
 3. Required output coverage
 
-Produce one score row for every (tier, Subcategory) pair in this request. The number of rows in `scores` must equal the length of `tiers` multiplied by the length of `subcategories`.
+Produce one score row for every (tier, Subcategory) pair in this request whose Subcategory has notes. These are the required pairs. The number of rows in `scores` must equal the length of `tiers` multiplied by the number of Subcategories in `subcategories` that have notes. When no Subcategory in this request has notes, return {"scores": []}.
 
 Return rows in this order: follow the order of codes in `subcategories`, and within each Subcategory follow the order of `tiers`.
 
@@ -149,7 +151,7 @@ Score each row from the notes for its Subcategory:
 
 Other requests may score other tiers of the same Subcategory from the same notes, so apply these rules exactly: the same notes and the same tier must always produce the same scores.
 
-Do not omit a required row, even when the corresponding answer is missing or incomplete.
+Do not omit a required row, even when the notes are incomplete. Return no row for a Subcategory that has no notes (section 9).
 
 4. Authoritative assessment basis
 
@@ -243,21 +245,14 @@ Evidence attachment status must not increase, decrease, cap, or otherwise change
 When `has_evidence` is true, end what_we_found with this exact sentence:
 Supporting evidence was attached to the answer; its contents were not provided and were not evaluated.
 
-When `has_evidence` is false, or the Subcategory has no entry in `answers`, end what_we_found with this exact sentence:
+When `has_evidence` is false, end what_we_found with this exact sentence:
 No supporting evidence was attached to the answer.
 
 Do not describe a practice as verified, validated, proven, or evidenced because `has_evidence` is true.
 
 9. Missing and incomplete answers
 
-When a Subcategory has no entry in `answers`, assign 0 to all five dimensions and use this exact what_we_found:
-No answer was recorded. No assessment dimension was demonstrated. No maturity rating was recorded. No supporting evidence was attached to the answer.
-
-When an answer exists but its notes are null, empty, or only whitespace:
-- assign 0 to all five dimensions;
-- state that no assessment dimension was demonstrated by the notes;
-- report the recorded rating using the required sentence; and
-- report evidence attachment status using the required sentence.
+When a Subcategory has no entry in `answers`, or its notes are null, empty, or only whitespace, return no row for it, for any tier. Do not score it 0. SHIELD records such a Subcategory as self-reported and not scored.
 
 When the notes support some dimensions but not others:
 - score each supported dimension under its rubric;
@@ -297,19 +292,22 @@ Output requirements:
 - Every required (tier, Subcategory) pair appears exactly once, in the required order.
 
 Before returning the JSON, silently verify:
-1. Every required pair is present exactly once, and no row names a code outside `subcategories`.
+1. Every required pair is present exactly once, no row names a code outside `subcategories`, and no row names a Subcategory without notes.
 2. The tier changed a score only through a tier-limited statement in the notes.
 3. Each dimension was scored independently, under its own JSON key, and every row has all five dimension keys and no key other than `tier`, `subcategory_code`, the five dimensions, and `what_we_found`.
 4. Only the notes established organizational practices.
 5. The recorded rating did not determine any score.
 6. Evidence attachment status did not determine any score.
-7. Missing information received 0 and was described as not demonstrated.
+7. No row was returned for a Subcategory without notes, and within a returned row, a dimension the notes did not demonstrate received 0 and was described as not demonstrated.
 8. No prohibited calculation or conclusion was included.
 9. The output is valid JSON with no text outside the object."""  # noqa: E501
 
 # C9 (#806 plan 5983938383): the approved text is a new version, so old and new
 # runs differ in `llm_calls.prompt_version`. v3 is v2 with #1046's two edits.
-_CSF_SCORE_PROMPT_VERSION = "v3"
+# v4 is v3 with CSF Option 1's edits, approved verbatim by Gene (#736
+# 6205956728, the diff in 6204461502 section 1): SHIELD sends only
+# subcategories with notes, and the model returns no row for one without.
+_CSF_SCORE_PROMPT_VERSION = "v4"
 
 # "scores" must be a list -- W1 counts the entries in it, so a non-list would be
 # counted as noise rather than refused. ZT/Risk/ATT&CK get the same treatment as
@@ -770,10 +768,16 @@ _RISK_SYNTHESIZE_PROMPT = (
     "`status_basis` is `computed` when SHIELD derived the status from the function states "
     "given, and `stored` when the status was recorded directly, with no function states; treat "
     "a stored status as given and do not infer missing functions from it.\n"
+    # v5 (Gene, #736 6205956728): `evidence`, three values, for the scored
+    # tiers, and `evidence_capped` only on an assessment approved before
+    # Options 1 and 3 (the section 7 amendment, 6204492978).
     "  - `csf`: `enterprise_level` (1 to 5), `target_level` (1 to 5), `tier_levels` (keyed by "
-    "tier), `evidence_capped` (for each in-scope system tier, keyed by tier, true when that "
-    "tier's level was lowered because evidence could not be produced), and `tier_notes` (keyed "
-    "by tier, `rationale` and `what_we_found`, each possibly null);\n"
+    "tier), `evidence` (for each scored in-scope system tier, keyed by tier: `on_file` when "
+    "evidence is held, `confirmed_in_discussion` when the client confirmed it in discussion and "
+    "nothing is held, `neither` otherwise), and, only on an assessment approved before this "
+    "change, `evidence_capped` (keyed by tier, true when that tier's level was lowered under the "
+    "former evidence cap), and `tier_notes` (keyed by tier, `rationale` and `what_we_found`, each "
+    "possibly null);\n"
     "  - `zt`: `stage`, `target_stage` (the target the finding was measured against, never above "
     "the highest stage the capability defines), and `notes` (or null).\n"
     "- `technique_details`: for each ATT&CK technique in `findings`, its `name` and "
@@ -786,8 +790,9 @@ _RISK_SYNTHESIZE_PROMPT = (
     "\n"
     "The evidence is the only source of client facts. None of it is independent verification: "
     "the ATT&CK rationale is an AI-drafted assessment; CSF levels are computed by SHIELD from "
-    "dimension scores that may have been drafted by AI and edited by a consultant, and are "
-    "capped where evidence was not recorded, and CSF `what_we_found` text may be AI-drafted; and "
+    "dimension scores that may have been drafted by AI and edited by a consultant, and are not "
+    "validated by evidence where `evidence` is not `on_file`, and CSF `what_we_found` text may "
+    "be AI-drafted; and "
     "Zero Trust stages may have been entered by the client in a self-assessment, set by a "
     "consultant, or drafted by AI, and Zero Trust notes may have been entered by the client. "
     "Never describe a practice as verified.\n"
@@ -991,7 +996,8 @@ register_job(
         # the previous prompt's, which ran as the engine default "v1". v3: the
         # `status_basis` sentence, ruling #736 6105137014. v4: ruling #736
         # 6105759625's two edits ("recorded", and the stored residual sentence).
-        prompt_version="v4",
+        # v5: CSF Options 1 and 3's two edits (#736 6205956728).
+        prompt_version="v5",
         top_level_key="entries",
     )
 )
