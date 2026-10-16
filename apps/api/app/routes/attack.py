@@ -789,10 +789,10 @@ def draft_dashboard(
     assessment, from the rows as that run left them (`ai_runs.result`), never
     from the rows as they are now: a consultant's later edit does not move it,
     and a re-run replaces it. The body is the client dashboard's own builder
-    (`clients.attack_dashboard_body`), so the two compute rows the same way.
+    (`clients.attack_dashboard_content`), so the two compute rows the same way.
     Admin-only by the route's dependency, not by a hidden link."""
     # Imported here: `routes.clients` imports this module at load time.
-    from app.routes.clients import attack_dashboard_body
+    from app.routes.clients import attack_dashboard_content
 
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     a = _latest_assessment(db, svc.id)
@@ -817,7 +817,7 @@ def draft_dashboard(
             detail={"reason": "attack_no_draft", "message": _NO_DRAFT_MESSAGE},
         )
     stored = AttackRunAiResponse.model_validate(run.result)
-    body = attack_dashboard_body(
+    body = attack_dashboard_content(
         db,
         client=client,
         svc=svc,
@@ -832,7 +832,11 @@ def draft_dashboard(
         evaluated=len(body.techniques),
     )
     return AttackDraftDashboardResponse(
-        **dict(body), run_id=run.id, run_finished_at=run.finished_at
+        **dict(body),
+        service_id=svc.id,
+        service_title=svc.title,
+        run_id=run.id,
+        run_finished_at=run.finished_at,
     )
 
 

@@ -104,7 +104,7 @@ from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sent
 from app.routes.attack import client_retirement_index
 from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
-    AttackDashboardBody,
+    AttackDashboardContent,
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
@@ -1202,14 +1202,14 @@ def _dashboard_stamp(deliv: Deliverable, is_released: bool) -> datetime:
     return deliv.released_at if is_released and deliv.released_at else deliv.finalized_at
 
 
-def attack_dashboard_body(
+def attack_dashboard_content(
     db: Session,
     *,
     client: Client,
     svc: Service,
     assessment: AttackAssessment,
     coverage: Sequence[AttackCoverage],
-) -> AttackDashboardBody:
+) -> AttackDashboardContent:
     """The ATT&CK dashboard over `coverage`, the assessment's rows.
 
     #1178: extracted unchanged from `attack_dashboard`, which passes the rows
@@ -1338,9 +1338,7 @@ def attack_dashboard_body(
         for reason, n in attack_partial_reason_counts(deliverable_ctx)
     ] or None
 
-    return AttackDashboardBody(
-        service_id=svc.id,
-        service_title=svc.title,
+    return AttackDashboardContent(
         parents_computed=True if rule else None,
         # #554 R3 (Q4): the deliverable's own sentence, from the same context.
         awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
@@ -1485,7 +1483,7 @@ def attack_dashboard(
     # #556: refuse, in client words, rather than drop unknown codes below.
     require_current_catalog_for_client(assessment)
 
-    body = attack_dashboard_body(
+    body = attack_dashboard_content(
         db,
         client=client,
         svc=svc,
@@ -1507,6 +1505,8 @@ def attack_dashboard(
 
     return AttackDashboardResponse(
         **dict(body),
+        service_id=service_id,
+        service_title=svc.title,
         released_at=_dashboard_stamp(deliv, is_released),
         released=is_released,
         deliverable_version=deliv.version,
