@@ -103,3 +103,34 @@ def test_the_dashboard_and_home_card_count_the_estimated_cut_rows(app_client) ->
     by_cat = {r["category"]: r["savings_ai_estimate_count"] for r in body["redundancies"]}
     assert by_cat == {"PAM": 1, "EDR": 0}
     assert _value_summary(c, client)["tech_debt_savings_ai_estimate_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# The deliverable's summary line (the client's Results and Home pages)
+# ---------------------------------------------------------------------------
+
+
+def test_the_deliverable_summary_says_the_savings_include_an_estimate(
+    app_client,  # noqa: F811
+) -> None:
+    """The finalize route stores a one-line summary the client reads on its
+    Results and Home pages. It states the savings figure, so it carries the
+    same sentence as every other savings figure."""
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    bearer = admin["tokens"]["access_token"]
+    svc_id = _seed_release(c, provider, bearer, release=False)
+
+    def finalize() -> str:
+        r = c.post(
+            f"/tech-debt/services/{svc_id}/deliverables/finalize",
+            headers={"Authorization": f"Bearer {bearer}"},
+        )
+        assert r.status_code == 201, r.text
+        return r.json()["summary"]
+
+    # POSITIVE CONTROL: nothing estimated, no sentence.
+    assert "AI estimate" not in finalize()
+    _mark_estimated("BeyondTrust")  # cut
+    summary = finalize()
+    assert "estimated annual savings (1 cost is an AI estimate)." in summary, summary

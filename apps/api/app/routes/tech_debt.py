@@ -126,6 +126,7 @@ from app.tech_debt.exporters import (
     render_docx,
     render_pdf,
     render_xlsx,
+    savings_estimates_sentence,
 )
 from app.tech_debt.extract import (
     CATEGORIES,
@@ -2538,7 +2539,13 @@ def savings_preview(
     """#804: the savings what-if. Overlays the proposed dispositions on the
     stored items IN MEMORY and computes the figure with the deliverable's own
     derivation. Writes nothing, calls no AI; "Apply to plan" goes through the
-    disposition routes and their guards."""
+    disposition routes and their guards.
+
+    #1299 (TD-5), left alone on purpose: this consultant-only figure carries no
+    AI-estimate sentence. Every client and deliverable savings figure does
+    (`cost_estimate.savings_estimate_count`); here the consultant sees each
+    estimated row's "AI estimate" badge in the table beside it. Tracked in
+    #1354 for a sentence here too."""
     cap_list = db.get(CapabilityList, list_id)
     svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
     if cap_list is None or svc is None or svc.client_id != client.id:
@@ -2646,6 +2653,9 @@ def consolidation_plan_summary(
         elif it.disposition == CapabilityDisposition.CUT:
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
+    # #1299 (TD-5), left alone on purpose: this consultant-only card carries no
+    # AI-estimate sentence (each estimated row is badged in the table beside
+    # it); every client and deliverable savings figure does. Tracked in #1354.
     savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(
@@ -2896,6 +2906,8 @@ def finalize_deliverable(
         data=docx_bytes,
     )
 
+    # #1299 (TD-5): the same E6 sentence as every other savings figure.
+    savings_estimates = savings_estimates_sentence(ctx)
     summary_line = (
         # for #835: the client's Results and Home pages show this beside the
         # files, so it counts what the PDF's "Capabilities reviewed" counts:
@@ -2906,7 +2918,8 @@ def finalize_deliverable(
         # left alone.
         f"{ctx.included_count} capabilities reviewed; "
         f"{'≥ ' if not ctx.savings_cost_known else ''}"
-        f"${ctx.estimated_savings:,.0f} estimated annual savings."
+        f"${ctx.estimated_savings:,.0f} estimated annual savings"
+        f"{f' ({savings_estimates})' if savings_estimates else ''}."
     )
 
     deliv = Deliverable(
