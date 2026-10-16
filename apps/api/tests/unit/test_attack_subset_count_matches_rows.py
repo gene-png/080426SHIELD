@@ -114,7 +114,8 @@ def _status_world(
     (`status_rules` 1, migration 0059's backfill), whose stored status is what
     every surface reads. `uncleared` leaves every citation of LEGACY on row one
     uncleared (#102), so under R3 a row whose only tool is LEGACY computes to
-    Gap and keeps its tools: the production-path Gap."""
+    Gap and keeps its tools: a Gap stored and computed, as Run AI's citation
+    merge leaves one that nobody has confirmed."""
     import uuid as _uuid
 
     from app.models.attack_assessment import AttackAssessment
@@ -172,6 +173,11 @@ def test_a_judged_row_that_is_not_coverage_still_counts(
     assert row_one["status"] == status_body["status"], "setup: row one keeps its status"
     # And it is the status every surface reads, computed or stored.
     assert (row_one["computed_status"] or row_one["status"]) == status_body["status"], row_one
+    if uncleared:
+        # Observed, not assumed: R3 computed this Gap, from the uncleared
+        # citation, so the case cannot quietly become `gap_before_r3`.
+        assert row_one["computed_status"] == "gap", row_one
+        assert row_one["capabilities"]["detect"] == "awaiting_review", row_one
     text = _format_text(w, fin, "summary")
     assert C1_ONE in text, text
     assert C1_TWO not in text, text
