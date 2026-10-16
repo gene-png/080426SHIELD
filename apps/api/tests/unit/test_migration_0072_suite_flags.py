@@ -214,7 +214,11 @@ def test_the_model_reads_the_new_columns(tmp_path) -> None:
 
     url, engine = _at_0073(tmp_path)
     user, lst, item = _list_and_item(engine)
-    command.upgrade(_cfg(url), "0072")
+    # "head", not "0072": the ORM model always describes the newest schema, so
+    # reading it through a database stopped at 0072 breaks on the first later
+    # migration that adds a column here (0074, TD-5). 0072's columns are what
+    # is asserted, and they are present at head.
+    command.upgrade(_cfg(url), "head")
     cid = _component(engine, lst, item, purchase_status="PURCHASED_NOT_DEPLOYED")
     with engine.begin() as conn:
         conn.execute(
