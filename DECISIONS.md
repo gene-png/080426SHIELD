@@ -6638,21 +6638,22 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 
 ## D-114 — CSF scoring with no notes or evidence: unscored, not 0; evidence labels a level and no longer caps it (amends CSF_Flow_Spec section 8)
 
-**2026-10-15 · CSF** (Decision: Gene, relayed by the advisor on #736: Options 1 and 3 in 6200638511; four changes in 6201620727; Q1 to Q4 and three-state evidence in 6201691989; level names in 6202644525. Recorded in the landing commit of PR (a).)
+**2026-10-15 · CSF** (Decision: Gene, relayed by the advisor on #736: Options 1 and 3 in 6200638511; four changes in 6201620727; Q1 to Q4 and three-state evidence in 6201691989; level names in 6202644525; the text package 6204461502, with the advisor's fixes in 6205425122 item 3, approved by Gene in 6205956728. Recorded in the landing commit of PR (a).)
 
 **Why.** Gene: most clients will not provide evidence, so it must not drive scores down. A subcategory with no notes is not evidence of anything, so scoring it 0 reported a level nobody measured.
 
 **What it changes.**
 
-1. **Code decides what is scored.** SHIELD leaves a subcategory with blank notes out of the `csf_score` payload before egress. Prompt v4, pending Gene's verbatim approval, says the same as a backstop, and #1000's `no_notes` drop reason stays as a second guard.
+1. **Code decides what is scored.** SHIELD leaves a subcategory with blank notes out of the `csf_score` payload before egress. csf_score prompt v4 says the same as a backstop, and #1000's `no_notes` drop reason stays as a second guard.
 2. **A subcategory with no scored in-scope tier has no level** (Q1 (a); the #1073 defect). It has no target and no gap, it is in no average, and it is shown with the client's self-rating as self-reported, not validated. "Scored" is `has_recorded_value_besides_target` on any in-scope tier, the #1031 predicate, so a consultant's typed scores stay scored.
 3. **The evidence cap is removed** (CSF_Flow_Spec section 8 said: no evidence, Implementation at most 1 and level at most 2). The level is computed from the scores alone, and evidence only labels it.
 4. **Evidence has three values,** `on_file` / `confirmed_in_discussion` / `neither` (migration 0074; `true` became `on_file`, `false` became `neither`). A Managed or Optimized level with `neither` is reported as notional.
 5. **Q2, released numbers freeze.** `csf_assessments.rollup_rules` = 3 means the rules above, and approve stamps it. An assessment approved under 1 or 2 keeps the cap and its seed-row levels, as delivered. NULL (not yet approved) reads as 3.
    - This reuses #1077's existing stamp, which D-112 item 2 keeps as "the mechanism later rule changes will need".
    - No backfill was written. That follows D-112 item 1, which Gene's later Q2 ruling narrows only to "keep the frozen rule readable".
-6. **Coverage is stated.** Every Playbook surface states four counts, scored, with notes but not yet scored, self-reported only and not answered, and they add up to the in-scope total (the fourth count is the advisor's Q-A recommendation, #736 6205425122 item 3; the wording is pending Gene's approval). Where evidence labels a level, the evidence counts are stated beside them, with "mixed" as its own count.
-7. **Averages under the frozen rules do not move.** An average is over the subcategories that have a level. Under rules 1 and 2 every subcategory has one, so a re-export of a released assessment averages exactly as it did.
+6. **Coverage is stated.** Every Playbook surface states four counts, scored, with notes but not yet scored, self-reported only and not answered, and they add up to the in-scope total (the fourth count is the advisor's Q-A recommendation, #736 6205425122 item 3, approved by Gene). Where evidence labels a level, the evidence counts are stated beside them, with "mixed" as its own count: at least one scored tier with neither beside one on file or confirmed.
+7. **Levels are words, and averages are exact.** Every level is shown by name (Ad hoc, Developing, Defined, Managed, Optimized). Under rules 3 and NULL an average is over the scored subcategories, to one decimal, rounded down, with its level's name. Under rules 1 and 2 an average is what was delivered, `round()` of the mean over every subcategory, so a re-export of a released assessment keeps its numbers and gains only the names.
+8. **risk_synthesize v5** sends each scored tier's `evidence` value, and `evidence_capped` only for an assessment approved under rules 1 or 2.
 
 **Blast radius (demo data only, D-112).**
 
