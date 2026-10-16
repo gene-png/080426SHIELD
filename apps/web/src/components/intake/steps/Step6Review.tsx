@@ -106,7 +106,7 @@ export function Step6Review({
       })
       .catch((err) => {
         // Non-blocking: the list is confirmation, not a submit gate. But say
-        // that it failed, in the copy Step 5 uses for the same failure.
+        // that it failed, as Step 5 does for the same list: the read rule (RR-2), then its copy.
         if (!cancelled) {
           setListError(readFailureReason(err) ?? "Failed to load uploads.");
         }
