@@ -135,6 +135,7 @@ from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
     engagement_target_capability_count,
+    pillar_weight,
     resolve_target_stage,
 )
 from app.zt.scoring import compute as compute_score
@@ -1946,6 +1947,7 @@ def gap_analysis(
                 target_stage=g.target_stage,
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
+                pillar_weight=pillar_weight(g.pillar_code),
                 notes=g.notes,
             )
             for g in analysis.gaps
