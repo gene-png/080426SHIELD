@@ -100,8 +100,14 @@ export function spendSub(data: TechDebtDashboardData): string {
     // false and the branch above takes it. Pinned at the API by
     // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
     // cause left: an included tool with no cost, which the API counts with the
-    // same predicate that made the figure partial. The count-free sentence
-    // stays only for a zero count, which that predicate cannot produce here.
+    // same predicate that made the figure partial.
+    //
+    // RATCHET, deliberately kept: the count-free sentence below is UNREACHABLE
+    // from the current API, which reaches this line only with
+    // no_cost_count > 0 (`no_cost_items` sets both the count and "partial").
+    // It would become reachable if "partial" gained a cause other than an
+    // uncosted tool or an exclusion, or if an API older than `no_cost_count`
+    // served this page. Either way it stays a floor, never "Across all tools".
     return noCost === null
       ? "Floor - some tools lacked a cost"
       : `Floor - ${noCost}`;
