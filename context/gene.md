@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T5): #1171, the CSF self-assessment steps through its functions._ Clients move through the functions one at a time with Previous and Next, as in Zero Trust, and Submit waits until every function has at least one answer, as you decided. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1213, the intake part._ If a client's intake submit, assessment start or upload gets a success answer the browser cannot read (only possible from something like a network sign-in page), the page now says it could not confirm whether it went through, instead of "Failed to submit intake.". The other services' screens are still open on #1213. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1198 item 1, a title or phone can be cleared._ A client who empties their title or phone on intake Step 3 now clears it; before, the old value came back. Their full name and time zone still cannot be blanked, as you ruled. It comes back to you: condition 5.
