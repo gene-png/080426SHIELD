@@ -24,11 +24,21 @@ import {
   RUBRIC_ROWS,
   type DimKey,
 } from "@/lib/csf/editorHelp";
+import {
+  EVIDENCE_LABEL,
+  EVIDENCE_LEVEL_NOTE,
+  EVIDENCE_OPTIONS,
+  NOTIONAL_FROM_LEVEL,
+  levelName,
+  notionalCaveat,
+} from "@/lib/csf/optionsCopy";
 import type {
   CsfDimensionScore,
   CsfDimensionScorePatch,
+  CsfEvidenceStatus,
   CsfProfile,
 } from "@/lib/csf/types";
+import { evidenceStatusOf } from "@/lib/csf/types";
 
 import type { JSX } from "react";
 
@@ -119,6 +129,40 @@ function HowToScore(): JSX.Element {
         <p>{HELP_LOCK}</p>
       </div>
     </details>
+  );
+}
+
+/** C6 and E2 (#736 6205956728): the level line's note for the row's
+ * evidence value, and the notional caveat for a Managed or Optimized level
+ * with neither. */
+function EvidenceLevelNote({
+  row,
+}: {
+  row: CsfDimensionScore;
+}): JSX.Element | null {
+  const status = evidenceStatusOf(row);
+  const note = EVIDENCE_LEVEL_NOTE[status];
+  const notional = status === "neither" && row.level >= NOTIONAL_FROM_LEVEL;
+  if (!note && !notional) return null;
+  return (
+    <>
+      {note ? (
+        <span
+          className="ml-2 text-ink-tertiary"
+          data-testid="csf-level-evidence"
+        >
+          {note}
+        </span>
+      ) : null}
+      {notional ? (
+        <span
+          className="mt-1 block text-xs text-status-warning-fg"
+          data-testid="csf-level-notional"
+        >
+          {notionalCaveat(row.level)}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -301,9 +345,16 @@ export function CsfDimensionEditor({
                   {row.total}
                 </span>{" "}
                 · Level{" "}
-                <span className="font-semibold text-ink-primary">
-                  L{row.level}
+                <span
+                  className="font-semibold text-ink-primary"
+                  data-testid="csf-level-name"
+                >
+                  {levelName(row.level)}
                 </span>
+                {/* Only an assessment approved before Option 3 (rules 1 or
+                    2) is still capped, and keeps saying so. Every other
+                    row's level is the scores' alone, and C6 and E2 (#736
+                    6205956728) say what its evidence value means. */}
                 {row.evidence_capped ? (
                   <>
                     <span className="ml-2 text-status-warning-fg">
@@ -313,7 +364,9 @@ export function CsfDimensionEditor({
                       {CAPPED_NOTE}
                     </span>
                   </>
-                ) : null}
+                ) : (
+                  <EvidenceLevelNote row={row} />
+                )}
               </span>
               <label className="flex items-center gap-2">
                 <span className="text-ink-secondary">Target</span>
@@ -332,7 +385,7 @@ export function CsfDimensionEditor({
                   <option value="">—</option>
                   {[1, 2, 3, 4, 5].map((l) => (
                     <option key={l} value={l}>
-                      L{l}
+                      {levelName(l)}
                     </option>
                   ))}
                 </select>
@@ -345,16 +398,30 @@ export function CsfDimensionEditor({
             </div>
 
             <div className="flex flex-wrap items-center gap-4 text-sm">
+              {/* E1 (migration 0075): three values. None changes the
+                  scores or the level except under a frozen assessment's cap. */}
               <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={row.has_evidence}
+                <span className="text-ink-secondary">{EVIDENCE_LABEL}</span>
+                {/* aria-label: a select inside its label would otherwise
+                    take the selected option's text into its name. */}
+                <select
+                  aria-label={EVIDENCE_LABEL}
+                  value={evidenceStatusOf(row)}
                   disabled={readOnly || busy}
                   onChange={(e) =>
-                    void apply({ has_evidence: e.currentTarget.checked })
+                    void apply({
+                      evidence_status: e.currentTarget
+                        .value as CsfEvidenceStatus,
+                    })
                   }
-                />
-                <span className="text-ink-secondary">Evidence on file</span>
+                  className="rounded-md border border-border bg-surface-card px-2 py-1 text-sm text-ink-primary"
+                >
+                  {EVIDENCE_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="flex items-center gap-2">
                 <input

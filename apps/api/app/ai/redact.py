@@ -484,6 +484,16 @@ _RE_CONTACT_HINT = re.compile(
 
 _SIGNATURE_LOOKAHEAD_LINES = 5
 
+#: Name suffixes a signatory line can END with (#1256). Closed and short on
+#: purpose: a line ending in one of these, after a stop, is a name with its
+#: suffix, never a sentence's last word.
+_NAME_SUFFIXES = ("jr", "sr", "ii", "iii", "iv", "2nd", "3rd", "4th", "ret", "esq")
+
+
+#: An abbreviation inside brackets, or followed by a comma: `(Ret.)`,
+#: `(Ret.).`, `(Ret.),`, `Jr.,`. The bare form is `_is_abbreviation`'s own test.
+_RE_WRAPPED_ABBREVIATION = re.compile(r"\([^()\s]{1,3}\.\)[.,]?|[^()\s]{1,3}\.,")
+
 
 def _is_abbreviation(token: str) -> bool:
     """An honorific, rank or initial: a short token ending in a full stop.
@@ -494,9 +504,56 @@ def _is_abbreviation(token: str) -> bool:
     thought of, and the next rank is always the one that is missing.
 
     The full stop is what carries the meaning; without it `Lieutenant` is an
-    ordinary word and counts.
+    ordinary word and counts. Brackets and commas around it are not part of it:
+    `(Ret.)`, `(Ret.).` and `Jr.,` are the abbreviation inside (#1256), so the
+    prose test and the signatory test measure such a line the same way.
     """
-    return len(token) <= 4 and token.endswith(".")
+    if len(token) <= 4 and token.endswith("."):
+        return True
+    return _RE_WRAPPED_ABBREVIATION.fullmatch(token) is not None
+
+
+def _is_name_shaped(stripped: str) -> bool:
+    """Every word that starts with a letter is capitalised or an abbreviation.
+
+    The shape of `Dana Whitfield, CISO.` and `John Smith Jr.`; a sentence has
+    lowercase words in it. ONE definition, called by both the signatory test
+    and the prose test, so they cannot drift apart (#1256).
+    """
+    return all(
+        w[0].isupper() or _is_abbreviation(w)
+        for w in stripped.replace(",", " ").split()
+        if w and w[0].isalpha()
+    )
+
+
+def _substantive_words(stripped: str) -> list[str]:
+    """The words of a line that count toward the signatory cap: every token but
+    an abbreviation (a rank, an initial, a suffix). ONE definition, used by
+    `_looks_like_a_signatory` and by `_looks_like_prose` for a name-shaped
+    line, so the two cannot measure the same line differently (#1256)."""
+    return [w for w in stripped.split() if not _is_abbreviation(w)]
+
+
+def _is_name_tail(words: list[str]) -> bool:
+    """Whether the LAST of `words` ends a NAME rather than a sentence (#1256).
+
+    A suffix (`_NAME_SUFFIXES`) anywhere last. A credential with inner stops
+    (`M.D.`) or a capitalised designation of two or more letters (`USAF.`,
+    `CISSP.`) only AFTER A COMMA, the way a name carries one ("Whitfield,
+    USAF."): without the comma it is a sentence's last word, and "Enable MFA
+    On Every VPN." or "Escalate Findings To The SOC." read as names and cut
+    the text after them (review of db522400). A short Title-Case word (`Way.`,
+    `Up.`) is never a tail.
+    """
+    core = words[-1].strip("().,")
+    if core.lower() in _NAME_SUFFIXES:
+        return True
+    if len(words) < 2 or not words[-2].endswith(","):
+        return False
+    if "." in core and core.replace(".", "").isalpha():
+        return True
+    return len(core) >= 2 and core.isalpha() and core.isupper()
 
 
 def _looks_like_a_signatory(line: str) -> bool:
@@ -535,11 +592,7 @@ def _looks_like_a_signatory(line: str) -> bool:
     # `Dana Whitfield, CISO.`, `John Smith Jr.` -- while a sentence has
     # lowercase words in it. Initials and honorifics are abbreviations and are
     # exempt, which is the same test the word cap uses.
-    if stripped[-1] in ".!?" and not all(
-        w[0].isupper() or _is_abbreviation(w)
-        for w in stripped.replace(",", " ").split()
-        if w and w[0].isalpha()
-    ):
+    if stripped[-1] in ".!?" and not _is_name_shaped(stripped):
         return False
     # A person's name never contains a colon; a wrapped HEADING routinely does,
     # and security documents are full of them. Without this, "Best" wrapped above
@@ -558,8 +611,7 @@ def _looks_like_a_signatory(line: str) -> bool:
     # are ABBREVIATIONS -- an honorific, a rank, an initial -- so they are not
     # counted toward the cap. A heading of seven ordinary words still exceeds
     # it, which is the case the cap was added for.
-    words = stripped.split()
-    substantive = [w for w in words if not _is_abbreviation(w)]
+    substantive = _substantive_words(stripped)
     if not 1 <= len(substantive) <= _MAX_SIGNATORY_WORDS:
         return False
     return stripped[0].isupper()
@@ -594,7 +646,32 @@ def _looks_like_prose(line: str) -> bool:
         return False
     if not stripped[0].isupper():
         return True
-    return len(stripped.split()) > _MAX_SIGNATORY_WORDS
+    words = stripped.split()
+    # A NAME can end in a full stop that is not a sentence's: a suffix ("Jr.",
+    # "(Ret.)."), or -- after a comma -- a credential (", M.D.") or a
+    # capitalised designation (", USAF.", ", CISSP.", ", CISO."); see
+    # `_is_name_tail`. Counted raw, "Lt. Col. Dana M. Whitfield Jr." is six
+    # words and a stop, so the signature cut stopped before it and the name
+    # went to the model (#1256). Such a line -- name-shaped, with a name tail --
+    # is counted as `_looks_like_a_signatory` counts it, through the SAME
+    # `_substantive_words`. The line classes this was decided against are the
+    # table in test_redact_signature_bound.py, written before this logic.
+    #
+    # Why each condition is needed (each was missing in an earlier round):
+    #   - a name TAIL, not "has abbreviations": "Phase Two Is Under Way." ends
+    #     in a short stopped word, which `_is_abbreviation` cannot tell from a
+    #     rank (review of 96b41f97);
+    #   - name-SHAPED, not a tail alone: "Patching resumes in Phase II." ends
+    #     in a suffix word but has lowercase words (review of 8310931d).
+    # Residuals, accepted; the table in test_redact_signature_bound.py lists
+    # them with examples and says which predate #1256. Toward removing: a short
+    # all-Title-Case stopped line, and a Title-Case sentence with a name tail
+    # ("Hosts Move To Tier III.", "Report Issues To Support, IT."). Toward
+    # leaking: a name with a lowercase particle, a ranked name ending in a
+    # plain surname, and a designation with no comma before it.
+    if _is_name_shaped(stripped) and _is_name_tail(words):
+        return len(_substantive_words(stripped)) > _MAX_SIGNATORY_WORDS
+    return len(words) > _MAX_SIGNATORY_WORDS
 
 
 def _split_inline_signoff(line: str) -> bool:

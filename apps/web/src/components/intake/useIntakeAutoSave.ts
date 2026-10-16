@@ -10,6 +10,7 @@ import type {
 
 import type { SaveState } from "./SaveStatus";
 import { clientFacingError } from "@/lib/describe-save-error";
+import { UPSTREAM_OUTCOME_UNKNOWN_MESSAGE } from "@/lib/upstream-outcome";
 
 export interface AutoSaveHandle {
   saveState: SaveState;
@@ -29,6 +30,14 @@ const REFUSED_NOT_SAVED = "This value was not accepted, so it was not saved.";
  *  server message. */
 const SERVER_NOT_SAVED =
   "The server could not save this value. Try again in a moment.";
+/** S-1115-1, approved verbatim on #736 (6207611148): an answer that did not
+ *  judge the value (a 401, 403, 429...), so the typed value is kept. */
+const NOT_SAVED_KEPT =
+  "This value was not saved. It is still in the form, so you can save it again.";
+/** S-1115-2, a PLACEHOLDER until approved: the same answer, for a field the
+ *  caller does NOT keep, where "still in the form" would be false (review of
+ *  8b4f28a1: Step 3 re-reads its fields from the server when it reopens). */
+const NOT_SAVED_RETYPE = "This value was not saved. Set it again to save it.";
 
 /** The fields a patch writes, keyed so a client field and a top-level
  *  profile field of the same name cannot collide. */
@@ -38,26 +47,45 @@ function fieldsOf(patch: IntakePatchRequest): string[] {
   return [...top, ...client];
 }
 
-/** An answer the api DID send that refused the value: a 4xx. Not a 5xx,
- *  which includes #550's 504 `upstream_outcome_unknown`, where the save may
- *  have landed, and not a thrown network error with no status at all.
- *  Duck-typed on the proxy error's numeric `status`. */
-function isAnsweredRefusal(err: unknown): boolean {
+/** The answer's HTTP status, duck-typed on the proxy error's numeric
+ *  `status`; null for a thrown network error, which carries none. */
+function statusOf(err: unknown): number | null {
   const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" && status >= 400 && status < 500;
+  return typeof status === "number" ? status : null;
 }
 
-/** A 5xx the proxy or api DID send. */
-function isAnsweredServerError(err: unknown): boolean {
-  const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" && status >= 500 && status < 600;
+/** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
+ *  409 (the intake will never take it) or a 422. Only these let the typed
+ *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
+ *  so the client keeps what they typed and can save it again. */
+const JUDGED_THE_VALUE = new Set([400, 409, 422]);
+
+function isValueRefusal(err: unknown): boolean {
+  const status = statusOf(err);
+  return status !== null && JUDGED_THE_VALUE.has(status);
 }
 
-/** The sentence when the error carries no usable server message. */
-function fallbackFor(err: unknown): string {
-  if (isAnsweredRefusal(err)) return REFUSED_NOT_SAVED;
-  if (isAnsweredServerError(err)) return SERVER_NOT_SAVED;
-  return "Network error.";
+/** The api's own envelope (`{error: {...}}`), as `exceptions.py` sends every
+ *  error, including its 500. A 5xx without it came from something in front of
+ *  the api, so the save may have landed (ruling (a)). */
+function hasApiEnvelope(err: unknown): boolean {
+  const payload = (err as { payload?: unknown } | null)?.payload;
+  const inner = (payload as { error?: unknown } | null)?.error;
+  return typeof inner === "object" && inner !== null;
+}
+
+/** The sentence when the error carries no usable server message. `kept`
+ *  says whether the caller holds the typed value for this save. */
+function fallbackFor(err: unknown, kept: boolean): string {
+  const status = statusOf(err);
+  if (status === null) return "Network error.";
+  if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
+  if (status >= 500 && status < 600) {
+    return hasApiEnvelope(err)
+      ? SERVER_NOT_SAVED
+      : UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
+  }
+  return kept ? NOT_SAVED_KEPT : NOT_SAVED_RETYPE;
 }
 
 /** Wraps `patchIntake` with save-status state + lightweight error handling.
@@ -66,13 +94,20 @@ function fallbackFor(err: unknown): string {
  * intake state on success (so the caller can refresh local form values) or
  * `null` on failure. The SaveStatus indicator reads `saveState` directly.
  *
- * `onRefused(patch)` is called when the api ANSWERED and refused the save
- * (a 4xx), so a caller holding the typed value can let it go: the server
- * does not hold it and never will (review of #757, finding 2).
+ * `onRefused(patch)` is called when the api ANSWERED and judged the value (a
+ * 400, 409 or 422, #1115), so a caller holding the typed value can let it go:
+ * the server does not hold it and never will (review of #757, finding 2).
+ * Any other answer keeps it.
+ *
+ * `keeps(patch)` says whether the caller holds every value in `patch` on
+ * screen after a failed save, which decides whether the client may be told it
+ * is "still in the form". Its default, true, suits a caller with no fields of
+ * its own (the hook's tests); the wizard passes its real answer.
  */
 export function useIntakeAutoSave(
   onUpdate?: (next: IntakeStateResponse) => void,
   onRefused?: (patch: IntakePatchRequest) => void,
+  keeps: (patch: IntakePatchRequest) => boolean = () => true,
 ): AutoSaveHandle {
   const [saveState, setSaveState] = React.useState<SaveState>({ kind: "idle" });
   const [savesInFlight, setSavesInFlight] = React.useState(0);
@@ -116,16 +151,15 @@ export function useIntakeAutoSave(
         return next;
       } catch (err) {
         // IN-1 (#1049): "Network error." only when no answer came back. An
-        // answer with no usable server message gets copy for its class:
-        // a 4xx the approved refusal sentence (ruling B, 6115773247), a 5xx
-        // the approved server sentence (6116519635).
-        const message = clientFacingError(err, fallbackFor(err));
+        // answer with no usable server message gets copy for its class, by
+        // the table #1115 approved (6207611148): see `fallbackFor`.
+        const message = clientFacingError(err, fallbackFor(err, keeps(patch)));
         for (const f of own()) {
           // Re-inserted, so the newest error is the one shown.
           errors.current.delete(f);
           errors.current.set(f, message);
         }
-        if (isAnsweredRefusal(err)) onRefused?.(patch);
+        if (isValueRefusal(err)) onRefused?.(patch);
         return null;
       } finally {
         pending.current -= 1;
@@ -133,7 +167,7 @@ export function useIntakeAutoSave(
         publish();
       }
     },
-    [onUpdate, onRefused, publish],
+    [onUpdate, onRefused, keeps, publish],
   );
 
   return { saveState, savesInFlight, save, setSaveState };

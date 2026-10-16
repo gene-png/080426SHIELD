@@ -31,14 +31,26 @@ export function EnsureActiveClient({
   } | null>(null);
   const clientId =
     resolved && resolved.serviceId === serviceId ? resolved.clientId : null;
-  const [error, setError] = React.useState<string | null>(null);
+  // #1266: the error belongs to the service whose lookup failed, the same
+  // derivation as the client, so a new service never shows the last one's.
+  const [failed, setFailed] = React.useState<{
+    serviceId: string;
+    message: string;
+  } | null>(null);
+  const error =
+    failed && failed.serviceId === serviceId ? failed.message : null;
 
   React.useEffect(() => {
     let cancelled = false;
+    // #1266: cleanup also ABORTS this run's requests, so a cookie write
+    // already in flight when the service changes cannot land afterwards.
+    const controller = new AbortController();
+    const { signal } = controller;
     void (async () => {
       try {
         const res = await fetch(`/api/proxy/admin/services/${serviceId}`, {
           cache: "no-store",
+          signal,
         });
         if (!res.ok) {
           throw new Error(`Couldn't resolve this workspace (${res.status}).`);
@@ -66,7 +78,10 @@ export function EnsureActiveClient({
         // WHY here is what makes it an exemption rather than an oversight.
         let cur: { active?: string } | null = null;
         try {
-          const r = await fetch("/api/active-client", { cache: "no-store" });
+          const r = await fetch("/api/active-client", {
+            cache: "no-store",
+            signal,
+          });
           cur = (await r.json()) as { active?: string };
         } catch {
           // Leave `cur` null so the branch below re-asserts the active
@@ -74,11 +89,17 @@ export function EnsureActiveClient({
           // is surfaced.
           cur = null;
         }
+        // #1266: ONE gate, right before the cookie write: a run a newer
+        // service superseded (during the lookup or the advisory read)
+        // writes nothing, so its write cannot land after the current one's
+        // and name the old client.
+        if (cancelled) return;
         if (cur?.active !== svc.client_id) {
           const set = await fetch("/api/active-client", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ clientId: svc.client_id }),
+            signal,
           });
           if (!set.ok) {
             // FAIL CLOSED. Without this the cookie is unset, the children
@@ -90,17 +111,25 @@ export function EnsureActiveClient({
             );
           }
         }
-        if (!cancelled) setResolved({ serviceId, clientId: svc.client_id });
+        if (!cancelled) {
+          setResolved({ serviceId, clientId: svc.client_id });
+          // #1266: this service now opened, so an earlier failure of it
+          // no longer stands.
+          setFailed((f) => (f && f.serviceId === serviceId ? null : f));
+        }
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't open workspace.",
-          );
+          setFailed({
+            serviceId,
+            message:
+              err instanceof Error ? err.message : "Couldn't open workspace.",
+          });
         }
       }
     })();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [serviceId]);
 

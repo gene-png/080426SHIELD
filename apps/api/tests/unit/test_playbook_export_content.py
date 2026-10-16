@@ -312,9 +312,10 @@ def test_exec_docx_heading_scorecard_and_maturity_cell() -> None:
     assert f"Prepared for: {CLIENT}" in paras
 
     scorecard = next(t for t in _docx_table_cells(raw) if set(t) >= SCORECARD_HEADERS)
-    # A known maturity cell value: Govern rolled up to L2.
+    # A known maturity cell value: Govern rolled up to level 2, printed as
+    # W3's average by name (#736 6205956728).
     assert "Govern" in scorecard
-    assert "L2" in scorecard
+    assert "2.0 of 5 (Developing)" in scorecard
 
 
 @pytest.mark.unit
@@ -332,5 +333,5 @@ def test_full_docx_heading_scorecard_and_maturity_cell() -> None:
 
     scorecard = next(t for t in _docx_table_cells(raw) if set(t) >= SCORECARD_HEADERS)
     assert "Protect" in scorecard
-    # Protect meets its target, rolled up to L5.
-    assert "L5" in scorecard
+    # Protect meets its target, rolled up to level 5.
+    assert "5.0 of 5 (Optimized)" in scorecard

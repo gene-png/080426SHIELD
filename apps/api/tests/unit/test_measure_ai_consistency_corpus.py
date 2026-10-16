@@ -52,6 +52,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
+from tests._csf_notes import note_every_answer
 
 pytestmark = pytest.mark.unit
 
@@ -518,6 +519,9 @@ def csf_world(world):
     assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
     seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert seeded.status_code in (200, 201), seeded.text
+    # CSF Option 1 (D-114): only answers with notes are sent. A corpus run
+    # writes its own notes over these.
+    note_every_answer(svc_id)
     yield c, TestSession, provider
 
 
@@ -548,8 +552,9 @@ def _set_csf_tiers(TestSession: sessionmaker, tier: int | None) -> None:
 
 def test_csf_sends_the_corpus_notes_redacted_and_counts_what_was_sent(csf_world) -> None:
     c, TestSession, provider = csf_world
-    # The demo seed scores every answer; a scored answer is sent whatever its
-    # notes say, so every class is sent.
+    # Every answer is scored. Since CSF Option 1 (D-114) an answer is sent only
+    # when it has notes, so every class is sent except "blank", which is not
+    # sent at all (its rows are counted, and the route says so).
     _set_csf_tiers(TestSession, 2)
     seen: list[dict] = []
     provider.register("csf_score", _csf_answer_all(seen))
@@ -567,7 +572,9 @@ def test_csf_sends_the_corpus_notes_redacted_and_counts_what_was_sent(csf_world)
         assert {"No MFA.", "N/A", "TBD"} <= notes
     setup = report["input_setup"]["notes_corpus"]
     assert list(setup["classes"]) == SECTION_2_NOTE_CLASSES
-    assert all(v["sent"] == v["rows"] >= 1 for v in setup["classes"].values())
+    assert setup["classes"]["blank"]["rows"] >= 1
+    assert setup["classes"]["blank"]["sent"] == 0
+    assert all(v["sent"] == v["rows"] >= 1 for cls, v in setup["classes"].items() if cls != "blank")
     assert report["runs_ok"] == 2
 
 
