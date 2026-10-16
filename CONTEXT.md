@@ -15,6 +15,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1213, the intake sites.** An intake submit, assessment start or upload answered by a 2xx the browser cannot read now says its outcome is unknown, instead of its own failure message; an intake read in the same case fails as a load. Status: the 2026-10-16 #1213 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1198 item 1, intake Step 3's title and phone can be cleared.** An emptied title or phone is stored as NULL on save and on submit; display_name and timezone still cannot be cleared. Status: the 2026-10-16 #1198 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1207 item 1, intake auto-save lets a typed value go only on a 422.** A 400 or 409 on an intake save no longer drops what the client typed: on that route neither judges the value. Status: the 2026-10-16 #1207 entry in `DELIVERY_PLAN.md`'s MVP completion path.
