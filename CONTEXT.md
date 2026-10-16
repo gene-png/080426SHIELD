@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1115, intake auto-save keeps a value the server did not judge.** A failed intake save drops what the client typed only on a 400, 409 or 422; a 401, 403 or 429 keeps it and says so, and a bare 5xx from in front of the api says the outcome is unknown. Status: the 2026-10-16 #1115 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1170, intake suite-listing banner moved to Step 5.** The banner asking Tech Debt and ATT&CK clients to list each product separately now renders at the top of Notes and artifacts (Step 5) and no longer on Systems (Step 4); same variant rule, same approved copy. Status: the 2026-10-16 #1170 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-14: #935 and #929, PR #1044.** The Tech Debt workspace counts source items, not bundle parts, a part's cost cell names the bundle that carries it ("Included in {bundle}"), and a part's pre-#927 stored cost no longer counts as a saving. Status: the 2026-10-14 #935 and #929 entry in `DELIVERY_PLAN.md`'s MVP completion path.
