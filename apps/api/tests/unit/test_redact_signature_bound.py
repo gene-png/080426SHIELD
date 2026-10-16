@@ -300,11 +300,25 @@ _LINE_CLASSES = [
     ("keep", "Roman numeral last, sentence case", "Patching resumes in Phase II."),
     ("keep", "Roman numeral mid-line, sentence case", "Hosts move to Tier III next quarter."),
     ("keep", "ordinal last, sentence case", "The patch window opens on the 3rd."),
+    # Title-Case sentences ending in an acronym of three letters or fewer (or a
+    # dotted one): a designation tail WITHOUT a comma before it (review of
+    # db522400 -- each was cut there).
+    ("keep", "Title-Case, short acronym last", "Enable MFA On Every VPN."),
+    ("keep", "Title-Case, three-letter acronym last", "Escalate Findings To The SOC."),
+    ("keep", "Title-Case, dotted acronym last", "Data Stays Inside The U.S."),
+    ("keep", "Title-Case, abbreviations and acronym", "U.S. Gov. Systems Report To CISA."),
 ]
-# Accepted residuals, recorded on #1256 rather than pinned either way: an
-# all-Title-Case stopped line of four words or fewer reads as a name ("Next
-# Steps Below.", "Hosts Move To Tier III."), and a name of more than four
-# words ("Dana van der Berg Jr.") reads as a sentence.
+# Accepted residuals, recorded on #1256 rather than pinned either way:
+#   - an all-Title-Case stopped line of four RAW words or fewer is not prose
+#     ("Next Steps Below.", pre-existing);
+#   - a name-shaped line ending in a SUFFIX word is counted without its
+#     abbreviations, so an all-Title-Case sentence like "Hosts Move To Tier
+#     III." (five raw words, four counted) reads as a name -- new with #1256,
+#     and it errs toward removing;
+#   - a name of more than four counted words ("Dana van der Berg Jr."), or one
+#     that ends in a plain stopped surname after its ranks ("Lt. Col. Dana M.
+#     Whitfield.", five raw words, no tail), still reads as a sentence
+#     (pre-existing).
 
 
 @pytest.mark.parametrize(

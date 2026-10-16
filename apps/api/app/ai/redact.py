@@ -535,14 +535,22 @@ def _substantive_words(stripped: str) -> list[str]:
     return [w for w in stripped.split() if not _is_abbreviation(w)]
 
 
-def _is_name_tail(token: str) -> bool:
-    """A last token that ends a NAME rather than a sentence (#1256): a suffix
-    (`_NAME_SUFFIXES`), a credential with inner stops (`M.D.`, `Ph.D.`), or a
-    capitalised designation of two or more letters (`USAF.`, `CISSP.`).
-    A short Title-Case word (`Way.`, `Up.`) is none of these."""
-    core = token.strip("().,")
+def _is_name_tail(words: list[str]) -> bool:
+    """Whether the LAST of `words` ends a NAME rather than a sentence (#1256).
+
+    A suffix (`_NAME_SUFFIXES`) anywhere last. A credential with inner stops
+    (`M.D.`) or a capitalised designation of two or more letters (`USAF.`,
+    `CISSP.`) only AFTER A COMMA, the way a name carries one ("Whitfield,
+    USAF."): without the comma it is a sentence's last word, and "Enable MFA
+    On Every VPN." or "Escalate Findings To The SOC." read as names and cut
+    the text after them (review of db522400). A short Title-Case word (`Way.`,
+    `Up.`) is never a tail.
+    """
+    core = words[-1].strip("().,")
     if core.lower() in _NAME_SUFFIXES:
         return True
+    if len(words) < 2 or not words[-2].endswith(","):
+        return False
     if "." in core and core.replace(".", "").isalpha():
         return True
     return len(core) >= 2 and core.isalpha() and core.isupper()
@@ -654,11 +662,13 @@ def _looks_like_prose(line: str) -> bool:
     #     rank (review of 96b41f97);
     #   - name-SHAPED, not a tail alone: "Patching resumes in Phase II." ends
     #     in a suffix word but has lowercase words (review of 8310931d).
-    # Residual, accepted: ANY all-Title-Case stopped line of four words or
-    # fewer is not prose here, tail or not ("Next Steps Below."), so after an
-    # opener it can read as a signatory -- that predates #1256, and errs toward
-    # removing.
-    if _is_name_shaped(stripped) and _is_name_tail(words[-1]):
+    # Residuals, accepted (the table's notes say which predate #1256): an
+    # all-Title-Case stopped line of four RAW words or fewer is not prose ("Next
+    # Steps Below.", pre-existing); and a name-shaped line ending in a SUFFIX
+    # word is counted without its abbreviations, so "Hosts Move To Tier III."
+    # (five raw, four counted) is not prose either -- new with #1256. After an
+    # opener either can read as a signatory, which errs toward removing.
+    if _is_name_shaped(stripped) and _is_name_tail(words):
         return len(_substantive_words(stripped)) > _MAX_SIGNATORY_WORDS
     return len(words) > _MAX_SIGNATORY_WORDS
 
