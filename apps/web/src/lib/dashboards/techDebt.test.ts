@@ -27,6 +27,7 @@ function item(p: Partial<TechDebtItem>): TechDebtItem {
     disposition: null,
     notes: null,
     bundle: null,
+    ai_estimate: false,
     ...p,
   };
 }
