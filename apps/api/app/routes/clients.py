@@ -155,6 +155,7 @@ from app.zt.scoring import (
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
 from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
+from app.zt.target_origin import unrecorded_target_codes as zt_unrecorded_target_codes
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1706,6 +1707,8 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #1343: the same predicate the deliverable's gap rows use.
+        unrecorded_target_codes=list(zt_unrecorded_target_codes(fw, rows)),
         # #839: off the same GapAnalysis, as #188's field above.
         target_cap_notes=zt_target_cap_sentences(gap_analysis),
         # #914: the same derivation the workspace and the three files call.
