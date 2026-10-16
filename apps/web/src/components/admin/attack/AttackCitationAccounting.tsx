@@ -215,8 +215,9 @@ function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
  * #1181: Gene's plain-English citation line, replacing the numeric headline
  * ("{n} tool citations checked against the client's capability list: ...").
  * Copy C-1 to C-5 approved verbatim (#736 comment 6216024281, from the
- * proposal in 6208173127); counts comma-formatted. C-2a keeps #115's
- * "completed batches only" qualifier on a partial run.
+ * proposal in 6208173127); counts comma-formatted. C-2a and C-5a keep #115's
+ * "completed batches only" qualifier on a partial run, and the singulars at
+ * n = 1 are 6219475831 item 5.
  */
 const CITATION_INTRO =
   "For each attack technique, the AI listed which of the client's tools help stop it, spot it or respond to it. Each time it named a tool, we checked that the tool is really on the client's approved list, so the AI can't make one up.";
@@ -230,13 +231,20 @@ function citationLine(
   const n = (k: number) => k.toLocaleString("en-US");
   const total = confirmed + needsReview + rejected;
   if (total === 0) {
-    return `${CITATION_INTRO} The AI named no tools, so there was nothing to check.`;
+    // C-5a (advisor, #736 6219475831 item 5): a partial run keeps #115's
+    // qualifier here too -- the failed batches may have named tools.
+    return runIncomplete
+      ? `${CITATION_INTRO} The AI named no tools in the completed batches, so there was nothing to check.`
+      : `${CITATION_INTRO} The AI named no tools, so there was nothing to check.`;
   }
   const checked = runIncomplete
     ? `We checked ${n(total)} of these, from the batches that completed.`
     : `We checked ${n(total)} of these.`;
   if (needsReview === 0 && rejected === 0) {
-    return `${CITATION_INTRO} ${checked} All ${n(total)} are on the list. None need a closer look and none were rejected.`;
+    // The singular is 6219475831 item 5's "It is on the list.".
+    const all =
+      total === 1 ? "It is on the list." : `All ${n(total)} are on the list.`;
+    return `${CITATION_INTRO} ${checked} ${all} None need a closer look and none were rejected.`;
   }
   const onList =
     confirmed === 0
@@ -247,7 +255,11 @@ function citationLine(
       ? "None need a closer look."
       : `${n(needsReview)} need a closer look.`;
   const gone =
-    rejected === 0 ? "None were rejected." : `${n(rejected)} were rejected.`;
+    rejected === 0
+      ? "None were rejected."
+      : rejected === 1
+        ? "1 was rejected."
+        : `${n(rejected)} were rejected.`;
   return `${CITATION_INTRO} ${checked} ${onList} ${closer} ${gone}`;
 }
 

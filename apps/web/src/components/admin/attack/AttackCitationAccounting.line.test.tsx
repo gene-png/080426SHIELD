@@ -47,7 +47,7 @@ describe("AttackCitationAccounting: the plain-English citation line (#1181)", ()
         citations_rejected: 1,
       }),
     ).toBe(
-      `${C1} We checked 12 of these. 9 are on the list. 2 need a closer look. 1 were rejected.`,
+      `${C1} We checked 12 of these. 9 are on the list. 2 need a closer look. 1 was rejected.`,
     );
   });
 
@@ -66,6 +66,24 @@ describe("AttackCitationAccounting: the plain-English citation line (#1181)", ()
   it("nothing checked (C-5)", () => {
     expect(line({})).toBe(
       `${C1} The AI named no tools, so there was nothing to check.`,
+    );
+  });
+
+  it("nothing checked on a partial run keeps the qualifier (C-5a)", () => {
+    expect(line({ batches_total: 26, batches_failed: 6 })).toBe(
+      `${C1} The AI named no tools in the completed batches, so there was nothing to check.`,
+    );
+  });
+
+  it("one citation, on the list (singular, 6219475831 item 5)", () => {
+    expect(line({ citations_confirmed: 1 })).toBe(
+      `${C1} We checked 1 of these. It is on the list. None need a closer look and none were rejected.`,
+    );
+  });
+
+  it("several rejections stay plural", () => {
+    expect(line({ citations_confirmed: 4, citations_rejected: 2 })).toContain(
+      " 2 were rejected.",
     );
   });
 
