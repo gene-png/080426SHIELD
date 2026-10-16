@@ -7,9 +7,8 @@ has one decimal, rounded down, on an unreleased deliverable only (advisor,
   apply to a released re-export too.
 - The Priority cell: 3 tiers below target in Protect (weight 1.15) is 3.45.
   Unreleased, it shows 3.4 (rounded DOWN; rounding to nearest gives 3.5). In
-  Detect (weight 1.2) it is 3.6, not the 3.5 a float 3 x 1.2 = 3.5999...
-  floors to. A RELEASED re-export keeps the number it was delivered with,
-  3.45 and 3.60.
+  Detect (weight 1.2) it is 3.6. A RELEASED re-export keeps the number it was
+  delivered with, 3.45 and 3.60.
 
 The expected values are typed here from the weights the gap list states
 (PR 1.15, DE 1.2), never read from `FUNCTION_WEIGHTS` or the renderer.

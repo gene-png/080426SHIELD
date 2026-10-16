@@ -187,7 +187,10 @@ def _released(ctx: CsfDeliverableContext) -> bool:
 def _floored_priority(g: Gap) -> float:
     """The priority to one decimal, ROUNDED DOWN, as W6 shows it on the gap
     list (`lib/csf/ratingCopy.ts::priorityWorking`). In integer hundredths of
-    the weight, because a float 3 x 1.2 is 3.5999..., which floors to 3.5."""
+    the weight, so the floor is exact by construction: a float product can sit
+    just below a tenth (3 x 1.2 is 3.5999...). Measured: over today's weights
+    and gaps of 1 to 3, `floor(gap * weight * 10)` happens to agree, so this
+    guards a weight change rather than a case reachable now."""
     tenths = (g.gap_size * round(g.weight * 100)) // 10
     return tenths / 10
 

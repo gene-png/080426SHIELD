@@ -33,8 +33,11 @@ export function ratingGap(current: number, target: number): string {
  * W6: the gap list's priority with its working, e.g. "Priority 1.1: 1 tier
  * below target × 1.15 (Protect weighting)". The priority has one decimal,
  * ROUNDED DOWN, and the weight is shown as stored. Computed in integer
- * hundredths of the weight, because a float 3 × 1.2 is 3.5999…, which would
- * floor to 3.5 rather than 3.6.
+ * hundredths of the weight, so the floor is exact by construction: a float
+ * product can sit just below a tenth (3 × 1.2 is 3.5999…). Measured: over
+ * today's weights and gaps of 1 to 3, flooring `gap × weight × 10` happens to
+ * agree, so this guards a weight change rather than a case reachable now.
+ * `csf/exporters.py::_floored_priority` computes it the same way.
  */
 export function priorityWorking(
   gapSize: number,
