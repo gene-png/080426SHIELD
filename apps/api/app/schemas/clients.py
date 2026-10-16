@@ -372,6 +372,13 @@ class _AttackDraftHead(BaseModel):
     service_title: str
     run_id: uuid.UUID
     run_finished_at: datetime
+    #: The run's own disclosures, from its stored result, so a draft from a
+    #: partial run never reads as complete (advisor, #736 6216024281, 3b):
+    #: batches that failed, techniques a successful batch left out and the
+    #: re-ask did not recover, and techniques asked again (#1047).
+    batches_failed: int
+    omitted_count: int
+    reasked_count: int
 
 
 class AttackDraftDashboardResponse(AttackDashboardContent, _AttackDraftHead):

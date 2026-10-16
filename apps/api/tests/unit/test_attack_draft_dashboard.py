@@ -144,6 +144,8 @@ def test_no_completed_run_is_a_typed_404(app_client) -> None:  # noqa: F811
     r = _draft(c, h, svc_id)
     assert r.status_code == 404, r.text
     assert r.json()["error"]["reason"] == "attack_no_draft"
+    # D-1, approved verbatim (#736 6216024281).
+    assert r.json()["error"]["message"] == "No completed AI run yet, so there is no draft to show."
 
 
 def test_a_client_user_cannot_read_the_draft(app_client) -> None:  # noqa: F811
@@ -225,6 +227,11 @@ def test_a_stored_result_this_build_cannot_read_is_a_typed_refusal(
     r = _draft(c, h, svc_id)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "attack_draft_unreadable"
+    # D-4, approved verbatim (#736 6216024281).
+    assert r.json()["error"]["message"] == (
+        "The last AI run was stored in an older format, so its draft cannot be shown. "
+        "Run the AI again to see a draft."
+    )
 
 
 def test_a_client_user_of_the_same_tenant_cannot_read_the_draft(app_client) -> None:  # noqa: F811
@@ -299,3 +306,47 @@ def test_reading_the_draft_writes_nothing(app_client) -> None:  # noqa: F811
     assert _draft(c, h, svc_id).status_code == 200
     after = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     assert after["coverage"] == before["coverage"]
+
+
+def test_a_draft_from_a_partial_run_carries_the_runs_own_disclosures(
+    app_client,  # noqa: F811
+) -> None:
+    """A draft from a run that lost a batch, and left techniques out, must not
+    read as complete (#736 6216024281, 3b): it carries the run's failed-batch,
+    omitted and re-asked counts, as the run reported them."""
+    c, provider, h, svc_id, rows = _setup(app_client)
+    lost, answered = rows[0]["technique_code"], rows[1]["technique_code"]
+
+    def _answer(payload: dict) -> LLMResponse:
+        asked = payload.get("technique_codes") or []
+        if lost in asked:
+            raise RuntimeError("provider closed the connection")
+        entries = (
+            [
+                {
+                    "technique_code": answered,
+                    "status": "gap",
+                    "detection_tools": [],
+                    "prevention_tools": [],
+                    "response_tools": [],
+                    "rationale": "From the run.",
+                }
+            ]
+            if answered in asked
+            else []
+        )
+        return LLMResponse(json.dumps({"techniques": entries}))
+
+    provider.register("mitre_map", _answer)
+    run = _run(c, h, svc_id)
+    reported = run["result"]
+    assert reported["batches_failed"] >= 1, "setup: a batch failed"
+    assert reported["omitted_count"] > 0, "setup: a successful batch left techniques out"
+    assert reported["reasked_count"] > 0, "setup: the run asked again"
+
+    body = _draft(c, h, svc_id).json()
+    assert (body["batches_failed"], body["omitted_count"], body["reasked_count"]) == (
+        reported["batches_failed"],
+        reported["omitted_count"],
+        reported["reasked_count"],
+    )

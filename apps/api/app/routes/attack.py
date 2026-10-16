@@ -739,11 +739,11 @@ def latest_assessment(
     return _serialize_assessment(db, a, viewer=user)
 
 
-#: #1178, D-1: PLACEHOLDER copy until approved on #736.
-_NO_DRAFT_MESSAGE = "PLACEHOLDER D-1: no completed AI run yet, so there is no draft to show"
-#: #1178, D-4: PLACEHOLDER copy until approved on #736.
+#: #1178, D-1 and D-4, approved verbatim (advisor, #736 6216024281, 3b).
+_NO_DRAFT_MESSAGE = "No completed AI run yet, so there is no draft to show."
 _UNREADABLE_DRAFT_MESSAGE = (
-    "PLACEHOLDER D-4: the last AI run was stored in an older format, so its draft cannot be shown"
+    "The last AI run was stored in an older format, so its draft cannot be shown. "
+    "Run the AI again to see a draft."
 )
 
 
@@ -863,6 +863,9 @@ def draft_dashboard(
         service_title=svc.title,
         run_id=run.id,
         run_finished_at=run.finished_at,
+        batches_failed=stored.batches_failed,
+        omitted_count=stored.omitted_count,
+        reasked_count=stored.reasked_count,
     )
 
 
