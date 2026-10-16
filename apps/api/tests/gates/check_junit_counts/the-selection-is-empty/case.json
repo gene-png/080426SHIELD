@@ -1,0 +1,12 @@
+{
+ "incident": "D-090: the gate writes its selection only on a clean verdict, so an empty or missing one means it never certified anything. Comparing a run against nothing must not pass.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "is empty"
+}

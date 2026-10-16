@@ -60,6 +60,11 @@ dev = [
     # GITHUB_ACTIONS=true. Paths resolve against GITHUB_WORKSPACE, so do NOT set
     # PYTEST_RUN_PATH: with both set it prefixes apps/api twice. Pinned exactly.
     "pytest-github-actions-annotate-failures==0.4.2",
+    # CI runs the unit suite as `pytest ... -n 4` on one runner (#680, Gene's
+    # call over sharding it across four). Pinned exactly: 3.6.1 is the version
+    # the 2026-10-15 bench measured (run 38802579958). Local and pre-push runs
+    # do not pass `-n`, so they stay serial.
+    "pytest-xdist==3.6.1",
     # Lint/format pinned to known-good ranges: CI installs fresh, and a new
     # tool release can re-flag a previously clean repo with rules the diff
     # never touched. Bump deliberately, with a format pass if needed.

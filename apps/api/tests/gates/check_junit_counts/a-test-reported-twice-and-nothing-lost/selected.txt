@@ -1,0 +1,2 @@
+tests/unit/test_a.py::test_one
+tests/unit/test_a.py::TestB::test_two[x-1]
