@@ -7,7 +7,7 @@
  * 1-11). Items 12 and 13 below were added while building and go to the advisor
  * the same way.
  */
-import type { ServiceType } from "@/lib/admin/types";
+import type { ServiceType } from "@/lib/intake/types";
 
 /** A service kind a client can have open: every `ServiceType` but consultation. */
 export type FrameKind = Exclude<ServiceType, "consultation">;
