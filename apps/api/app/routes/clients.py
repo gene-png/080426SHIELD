@@ -12,6 +12,7 @@ sees nothing until a consultant explicitly releases the finalized deliverable.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated, NamedTuple
 
@@ -47,6 +48,8 @@ from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.retirement import Retirement as AttackRetirement
+from app.attack.retirement import RetirementIndex as AttackRetirementIndex
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
@@ -931,12 +934,12 @@ def _attack_uncovered_total(
             return _KindTotal(None, True), True, None, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
-        rows = attack_effective_coverage(
-            a,
+        stored = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
-            .all(),
+            .all()
         )
+        rows = attack_effective_coverage(a, stored)
         coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
         # No `pending_codes` here, and that is deliberate rather than an
         # oversight (#102). This reads `.gap` only, and `gap` is not a
@@ -963,7 +966,27 @@ def _attack_uncovered_total(
             # Only rows the rollup counts toward coverage: C7 says "counted as
             # covered", and a Gap, N/A or unscored row is not.
             credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
-            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
+            relying = {o.technique_code for o in subset.outside} & credited
+            if relying and attack_statuses_computed(a):
+                # #1016 (advisor, #736 6216024281): C7 says the techniques
+                # "rely on" such a tool. Under R3 that is checkable: recompute
+                # with the outside tools removed -- R3's own computation, as
+                # #801 recounts without retiring tools -- and keep only rows
+                # whose status would drop. Before R3 the stored status cannot
+                # be recomputed, so every such row still raises it.
+                without = {
+                    r.technique_code: r.status
+                    for r in attack_effective_coverage(
+                        a, stored, retirement=_OutsideToolsRemoved(subset.outside_tools())
+                    )
+                }
+                relying = {
+                    code
+                    for code in relying
+                    if _COVERAGE_RANK.get(without.get(code), -1)
+                    < _COVERAGE_RANK[coverage_map[code]]
+                }
+            outside = bool(outside) or bool(relying)
         else:
             not_checked.add(subset.not_checked_reason)
     return _KindTotal(total, False), False, not_verified, outside, _one_reason(outside, not_checked)
@@ -988,6 +1011,29 @@ def _one_reason(outside: bool | None, not_checked: set[str | None]) -> str | Non
 _CREDITS_COVERAGE = frozenset(
     {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
 )
+
+#: #1016: higher is better; a drop in rank is "relies on the tool".
+_COVERAGE_RANK = {
+    AttackCoverageStatus.COVERED.value: 2,
+    AttackCoverageStatus.PARTIAL.value: 1,
+    AttackCoverageStatus.GAP.value: 0,
+}
+
+
+class _OutsideToolsRemoved(AttackRetirementIndex):
+    """#1016: a retirement index that reads every tool outside the security
+    tool list as leaving and every other as staying -- the counterfactual the
+    home card's "relies on" is measured against, never a figure any surface
+    shows. Keyed as the retirement index keys names (case-folded)."""
+
+    def __init__(self, outside: Iterable[str]) -> None:
+        super().__init__(has_plan=True, by_key={})
+        object.__setattr__(self, "_outside", frozenset(str(t).strip().casefold() for t in outside))
+
+    def state(self, tool: str) -> AttackRetirement | None:
+        if str(tool or "").strip().casefold() in self._outside:
+            return AttackRetirement.PLANNED
+        return AttackRetirement.NOT_RETIRING
 
 
 def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
