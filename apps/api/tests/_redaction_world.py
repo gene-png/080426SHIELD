@@ -27,6 +27,7 @@ from app.models.capability import CapabilityList
 from app.models.llm_call import LLMCall
 from app.storage.local import LocalFilesystemStorage
 from tests._ai_runs import get_run
+from tests._csf_notes import note_every_answer
 
 _PASSWORD = "correct horse battery staple!"
 
@@ -278,6 +279,9 @@ def csf_service(w: dict) -> str:
     assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code < 300
     r = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert r.status_code < 300, r.text
+    # CSF Option 1 (D-114): only answers with notes are sent, and these runs
+    # need a full profile's batches.
+    note_every_answer(svc_id)
     return svc_id
 
 
