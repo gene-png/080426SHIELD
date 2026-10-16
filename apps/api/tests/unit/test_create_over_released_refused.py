@@ -107,6 +107,46 @@ def test_attack_create_over_a_released_version_is_refused(env) -> None:  # noqa:
     assert _versions(AttackAssessment, svc) == 1, "a blank version was minted over released work"
 
 
+def test_zt_create_over_an_approved_revision_of_released_work_is_refused(
+    app_client,  # noqa: F811
+) -> None:
+    """Review F2: v1 released, a revision v2 approved on top. The latest record
+    is APPROVED, so a "latest is RELEASED" check let a blank v3 through, which
+    the client doors do not cover. The refusal keys on ANY released version
+    and names it.
+
+    Red-on-revert: key on the latest record's status and a v3 is minted."""
+    from app.models.zt_assessment import ZtAssessment
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    _zt_finalize_release(c, bearer, svc_id)
+    v1 = c.get(f"/zt/services/{svc_id}/assessments/latest", headers=h).json()["id"]
+    v2 = c.post(
+        f"/zt/services/{svc_id}/assessments/{v1}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
+    assert v2.status_code == 201, v2.text
+    r = c.post(f"/zt/assessments/{v2.json()['id']}/approve", headers=h)
+    assert r.status_code == 200, r.text
+    assert _versions(ZtAssessment, svc_id) == 2
+
+    r = c.post(f"/zt/services/{svc_id}/assessments", headers=h)
+
+    _refused(r)
+    assert _versions(ZtAssessment, svc_id) == 2, "a blank v3 was minted over released work"
+
+
 def test_zt_first_create_still_mints(app_client) -> None:  # noqa: F811
     """The positive state: with nothing released, create still works."""
     from tests.unit.test_frozen_engagement_target import _register, _zt_service
