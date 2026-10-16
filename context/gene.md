@@ -2,7 +2,7 @@
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
 
-_2026-10-16 (track T5): #1266, a follow-up to #1262._ When a workspace switches to another service, it no longer keeps showing the previous one's error, and a slow lookup for the previous service can no longer switch the active client back. It comes back to you: condition 5.
+_2026-10-16 (track T5): #1266, a follow-up to #1262._ When a workspace switches to another service, it no longer keeps showing the previous one's error, and a slow lookup for the previous service can no longer switch the active client back, even with its cookie write already in flight. An error clears once its service opens. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1262, uploads land under the right client._ If a consultant had two clients open in two tabs, a document dropped into one client's Tech Debt workspace could be stored under the other client. It is now always stored under the client the workspace belongs to. It comes back to you: condition 5.
 
