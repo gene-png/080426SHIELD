@@ -164,8 +164,9 @@ const RUBRIC: string[][] = [
   ],
 ];
 
+// The level by name since #736 6205956728 (the W sweep).
 const S1 =
-  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above L2.";
+  "Without evidence, Implementation counts as no more than 1 in the total, and the level cannot go above Developing.";
 const S2 =
   "No target on this tier. The subcategory is still checked for a gap if another in-scope tier has a target and has been scored, or if no tier has been scored yet.";
 
