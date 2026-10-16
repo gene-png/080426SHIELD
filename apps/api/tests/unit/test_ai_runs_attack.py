@@ -477,7 +477,11 @@ def test_one_failed_batch_leaves_a_partial_run_that_says_so(app_parts) -> None:
     assert w.row(lost).status is None
     with w.sessions() as s:
         calls = s.execute(select(LLMCall)).scalars().all()
-    assert len(calls) == run["batches_total"]
+    # One `llm_calls` row per provider call. Since #1047 that includes the
+    # re-ask for the codes this provider never answers (it names `w.codes`
+    # only), which the run counts on its own field, not in `batches_total`.
+    assert run["result"]["reask_batches_total"] > 0
+    assert len(calls) == run["batches_total"] + run["result"]["reask_batches_total"]
 
 
 @pytest.mark.unit

@@ -1072,7 +1072,9 @@ export function AttackWorkspace({
           <WorkflowStep
             number={3}
             title="Approve the assessment"
-            description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step."
+            // #1179: Gene's sentence (2026-10-15 test-run item 11), after the
+            // current text, which is unchanged.
+            description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step. Review each item with the client and confirm they agree before approving."
             done={assessment.status !== "draft"}
             blockedReason={
               // #556: the API refuses to approve an assessment scored against
