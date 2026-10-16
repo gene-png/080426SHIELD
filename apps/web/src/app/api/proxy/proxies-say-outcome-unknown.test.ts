@@ -37,10 +37,10 @@ const MESSAGE =
 
 // #1130: a READ that got no answer cannot "still complete", so a proxy whose
 // upstream call was a GET says it could not load instead. Spelled out for the
-// same reason as above. PLACEHOLDER copy, pending the advisor's verbatim ruling.
+// same reason as above. Approved verbatim on #736 (issuecomment-6225076633).
 const READ_REASON = "upstream_read_failed";
 const READ_MESSAGE =
-  "SHIELD's server didn't answer, so this couldn't be loaded. Reload the page to try again.";
+  "SHIELD's server didn't send a complete answer, so this couldn't be loaded. Reload the page to try again.";
 
 /**
  * Which body the proxy owes, decided by the method of the upstream call it
