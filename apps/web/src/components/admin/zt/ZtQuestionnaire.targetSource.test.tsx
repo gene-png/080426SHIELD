@@ -11,12 +11,12 @@ import { ZtQuestionnaire } from "./ZtQuestionnaire";
  * #982 (A): a per-capability target whose origin is not recorded (every target
  * stored before migration 0076, some of them set by earlier AI runs) is
  * disclosed beside the Target select on the consultant's questionnaire. The
- * line is a PLACEHOLDER pending the advisor's approval; it is quoted here, and
- * changes with the ruling.
+ * line was approved verbatim by the advisor; it is quoted here, never
+ * imported.
  */
 
 const NOT_RECORDED =
-  "PLACEHOLDER (pending approval): who set this target is not recorded. An earlier AI run may have set it.";
+  "Who set this target is not recorded. An earlier AI run may have set it.";
 
 const CATALOG = {
   framework: "cisa_ztmm_2_0",

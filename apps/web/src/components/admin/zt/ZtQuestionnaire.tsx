@@ -28,10 +28,10 @@ function notesBlank(notes: string | null): boolean {
   return notes === null || notes.trim() === "";
 }
 
-// #982 (A): a per-capability target whose origin is not recorded. PLACEHOLDER,
-// PENDING the advisor's approval (#736): proposed text, not approved.
+// #982 (A): a per-capability target whose origin is not recorded. Approved
+// verbatim at #736 comment 6220094031 item 5.
 const TARGET_ORIGIN_NOT_RECORDED =
-  "PLACEHOLDER (pending approval): who set this target is not recorded. An earlier AI run may have set it.";
+  "Who set this target is not recorded. An earlier AI run may have set it.";
 
 export interface ZtQuestionnaireProps {
   catalog: ZtCatalog;
