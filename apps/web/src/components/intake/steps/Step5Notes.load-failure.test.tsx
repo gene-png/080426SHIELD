@@ -17,9 +17,11 @@ import type {
  * does. Through the real `listArtifacts` with `fetch` stubbed.
  */
 
-vi.mock("../Dropzone", () => ({
+// The REAL empty-list hint (review of 3ffc5976): a mocked one hid that it
+// rendered over a failed load. Only the upload control is stubbed.
+vi.mock("../Dropzone", async (importActual) => ({
+  ...(await importActual<typeof import("../Dropzone")>()),
   Dropzone: () => null,
-  EmptyArtifactsHint: () => null,
 }));
 vi.mock("../RedactionDisclosure", () => ({ RedactionDisclosure: () => null }));
 
@@ -60,5 +62,35 @@ describe("Step5Notes: the uploads list failed to load (#1223)", () => {
     );
     expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
     expect(screen.queryByText(/couldn't confirm/)).toBeNull();
+    expect(screen.queryByText(/No documents uploaded/)).toBeNull();
+  });
+
+  it.each([
+    ["a bare 500", 500, ""],
+    ["a 200 with no item list", 200, JSON.stringify({})],
+  ])("never says nothing was uploaded over %s", async (_n, status, body) => {
+    respond(status, body);
+    renderStep();
+    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
+    expect(screen.queryByText(/No documents uploaded/)).toBeNull();
+  });
+
+  it("still says nothing was uploaded when the list loads empty", async () => {
+    respond(200, JSON.stringify({ items: [] }));
+    renderStep();
+    expect(await screen.findByText(/No documents uploaded/)).toBeVisible();
+    expect(screen.queryByText("Failed to load uploads.")).toBeNull();
   });
 });
+
+function renderStep() {
+  render(
+    <Step5Notes
+      state={
+        { client: { service_interests: [] } } as unknown as IntakeStateResponse
+      }
+      serviceInputs={{} as Record<ServiceType, ServiceRequestInput>}
+      onChange={vi.fn()}
+    />,
+  );
+}
