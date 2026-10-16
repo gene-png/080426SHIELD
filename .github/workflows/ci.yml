@@ -70,6 +70,11 @@ jobs:
       # It cannot be closed by a pytest test: a test living in the tree that
       # skips itself skips with it. So it is asserted from OUTSIDE, in the one
       # place a full checkout is guaranteed.
+      #
+      # THREE skips rely on this step, not one: the audit-gate module,
+      # test_ci_selection_gate.py and test_junit_counts.py all skip on the same
+      # `find_workflows_dir(...) is None`, from the same tests/unit directory.
+      # Moving or removing this step un-guards all three (#1221).
       - name: the audit-gate tests must not skip on a full checkout
         working-directory: apps/api
         run: |
