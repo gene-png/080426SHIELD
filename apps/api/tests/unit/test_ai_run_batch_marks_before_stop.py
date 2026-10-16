@@ -20,7 +20,6 @@ does not drive a call into the gap, which needs the release itself delayed.
 from __future__ import annotations
 
 import threading
-import time
 from datetime import timedelta
 
 import pytest
@@ -38,12 +37,17 @@ def test_a_batch_held_past_its_stop_check_leaves_the_run_not_known(
     import app.ai.runs as runs
 
     monkeypatch.setattr(type(world.provider), "name", "anthropic", raising=False)
-    monkeypatch.setattr(runs, "RUN_DEADLINE", timedelta(seconds=2))
+    # Long enough that a loaded runner still gets a batch to the hold before
+    # the deadline (the job's own reads spend it first); the test asserts the
+    # ORDER, so only its length, not its exact value, matters.
+    monkeypatch.setattr(runs, "RUN_DEADLINE", timedelta(seconds=8))
     gate = threading.Event()
     held = threading.Event()
+    held_threads: list[threading.Thread] = []
     real_run_job = batching.run_job
 
     def _held_run_job(*args: object, **kwargs: object) -> object:
+        held_threads.append(threading.current_thread())
         held.set()
         assert gate.wait(timeout=60), "the test never released the batch"
         return real_run_job(*args, **kwargs)
@@ -63,9 +67,8 @@ def test_a_batch_held_past_its_stop_check_leaves_the_run_not_known(
         gate.set()
 
     # Let the released batches finish before the fixture tears the database
-    # down. The run has ended, so the redaction gate turns them away.
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if not any(t.name.startswith("ThreadPoolExecutor") for t in threading.enumerate()):
-            break
-        time.sleep(0.1)
+    # down. The run has ended, so the redaction gate turns them away. Only the
+    # threads this test held are waited for, and one still running is a fault.
+    for t in held_threads:
+        t.join(timeout=30)
+    assert not [t.name for t in held_threads if t.is_alive()], "a released batch never finished"

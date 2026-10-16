@@ -38,7 +38,8 @@ invoke_mark_var: ContextVar[InvokeMark | None] = ContextVar("invoke_mark", defau
 
 
 def note_invoke_entered() -> None:
-    """Called first thing in `LLMClient.invoke`. Outside a Run-AI, a no-op."""
+    """Called first thing in `LLMClient.invoke`, and by a batch worker before
+    its stop check (`batching._one`). Outside a Run-AI, a no-op."""
     mark = invoke_mark_var.get()
     if mark is not None:
         mark.entered = True

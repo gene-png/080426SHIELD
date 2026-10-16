@@ -9,7 +9,10 @@ run would record "not charged" over a real call (advisor, #736 6225076633).
 
 The rule is read from the source with `ast`, so a new pool anywhere under
 `app/` is checked without being listed. The count of submits found is part of
-the result: a scan that finds none proves nothing.
+the result: a scan that finds none proves nothing. The other ways to run code
+on another thread -- an executor's `.map`, `threading.Thread`,
+`run_in_executor`, `asyncio.to_thread` -- have no copied form here at all, so
+none may appear until one is written and this test is taught to accept it.
 """
 
 from __future__ import annotations
@@ -49,6 +52,37 @@ def _submits() -> list[tuple[str, int, ast.Call]]:
             ):
                 found.append((path.relative_to(_APP.parent).as_posix(), node.lineno, node))
     return found
+
+
+def _other_thread_starts() -> list[str]:
+    """Calls that run code on another thread without going through `submit`."""
+    found = []
+    for path in sorted(_APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = (
+                f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+            )
+            receiver = ""
+            if isinstance(f, ast.Attribute):
+                v = f.value
+                receiver = (
+                    v.id
+                    if isinstance(v, ast.Name)
+                    else v.attr if isinstance(v, ast.Attribute) else ""
+                )
+            if name in ("Thread", "Timer", "run_in_executor", "to_thread") or (
+                name == "map" and ("pool" in receiver.lower() or "executor" in receiver.lower())
+            ):
+                found.append(f"{path.relative_to(_APP.parent).as_posix()}:{node.lineno} {name}")
+    return found
+
+
+def test_nothing_starts_a_thread_without_the_copied_context() -> None:
+    assert _other_thread_starts() == []
 
 
 def test_every_pool_submit_runs_in_a_copied_context() -> None:

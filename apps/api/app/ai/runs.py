@@ -480,9 +480,9 @@ class RunContext:
     deadline_at: datetime
     llm: LLMClient
     extra: dict[str, Any] = field(default_factory=dict)
-    # Not a constructor argument and not part of equality: set by
-    # `LLMClient.invoke` through `invoke_mark_var`, which `_execute` points at
-    # this object (#1219).
+    # Not a constructor argument and not part of equality: set through
+    # `invoke_mark_var`, which `_execute` points at this object, by
+    # `LLMClient.invoke` and by a batch worker before its stop check (#1219).
     invoke: InvokeMark = field(default_factory=InvokeMark, init=False, compare=False, repr=False)
 
     @property
