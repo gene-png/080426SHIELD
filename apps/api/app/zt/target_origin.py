@@ -6,11 +6,19 @@
 questionnaire discloses it; the client outputs (deliverable, dashboard, risk
 register) reuse the same approved sentence (#736 6225076633).
 
-ONE predicate for every output, so they cannot disagree about which targets
-are unrecorded. A target counts only when the gap engine APPLIES it
-(`capability_target_override`, the predicate `effective_target_stages` uses):
-an unusable stored value falls back to the engagement stage and decides
-nothing, so its origin is not what the client is reading.
+ONE predicate for the deliverable and the client ZT dashboard, so they
+cannot disagree about which targets are unrecorded. A target is listed when
+the gap engine APPLIES it (`capability_target_override`, the predicate
+`effective_target_stages` uses); an unusable stored value falls back to the
+engagement stage, so it is not. An applied override can still equal the
+engagement stage, or meet it at a DoD capability's cap, and so change no
+number; it is listed anyway, because the sentence is about who set the
+target, which stays true.
+
+The Risk Register applies a stored per-capability target RAW
+(`routes/risk.py`), not through `capability_target_override`; the two agree
+on every value the writers store today, and the register says how it uses
+this predicate where it calls it.
 """
 
 from __future__ import annotations

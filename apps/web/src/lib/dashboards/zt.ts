@@ -146,20 +146,6 @@ export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
 }
 
 /**
- * The sub-label under the target KPI, naming the target's provenance.
- *
- * Every source gets its own sentence, and the two FAILURE sources are never
- * collapsed into "no stage chosen at intake": that would be a lie in the
- * client's own words -- they DID choose, and the choice could not be used, a
- * fact a consultant can act on by re-asking. #125 went to some trouble to keep
- * those apart on the way here. An unrecognised value falls through to the
- * assumed-target wording rather than being asserted as a client choice,
- * because #124's whole failure mode was a fallback that read like a decision.
- *
- * A fully-overridden target changes the SUBJECT of the sentence but never
- * suppresses a fault -- see below.
- */
-/**
  * #1343: the approved sentence (#736 6220094031 item 5), the one the API's
  * `zt/target_origin.py` and the consultant's `ZtQuestionnaire.tsx` carry.
  */
@@ -176,6 +162,20 @@ export function unrecordedTargetLines(data: ZtDashboardData): string[] {
   );
 }
 
+/**
+ * The sub-label under the target KPI, naming the target's provenance.
+ *
+ * Every source gets its own sentence, and the two FAILURE sources are never
+ * collapsed into "no stage chosen at intake": that would be a lie in the
+ * client's own words -- they DID choose, and the choice could not be used, a
+ * fact a consultant can act on by re-asking. #125 went to some trouble to keep
+ * those apart on the way here. An unrecognised value falls through to the
+ * assumed-target wording rather than being asserted as a client choice,
+ * because #124's whole failure mode was a fallback that read like a decision.
+ *
+ * A fully-overridden target changes the SUBJECT of the sentence but never
+ * suppresses a fault -- see below.
+ */
 export function targetNote(data: ZtDashboardData): string {
   const fault = targetFault(data.target_stage_source);
 
