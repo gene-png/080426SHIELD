@@ -158,6 +158,7 @@ describe("the workspace says how many tools the total leaves out (TD-10)", () =>
       item("p1", "Bundle Part", null, "b"),
     ]);
     expect(screen.getByText("Total cost: $294,120")).toBeInTheDocument();
-    expect(screen.queryByText(/no cost/)).toBeNull();
+    // The TD-10 sentence only: the disposition legend also says "has no cost".
+    expect(screen.queryByText(/no cost; total excludes/)).toBeNull();
   });
 });
