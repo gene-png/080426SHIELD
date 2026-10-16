@@ -35,6 +35,37 @@ const REASON = "upstream_outcome_unknown";
 const MESSAGE =
   "We couldn't confirm whether this finished. It may still complete; check before trying again.";
 
+// #1130: a READ that got no answer cannot "still complete", so a proxy whose
+// upstream call was a GET says it could not load instead. Spelled out for the
+// same reason as above. PLACEHOLDER copy, pending the advisor's verbatim ruling.
+const READ_REASON = "upstream_read_failed";
+const READ_MESSAGE =
+  "SHIELD's server didn't answer, so this couldn't be loaded. Reload the page to try again.";
+
+/**
+ * Which body the proxy owes, decided by the method of the upstream call it
+ * made (never by the handler's name): a GET handler that writes upstream still
+ * owes #550's, and a write handler's read owes the read body.
+ */
+function owedFor(): {
+  kind: "read" | "write";
+  error: { code: number; reason: string; message: string };
+} {
+  const init = fetchMock.mock.calls.at(-1)?.[1] as RequestInit | undefined;
+  const upstreamMethod = (init?.method ?? "GET").toUpperCase();
+  const read = upstreamMethod === "GET" || upstreamMethod === "HEAD";
+  owedKinds.add(read ? "read" : "write");
+  return read
+    ? {
+        kind: "read",
+        error: { code: 504, reason: READ_REASON, message: READ_MESSAGE },
+      }
+    : { kind: "write", error: { code: 504, reason: REASON, message: MESSAGE } };
+}
+
+/** Both kinds must be exercised, or one half of #1130 is tested by nothing. */
+const owedKinds = new Set<"read" | "write">();
+
 const PROXY_ROOT = join(process.cwd(), "src/app/api/proxy");
 
 function routeFiles(dir: string): string[] {
@@ -241,20 +272,16 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
         fetchMock.mock.calls.length,
         `${name} never called upstream, so this test cannot judge it`,
       ).toBeGreaterThan(0);
+      const owed = owedFor();
       const body = (await res.json()) as {
         error?: { code?: unknown; reason?: unknown; message?: unknown };
       };
       expect(
         { status: res.status, error: body.error },
-        `${name} must answer 504 upstream_outcome_unknown: the api may have finished`,
-      ).toEqual({
-        status: 504,
-        error: {
-          code: 504,
-          reason: REASON,
-          message: MESSAGE,
-        },
-      });
+        owed.kind === "write"
+          ? `${name} must answer 504 upstream_outcome_unknown: the api may have finished`
+          : `${name} read upstream, so it must answer 504 upstream_read_failed (#1130)`,
+      ).toEqual({ status: 504, error: owed.error });
     },
   );
 
@@ -290,18 +317,22 @@ describe("proxies say the outcome is unknown when they cannot see the api's answ
         return;
       }
       expect(fetchMock.mock.calls.length, name).toBeGreaterThan(0);
+      const owed = owedFor();
       const body = (await res.json()) as {
         error?: { code?: unknown; reason?: unknown; message?: unknown };
       };
       expect(
         { status: res.status, error: body.error },
-        `${name} must answer 504 upstream_outcome_unknown when the body never arrives`,
-      ).toEqual({
-        status: 504,
-        error: { code: 504, reason: REASON, message: MESSAGE },
-      });
+        `${name} must answer 504 ${owed.error.reason} when the body never arrives`,
+      ).toEqual({ status: 504, error: owed.error });
     },
   );
+
+  it("judged both a read and a write (#1130)", () => {
+    // Runs after the cases above (vitest keeps file order). A run that judged
+    // only reads, or only writes, would prove one half of #1130.
+    expect([...owedKinds].sort()).toEqual(["read", "write"]);
+  });
 
   it.each(CASES)(
     "%s passes an answer the api DID send through unchanged",
