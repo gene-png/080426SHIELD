@@ -6635,3 +6635,24 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 - **"Released numbers never move" returns as a requirement at launch.** Track7's post-MVP note from #1044 carries it: any rule change made after real data arrives needs a freeze.
 
 **What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
+
+## D-113 — A PR whose required checks pass is merged by an agent; extra-care PRs go to the advisor
+
+**2026-10-16 · governance, the merge rule** (Decision: Gene, directly in the coordinator session (session_018WJDoAssaiYfyTcfEjEHbq): "change the rule itself so PRs can be merged if they pass the checks", then "update the rule so that extra care files go to the advisor to review and approve and merge".)
+
+**The decision.**
+
+- An agent merges a PR with GitHub auto-merge, guarded on the reviewed head (`--match-head-commit`), once every required check is green and the adversarial reviewer has run on the final head.
+- That holds unless the PR is EXTRA CARE: a migration (condition 4), a condition-5 path, or a change to deliverable content, exporter output or client dashboard numbers (condition 6).
+- Extra-care PRs go to the advisor session named in `claude/roles-and-handoff.md`, which reviews them, approves them and merges them.
+- Branch protection and the required checks are never bypassed or edited.
+
+**What it changes.**
+
+- Before this, every PR tripping 4, 5 or 6 came back to "the human". Now it goes to the advisor, which on 2026-09-26 Gene had already authorised to approve migrations, tier-1 auth, condition-6 content and merge-rule text on his behalf. The rule now names the advisor as the merger.
+- Condition 1 reads the required set from branch protection instead of a count in prose.
+- Condition 3 (status documents in the landing commit) is retired as a gate, because status documents are batched.
+
+**What it does NOT change.** The condition-5 path list and its derivation, the adversarial reviewer on the final head, and the "READY is two claims" check. Gene may still approve and merge anything directly.
+
+**What would reopen this:** an extra-care PR merged without an advisor approval on its head, or a non-extra-care PR merged on green that should have been extra care. Either one is evidence that the line is drawn in the wrong place.

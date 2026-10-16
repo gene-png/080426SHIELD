@@ -294,7 +294,8 @@ reformats files you did not touch, the old hook is installed in your checkout**
   confirm with `gh pr view <n> --json closingIssuesReferences`. Run
   `python apps/api/scripts/check_issue_references.py --title <f> --body <f> --commits <f>`
   before pushing; it takes file paths, not strings.
-- **YOU NEVER MERGE. Every PR on this track comes back to Gene**, unconditionally
+- **YOU NEVER MERGE. Every PR on this track is EXTRA CARE and goes to the
+  advisor** (merge rule, D-113), unconditionally
   — every one trips condition 5 (`zt/scoring.py` is a deterministic scoring
   engine) and condition 6 (client dashboard numbers). Merging is not yours to
   sequence.

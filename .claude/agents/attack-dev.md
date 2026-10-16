@@ -311,8 +311,9 @@ not fight it with `--no-verify` without saying so.
   write `see #N` or `tracked in #N`. Run
   `python apps/api/scripts/check_issue_references.py --title <f> --body <f> --commits <f>`
   before pushing; it takes file paths, not strings.
-- **YOU NEVER MERGE. Every PR on this track comes back to Gene**, unconditionally
-  — everything you touch trips merge-rule condition 5. Merging is not yours to
-  sequence. (Tracks take turns in one tree, so only one PR is ever in flight; Gene merges
-  it and re-runs CI before the other track starts. That is his sequencing, not a
+- **YOU NEVER MERGE. Every PR on this track is EXTRA CARE and goes to the
+  advisor** (merge rule, D-113), unconditionally — everything you touch trips
+  merge-rule condition 5. Merging is not yours to
+  sequence. (Tracks take turns in one tree, so only one PR is ever in flight; the advisor
+  merges it and re-runs CI before the other track starts. That is its sequencing, not a
   condition you evaluate.)

@@ -125,7 +125,7 @@ Playwright e2e lives in `e2e/` (host-run). Reference spec:
    prod runs Postgres. New persisted analysis fields are additive/optional so
    older rows parse unchanged (the C0 pattern).
 
-## The merge rule: when an agent may merge without checking back
+## The merge rule: who merges a PR
 
 **This sits at the top of the file because everything past a reader's size
 limit is cut away silently.** For at least three days it sat at byte 192,494 of
@@ -133,19 +133,31 @@ a 210,958-byte file, so agents read that a PR "tripping condition 5" comes back
 and could not read WHICH PATHS trip it. Keep it here; D-079 records how that
 happened.
 
-**An agent merges on green WITHOUT checking back, when all six hold.**
+**Since 2026-10-16 (Gene, D-113): a PR whose required checks pass is merged
+by an agent, unless it is EXTRA CARE; extra-care PRs go to the advisor, which
+reviews, approves and merges them.** Extra care is conditions 4, 5 and 6
+below. An agent merges with GitHub auto-merge when conditions 1, 2, 4, 5 and
+6 hold:
 
-1. **All seven CI checks green.** Five jobs in `ci.yml` — python, web,
-   secret-scan, e2e, demo — plus two in `audit-gate.yml`. `mutation-sweep.yml`
-   is schedule-only and excluded. **Re-derive this count if a job is added**;
-   it is a hardcoded number in prose, which this file has a rule about.
+    gh pr merge <n> --auto --squash --match-head-commit <reviewed head sha>
+
+Never `--admin`, never bypass branch protection, never edit the required
+checks. A PR that cannot merge (a red required check, a conflict, BLOCKED) is
+reported on #736 with its reason, never forced.
+
+1. **Every required check green on the PR's head.** Read the set from branch
+   protection, never from prose: `gh api
+   repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks
+   --jq .contexts`. A green certificate is about the head it ran on (see "READY
+   is two claims").
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
    first. The gate checks only that `Findings:` and `Disposition:` exist; it
    does not read `Scope:` and cannot tell whether the reviewer ran at all.
-3. **`DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated in the
-   landing commit**, with any counts read live rather than carried forward.
+3. **Retired 2026-10-16 (D-113).** Status documents (`DELIVERY_PLAN.md`,
+   `CONTEXT.md`, `context/<name>.md`) are batched; they are not a merge gate.
+   The number stays so that "condition 4/5/6" keeps meaning what it meant.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
@@ -154,16 +166,22 @@ happened.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
-**Any red, or any PR tripping 4, 5 or 6, comes back to the human.**
+**Any red is reported, never merged. Any PR tripping 4, 5 or 6 is EXTRA CARE
+and goes to the advisor** — the session named as advisor in the project doc
+`claude/roles-and-handoff.md` — **which reviews it, approves it and merges
+it.** Approval is a GitHub review approval from that session, or a ruling on
+#736 headed with its session id; the agent that built the PR never approves
+its own extra-care PR. Gene may approve and merge anything directly.
 
 **Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
-live-prompt clause needs a diff read. Conditions 2, 3 and 6 are self-attested
-by the agent that wants to merge** — three checkable conditions and three
-honest ones, not "a file-path check plus two facts". Condition 6 is a
-judgement call an agent can talk itself out of; when it is arguable, it has
-been tripped.
+live-prompt clause needs a diff read. Conditions 2 and 6 are self-attested by
+the agent that wants to merge.** Condition 6 is a judgement call an agent can
+talk itself out of; when it is arguable, it has been tripped, and the PR is
+extra care.
 
 ### Condition 5: the paths
+
+These are the EXTRA-CARE paths, the ones where a green suite proves least.
 
 - `apps/api/app/ai/` — the single egress path for all five services.
 - `apps/api/app/csf/playbook.py`, `app/risk/engine.py`, `app/zt/scoring.py` —
@@ -224,6 +242,9 @@ wrong, and the command is the one that will go on reporting clean.
 
 ### Re-derive the measurement whenever condition 5 changes
 
+("Came back" below meant "back to the human"; since D-113 it means "extra care,
+to the advisor". The measurements are unchanged by that.)
+
 What the rule actually clears is documentation PRs. Code comes back, and so does
 anything adding or changing a test — and this repo does not ship code without
 tests. Condition 5's path list applied to the fifteen most recent PR merges on
@@ -255,16 +276,19 @@ A STALE worked example is worse than none, because it ends the check with the
 wrong answer in the place a reader looks first. These are phrased from the
 conditions rather than from an issue number for that reason.
 
-- **Anything shipping an endpoint or a panel comes back.** It ships with tests,
-  or condition 1 proves nothing about it, so it trips `apps/api/tests/**`.
-  Whether the surface is admin-only is not a question condition 5 asks.
-- **A PR that repairs the gates comes back**, tripping condition 5 on both
+- **Anything shipping an endpoint or a panel is extra care.** It ships with
+  tests, or condition 1 proves nothing about it, so it trips
+  `apps/api/tests/**`. Whether the surface is admin-only is not a question
+  condition 5 asks.
+- **A PR that repairs the gates is extra care**, tripping condition 5 on both
   `check_*.py` and `apps/api/tests/**` at once. That such a commit is
-  *repairing* the harness this rule depends on argues for a human reading it,
-  not against.
+  *repairing* the harness this rule depends on argues for the advisor reading
+  it, not against.
 - **Anything whose fix changes what a client's dashboard or deliverable shows
-  comes back** under condition 6 — that is what condition 6 says, and it is
+  is extra care** under condition 6 — that is what condition 6 says, and it is
   the clause most often talked past.
+- **A dependency bump that touches only manifests and lockfiles, with every
+  required check green, is NOT extra care**, and an agent merges it.
 
 ## Real commands (use these, not generic equivalents)
 
@@ -1359,7 +1383,7 @@ because it is long. Load-bearing rules stay at any length:
 - **"AI suggests, code computes"** and **FAIL LOUDLY** — core principles 1 and 2.
 - **The gate suite** and the reasons each gate exists.
 - **The merge rule.** Keeping it ACCURATE is mandatory and is not "growth":
-  condition 1 says to re-derive its check count when a job is added, and D-059
+  condition 1 reads the required checks from branch protection, and D-059
   says to re-derive its measurement whenever condition 5 changes. Never leave a
   known gap in it because a budget said not to grow. What to resist is growth
   in KIND — another condition, another worked example. If it becomes
