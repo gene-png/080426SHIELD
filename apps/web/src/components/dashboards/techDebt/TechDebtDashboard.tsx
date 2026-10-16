@@ -20,6 +20,7 @@ import {
   type TechDebtDashboardData,
   type TechDebtItem,
 } from "@/lib/dashboards/techDebt";
+import { noCostSentence } from "@/lib/tech_debt/components";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 
 import type { JSX } from "react";
@@ -73,15 +74,24 @@ export function spendSub(data: TechDebtDashboardData): string {
     return "May not be complete - upload not reconciled";
   }
   if (data.spend_completeness === "partial") {
+    // TD-10 (for #1048): the count of tools the total leaves out follows any
+    // exclusion text, so an excluded row can no longer hide it.
+    const noCost = noCostSentence(data.no_cost_count);
+    const withNoCost = (exclusion: string) =>
+      noCost === null ? exclusion : `${exclusion} · ${noCost}`;
     // #193: an exclusion count the extraction could not attribute is a FLOOR,
     // and 0 when items were as many as rows -- never stated as the count.
     if (!data.excluded_count_exact && data.source_rows_total !== null) {
-      return data.excluded_count > 0
-        ? `Floor - at least ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`
-        : "May not be complete - excluded rows could not be counted";
+      return withNoCost(
+        data.excluded_count > 0
+          ? `Floor - at least ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`
+          : "May not be complete - excluded rows could not be counted",
+      );
     }
     if (data.excluded_count > 0 && data.source_rows_total !== null) {
-      return `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`;
+      return withNoCost(
+        `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`,
+      );
     }
     // The unbalanced case -- more items than source rows -- used to arrive
     // here looking like an uncosted tool, and had its own "does not
@@ -89,8 +99,12 @@ export function spendSub(data: TechDebtDashboardData): string {
     // means attribution failed, so the API reports `excluded_count_exact`
     // false and the branch above takes it. Pinned at the API by
     // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
-    // cause left: an included tool with no cost.
-    return "Floor - some tools lacked a cost";
+    // cause left: an included tool with no cost, which the API counts with the
+    // same predicate that made the figure partial. The count-free sentence
+    // stays only for a zero count, which that predicate cannot produce here.
+    return noCost === null
+      ? "Floor - some tools lacked a cost"
+      : `Floor - ${noCost}`;
   }
   return "Across all tools";
 }
