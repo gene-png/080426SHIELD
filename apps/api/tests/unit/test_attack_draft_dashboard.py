@@ -259,3 +259,28 @@ def test_a_client_user_of_the_same_tenant_cannot_read_the_draft(app_client) -> N
     assert dash.json()["error"]["reason"] == "dashboard_not_released", dash.text
     r = c.get(f"/attack/services/{svc_id}/draft-dashboard", headers=ch)
     assert r.status_code == 403, r.text
+
+
+def test_a_stale_assessment_with_no_run_names_the_catalog_not_the_missing_run(
+    app_client,  # noqa: F811
+) -> None:
+    """A re-run cannot fix a stale catalog (Run AI refuses it too), so the
+    refusal names the catalog, not "no completed AI run yet"."""
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.models.attack_assessment import AttackAssessment
+
+    c, provider, h, svc_id, rows = _setup(app_client)
+    TestSession = app_client[1]
+    with TestSession() as db:
+        db.execute(
+            update(AttackAssessment)
+            .where(AttackAssessment.id == uuid.UUID(rows[0]["assessment_id"]))
+            .values(catalog_version=None)
+        )
+        db.commit()
+    r = _draft(c, h, svc_id)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["reason"] == "attack_catalog_mismatch"

@@ -802,6 +802,11 @@ def draft_dashboard(
 
     svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
     a = _latest_assessment(db, svc.id)
+    if a is not None:
+        # #556, as the heatmap and the client dashboard: never compute coverage
+        # over rows keyed to another catalog. BEFORE the run lookup, so a stale
+        # assessment with no run names the cause a re-run cannot fix.
+        require_current_catalog(db, a)
     run = (
         None
         if a is None
@@ -822,9 +827,6 @@ def draft_dashboard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"reason": "attack_no_draft", "message": _NO_DRAFT_MESSAGE},
         )
-    # #556, as the heatmap and the client dashboard: never compute coverage over
-    # rows keyed to another catalog.
-    require_current_catalog(db, a)
     try:
         stored = AttackRunAiResponse.model_validate(run.result)
     except ValidationError as exc:
