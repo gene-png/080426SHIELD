@@ -267,15 +267,21 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         setattr(client, field, value)
 
 
-def _apply_profile_fields(user: User, fields: dict[str, str | None]) -> None:
-    """Apply only the profile fields present in `fields` AND non-None.
+# #1198 (#736 6216024281): the profile fields a sent null CLEARS. Both columns
+# are nullable. `timezone` is NOT NULL, and `display_name` is the person's name
+# on every record, so a null for either is still skipped.
+_CLEARABLE_PROFILE_FIELDS = frozenset({"title", "phone"})
 
-    Caller is responsible for filtering down to set-and-non-None values so
-    we don't overwrite a stored timezone with None just because the caller
-    didn't include it (which would violate the NOT NULL on users.timezone).
+
+def _apply_profile_fields(user: User, fields: dict[str, str | None]) -> None:
+    """Apply the profile fields present in `fields`.
+
+    The caller passes only the fields the request SET (`exclude_unset`). A None
+    clears `title` and `phone`; for `timezone` (NOT NULL on users.timezone) and
+    `display_name` it is skipped, so neither can be blanked here.
     """
     for field, value in fields.items():
-        if value is None:
+        if value is None and field not in _CLEARABLE_PROFILE_FIELDS:
             continue
         setattr(user, field, value)
 
