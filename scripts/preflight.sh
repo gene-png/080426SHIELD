@@ -122,10 +122,19 @@ cp "$BODY" "$T/in/body"
 # THE CLONE IS THE TREE UNDER TEST: HEAD exactly, with the base ref CI diffs
 # against. A clone of a worktree carries the source's local branches as its
 # remote branches, so origin/<base> is overwritten from the real ref.
+#
+# `reset --hard`, not `checkout`: after `clone --no-checkout` HEAD already names
+# this commit, so `checkout` had nothing to do and left an EMPTY working tree
+# while `HEAD^{tree}` still matched (measured 2026-10-16). So the check is on
+# the files: none missing, none different.
 git clone -q --no-checkout "$WORKTREE" "$T/repo"
-git -C "$T/repo" checkout -q --detach "$HEAD_SHA"
+git -C "$T/repo" reset -q --hard "$HEAD_SHA"
 git -C "$T/repo" fetch -q "$WORKTREE" "+$BASE_SHA:refs/remotes/origin/$BASE_BRANCH"
-[ "$(git -C "$T/repo" rev-parse 'HEAD^{tree}')" = "$TREE_SHA" ] || { echo "$P COULD NOT LOOK -- the clone's tree is not HEAD's" >&2; exit 2; }
+[ "$(git -C "$T/repo" rev-parse 'HEAD^{tree}')" = "$TREE_SHA" ] || { echo "$P COULD NOT LOOK -- the clone's HEAD is not this tree" >&2; exit 2; }
+[ -z "$(git -C "$T/repo" status --porcelain)" ] && [ -f "$T/repo/scripts/preflight.sh" ] || {
+  echo "$P COULD NOT LOOK -- the clone's working files are not HEAD's tree" >&2
+  exit 2
+}
 
 # --unit narrow: the test files this branch changes, and those importing a
 # module it changes (by dotted name or by stem: over-inclusion is safe here).
