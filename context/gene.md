@@ -2,6 +2,8 @@
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
 
+_2026-10-16 (track T5): #1266, a follow-up to #1262._ When a workspace switches to another service, it no longer keeps showing the previous one's error, and a slow lookup for the previous service can no longer switch the active client back. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1262, uploads land under the right client._ If a consultant had two clients open in two tabs, a document dropped into one client's Tech Debt workspace could be stored under the other client. It is now always stored under the client the workspace belongs to. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1170, the suite-listing banner moved to Notes and artifacts._ The "List each product separately, not as a suite" banner now shows at the top of Step 5 (Notes and artifacts), above the upload box, and no longer on Step 4 (Systems). Same rule and your approved wording. The Step 5 reminder line planned after IN-2 would now repeat it on the same step, so it waits for your call on whether it is still wanted. It comes back to you: condition 5.
