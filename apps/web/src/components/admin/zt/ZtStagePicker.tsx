@@ -67,51 +67,73 @@ export function ZtStagePicker({
     radioRefs.current[next]?.focus();
   }
 
+  // #922: the stage(s) above this capability's maximum, and why, approved at
+  // #736 comment 6216024281 ("adapt the stage name"). Measured at main
+  // 2f89930b: every capability's maximum is the ladder's top or one below it
+  // (DoD 2 or 3 of 3, CISA 4 of 4), so at most ONE stage is ever unavailable;
+  // the sentence names the lowest unavailable one.
+  const unreachableStages = stages.filter(
+    ({ stage }) => maxStage !== undefined && stage > maxStage,
+  );
+  const reasonId = React.useId();
+  const reason =
+    unreachableStages.length > 0
+      ? `This capability has no ${unreachableStages[0].label} activity, so ${unreachableStages[0].label} is not available.`
+      : null;
+
   return (
-    <div
-      role="radiogroup"
-      aria-label={ariaLabel ?? "Maturity stage"}
-      className="flex flex-wrap gap-1"
-    >
-      {stages.map(({ stage, label }, index) => {
-        const active = value === stage;
-        // #922: unavailable, but kept in place (aria-disabled, still
-        // focusable) so the button count and arrow-key order do not change.
-        // A stage already stored above the maximum can still be cleared.
-        const unreachable =
-          maxStage !== undefined && stage > maxStage && !active;
-        return (
-          <button
-            key={stage}
-            ref={(el) => {
-              radioRefs.current[index] = el;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            tabIndex={index === focusIndex ? 0 : -1}
-            disabled={disabled}
-            aria-disabled={unreachable ? true : undefined}
-            onClick={() => {
-              if (unreachable) return;
-              onChange(active ? null : stage);
-            }}
-            onKeyDown={(event) => handleKeyDown(event, index)}
-            className={[
-              "rounded-md px-2.5 py-1 text-xs font-semibold border transition",
-              active
-                ? "border-brand-500 bg-brand-500 text-ink-on-accent"
-                : "border-border bg-surface-card text-ink-secondary hover:bg-surface-sunken",
-              disabled || unreachable ? "cursor-not-allowed opacity-50" : "",
-            ].join(" ")}
-            title={label}
-          >
-            {/* Z3 (#736 6204461502 section 6, approved at 6205956728): the
+    <div className="flex flex-col gap-1">
+      <div
+        role="radiogroup"
+        aria-label={ariaLabel ?? "Maturity stage"}
+        className="flex flex-wrap gap-1"
+      >
+        {stages.map(({ stage, label }, index) => {
+          const active = value === stage;
+          // #922: unavailable, but kept in place (aria-disabled, still
+          // focusable) so the button count and arrow-key order do not change.
+          // A stage already stored above the maximum can still be cleared.
+          const unreachable =
+            maxStage !== undefined && stage > maxStage && !active;
+          return (
+            <button
+              key={stage}
+              ref={(el) => {
+                radioRefs.current[index] = el;
+              }}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              tabIndex={index === focusIndex ? 0 : -1}
+              disabled={disabled}
+              aria-disabled={unreachable ? true : undefined}
+              aria-describedby={unreachable && reason ? reasonId : undefined}
+              onClick={() => {
+                if (unreachable) return;
+                onChange(active ? null : stage);
+              }}
+              onKeyDown={(event) => handleKeyDown(event, index)}
+              className={[
+                "rounded-md px-2.5 py-1 text-xs font-semibold border transition",
+                active
+                  ? "border-brand-500 bg-brand-500 text-ink-on-accent"
+                  : "border-border bg-surface-card text-ink-secondary hover:bg-surface-sunken",
+                disabled || unreachable ? "cursor-not-allowed opacity-50" : "",
+              ].join(" ")}
+              title={label}
+            >
+              {/* Z3 (#736 6204461502 section 6, approved at 6205956728): the
                 name alone; `S{n}` is gone. */}
-            {label}
-          </button>
-        );
-      })}
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {reason ? (
+        <p id={reasonId} className="text-xs text-ink-tertiary">
+          {reason}
+        </p>
+      ) : null}
     </div>
   );
 }

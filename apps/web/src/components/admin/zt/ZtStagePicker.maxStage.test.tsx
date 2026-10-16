@@ -41,6 +41,12 @@ describe("ZtStagePicker #922: stages above the capability's maximum", () => {
     // onKeyDown that selects; a real Space or Enter is a click, caught above.
     fireEvent.keyDown(advanced, { key: " " });
     expect(onChange).not.toHaveBeenCalled();
+    // The approved reason (#736 6216024281), with the stage name adapted, and
+    // the unavailable button points at it.
+    const reason = screen.getByText(
+      "This capability has no Advanced activity, so Advanced is not available.",
+    );
+    expect(advanced).toHaveAttribute("aria-describedby", reason.id);
     // Still in place: three buttons, in order.
     expect(screen.getAllByRole("radio")).toHaveLength(3);
     expect(screen.getByRole("radio", { name: "Target" })).not.toHaveAttribute(
@@ -59,10 +65,26 @@ describe("ZtStagePicker #922: stages above the capability's maximum", () => {
     expect(onChange).toHaveBeenCalledWith(null);
   });
 
-  it("offers every stage when no maximum is given", () => {
+  it("offers every stage, with no reason line, when no maximum is given", () => {
     render(<ZtStagePicker value={null} onChange={() => {}} stages={DOD} />);
-    for (const r of screen.getAllByRole("radio")) {
+    const radios = screen.getAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    for (const r of radios) {
       expect(r).not.toHaveAttribute("aria-disabled");
     }
+    expect(screen.queryByText(/is not available\./)).toBeNull();
+  });
+
+  it("says nothing when the maximum is the ladder's top", () => {
+    render(
+      <ZtStagePicker
+        value={null}
+        onChange={() => {}}
+        stages={DOD}
+        maxStage={3}
+      />,
+    );
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    expect(screen.queryByText(/is not available\./)).toBeNull();
   });
 });
