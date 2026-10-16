@@ -892,7 +892,10 @@ def _attack_uncovered_total(
     (`subset_state`, the dashboard's own read). The total sums Gap only, so
     such a row is left out of it: the total may be understated (review F1,
     copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
-    so it does not raise the flag (round-2 review). None with the total, and
+    so it does not raise the flag (round-2 review). Under R3 (#1016) a row
+    raises it only when its status, recomputed without the outside tools,
+    falls to Gap: a row that would only fall to Partial stays out of the total
+    either way, so the total is exact for it. None with the total, and
     when nothing could be checked (no Tech Debt list, only lists with no
     security tool, or only discarded lists): not checked is not "none found".
 
@@ -972,20 +975,17 @@ def _attack_uncovered_total(
                 # "rely on" such a tool. Under R3 that is checkable: recompute
                 # with the outside tools removed -- R3's own computation, as
                 # #801 recounts without retiring tools -- and keep only rows
-                # whose status would drop. Before R3 the stored status cannot
-                # be recomputed, so every such row still raises it.
+                # that would fall to Gap, the one status the total sums
+                # (advisor, 6219475831). A row that would fall only to Partial
+                # is outside the total either way. Before R3 the stored status
+                # cannot be recomputed, so every such row still raises it.
                 without = {
                     r.technique_code: r.status
                     for r in attack_effective_coverage(
                         a, stored, retirement=_OutsideToolsRemoved(subset.outside_tools())
                     )
                 }
-                relying = {
-                    code
-                    for code in relying
-                    if _COVERAGE_RANK.get(without.get(code), -1)
-                    < _COVERAGE_RANK[coverage_map[code]]
-                }
+                relying = {code for code in relying if without.get(code) not in _CREDITS_COVERAGE}
             outside = bool(outside) or bool(relying)
         else:
             not_checked.add(subset.not_checked_reason)
@@ -1011,13 +1011,6 @@ def _one_reason(outside: bool | None, not_checked: set[str | None]) -> str | Non
 _CREDITS_COVERAGE = frozenset(
     {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
 )
-
-#: #1016: higher is better; a drop in rank is "relies on the tool".
-_COVERAGE_RANK = {
-    AttackCoverageStatus.COVERED.value: 2,
-    AttackCoverageStatus.PARTIAL.value: 1,
-    AttackCoverageStatus.GAP.value: 0,
-}
 
 
 class _OutsideToolsRemoved(AttackRetirementIndex):

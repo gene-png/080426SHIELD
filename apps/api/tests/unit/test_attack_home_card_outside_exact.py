@@ -2,11 +2,13 @@
 Partial technique relies on a tool outside the client's security tool list)
 fires for a row whose status does not depend on that tool.
 
-Proposed (#736, plan for the advisor): on an assessment whose statuses are
-computed (R3), flag a row only when its status, recomputed WITHOUT its outside
-tools -- R3's own computation, as #801's "after planned changes" recounts
-without retiring tools -- is lower than today's. Before R3 the stored status
-cannot be recomputed, so the flag stays as it is.
+Approved (advisor, #736 6216024281; narrowed in 6219475831): on an assessment
+whose statuses are computed (R3), flag a row only when its status, recomputed
+WITHOUT its outside tools -- R3's own computation, as #801's "after planned
+changes" recounts without retiring tools -- falls to Gap, the one status the
+total sums. A row that would fall only to Partial is outside the total either
+way. Before R3 the stored status cannot be recomputed, so the flag stays as it
+is.
 
 World: #851's. EDR stays in the security tool list; LEGACY leaves it after
 release (`confirm_not_security`). Expected values are written from the rows
@@ -63,8 +65,18 @@ def test_a_covered_row_that_stays_covered_without_the_outside_tool_does_not_rais
     assert _flag_after_drift(app_parts, tmp_path, both, both, both) is False
 
 
-def test_a_covered_row_whose_status_rests_on_the_outside_tool_still_raises_it(
+def test_a_covered_row_that_would_fall_only_to_partial_does_not_raise_it(
     app_parts, tmp_path  # noqa: F811
 ) -> None:
-    """LEGACY is the only Respond tool: without it the row would be Partial."""
-    assert _flag_after_drift(app_parts, tmp_path, [EDR], [EDR], [LEGACY]) is True
+    """LEGACY is the only Respond tool: without it the row would be Partial,
+    which the Gap-only total leaves out either way, so it is exact."""
+    assert _flag_after_drift(app_parts, tmp_path, [EDR], [EDR], [LEGACY]) is False
+
+
+def test_a_covered_row_that_would_fall_to_gap_without_the_outside_tool_raises_it(
+    app_parts, tmp_path  # noqa: F811
+) -> None:
+    """LEGACY is the only tool: without it the row would be a Gap, which the
+    total would count, so the total may be understated."""
+    only = [LEGACY]
+    assert _flag_after_drift(app_parts, tmp_path, only, only, only) is True
