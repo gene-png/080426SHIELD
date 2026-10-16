@@ -604,6 +604,12 @@ def test_the_signature_blocks_that_leaked_are_cut(shape: str, tail: str) -> None
     # last token is "Jr", which proves nothing about the name (review of
     # 96b41f97, #1256).
     tokens = tail.replace(",", " ").split()
-    surname = next(t for t in reversed(tokens) if not (len(t) <= 4 and t.endswith(".")))
+    # Nor a capitalised title ("CISO."): for "Dana Whitfield, CISO." that is
+    # the job, not the name (review of db522400).
+    surname = next(
+        t
+        for t in reversed(tokens)
+        if not (len(t) <= 4 and t.endswith(".")) and not t.rstrip(".").isupper()
+    )
     surname = surname.rstrip(".")
     assert surname not in out, f"{shape}: {surname!r} egressed"
