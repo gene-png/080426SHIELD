@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.models.csf_assessment import CsfAssessmentStatus
+from app.models.csf_profile import CsfEvidenceStatus
 from app.models.service import ServiceKind, ServiceStatus
 from app.schemas._numeric import IntNotBool
 from app.schemas.ai_runs import AiSource
@@ -322,12 +323,19 @@ class CsfDimensionScoreResponse(BaseModel):
     in_scope: bool
     rationale: str | None
     what_we_found: str | None
+    #: Three values (migration 0075): `on_file`, `confirmed_in_discussion`,
+    #: `neither`. None of them changes `level` except under the frozen cap.
+    evidence_status: CsfEvidenceStatus
+    #: `evidence_status == on_file`, the boolean this replaced, kept for
+    #: readers of the old field.
     has_evidence: bool
     target_level: int | None
     locked: bool
     # Code-computed (app/csf/playbook.py).
     total: int
     level: int
+    #: True only on an assessment approved before Option 3, where the frozen
+    #: evidence cap changed this row's level or total (`rules.py`).
     evidence_capped: bool
 
 
@@ -345,7 +353,10 @@ class CsfDimensionScorePatch(BaseModel):
     in_scope: bool | None = None
     rationale: str | None = Field(default=None, max_length=8000)
     what_we_found: str | None = Field(default=None, max_length=8000)
+    #: The two-valued write the box had before 0075: true is `on_file`, false
+    #: is `neither`. Refused beside `evidence_status` (the route says why).
     has_evidence: bool | None = None
+    evidence_status: CsfEvidenceStatus | None = None
     target_level: IntNotBool | None = Field(default=None, ge=1, le=5)
     locked: bool | None = None
 
@@ -359,11 +370,23 @@ class EnterpriseSubcategory(BaseModel):
     name: str
     function: str
     tier_levels: dict[str, int]
-    enterprise_level: int
-    rollup_rule: int
+    #: None when no in-scope tier is scored, under the current rules (Option
+    #: 1, #1073): not a level, not a gap. A frozen assessment keeps rolling up
+    #: the seed rows (`csf/rules.py::unscored_has_no_level`).
+    enterprise_level: int | None
+    rollup_rule: int | None
     target_level: int | None
     gap: bool
     priority: str | None
+    #: At least one in-scope tier has a recorded value besides its target
+    #: (`has_recorded_value_besides_target`), under ANY rule, so a frozen
+    #: assessment's seed-row level is not counted as scored.
+    scored: bool
+    #: The client's self-rating on the CURRENT answer (`maturity_tier`, 1-4),
+    #: or None. Shown beside a subcategory that is not scored (C1).
+    self_rating: int | None
+    #: Per rolled-up tier, the row's `evidence_status` value.
+    tier_evidence: dict[str, str]
     #: #1000: the subcategory's interview answer has no notes (none, blank, or
     #: no answer), so a LIVE run does not assess its rows. From CURRENT notes,
     #: at read time: it says what the AI does now, not what made the stored
@@ -376,6 +399,11 @@ class EnterpriseSubcategory(BaseModel):
     #: #474 D': per tier, whether the evidence cap CHANGED that tier's result
     #: (`score_tier(...).evidence_capped`). Never serialized.
     tier_evidence_capped: dict[str, bool] = Field(default_factory=dict, exclude=True)
+    #: Options 1 and 3: the subcategory's assessment was approved before them
+    #: (rules 1 or 2), so its levels are under the frozen evidence cap
+    #: (`csf/rules.py::evidence_cap_applies`). Never serialized; the risk
+    #: payload sends `evidence_capped` only then (risk_synthesize v5).
+    evidence_cap: bool = Field(default=False, exclude=True)
     #: #1031: in-scope tiers left out of the roll-up because nobody scored
     #: them; every screen and file shows each as "Not scored". Empty under the
     #: every-tier rule and for a subcategory none of whose tiers is scored
@@ -388,9 +416,38 @@ class EnterpriseSubcategory(BaseModel):
     target_not_measured: bool = False
 
 
+class CsfCoverage(BaseModel):
+    """The C3 counts (#736 6201620727 item 2, with the advisor's fourth count
+    from 6205425122 item 3) over the in-scope subcategories:
+    `scored + notes_not_scored + self_reported + not_answered == total`, every
+    one stated at zero. A subcategory not scored counts as `notes_not_scored`
+    when its answer has notes, as self-reported when only the client's rating
+    is recorded, and as not answered otherwise.
+
+    The E3 counts are over the SCORED subcategories:
+    `evidence_on_file + evidence_confirmed + evidence_neither + evidence_mixed
+    == scored`. `notional` counts the scored ones at Managed or Optimized with
+    `neither` on a rolled-up tier (`csf/enterprise.py::_notional`)."""
+
+    total: int
+    scored: int
+    notes_not_scored: int
+    self_reported: int
+    not_answered: int
+    evidence_on_file: int
+    evidence_confirmed: int
+    evidence_neither: int
+    evidence_mixed: int
+    notional: int
+
+
 class EnterpriseProfileResponse(BaseModel):
     tiers_in_use: list[str]
     subcategories: list[EnterpriseSubcategory]
+    coverage: CsfCoverage
+    #: The frozen evidence cap applies (`csf/rules.py::evidence_cap_applies`):
+    #: evidence limits the level, so the E3 line is not shown.
+    evidence_cap: bool
     # #852: Working Profile rows someone wrote on a subcategory the catalog no
     # longer has (ID.AM-09), kept and not rolled up, with the approved sentence
     # (which also counts kept action plans), or None when there are none.
@@ -512,11 +569,13 @@ class CsfRunAiResponse(BaseModel):
     omitted_count: int = 0
     omitted_rows: list[CsfRowKey] = []
     # #1000: a LIVE run leaves a row with no notes as stored (`no_notes`). None
-    # on an OFFLINE run, which still assesses every row, and on a result stored
-    # before #1000: "not counted", never "zero". The panel tests the VALUE.
+    # on a result stored before #1000: "not counted", never "zero". The panel
+    # tests the VALUE.
     #
-    # `no_notes_count` is ROWS (tier x subcategory): the covered rows, below,
-    # whose answer carried no notes. The other two are what the client files
+    # `no_notes_count` is ROWS (tier x subcategory), in EVERY mode since
+    # Option 1: the rows the leave-out kept out of the payload (never sent,
+    # not locked), plus, on a live run, the covered rows whose sent answer
+    # carried no notes. The other two (live runs only) are what the client files
     # state (`playbook_export.no_notes_note`), in SUBCATEGORIES, because notes
     # are kept per subcategory: `no_notes_subcategories_total` is the in-scope
     # subcategories the run covered -- a code with at least one IN-SCOPE row,
@@ -571,7 +630,7 @@ class CsfGapActionResponse(BaseModel):
     subcategory_code: str
     name: str
     function: str
-    enterprise_level: int
+    enterprise_level: int | None  # None: not scored (Option 1, #1073)
     target_level: int | None
     # Code-computed default from gap_priority() via the Enterprise roll-up.
     default_priority: str | None

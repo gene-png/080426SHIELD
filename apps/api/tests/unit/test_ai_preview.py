@@ -24,6 +24,7 @@ from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import SUBCATEGORIES
 from app.models.llm_call import LLMCall
 from tests._ai_runs import csf_run_ai
+from tests._csf_notes import note_every_answer
 
 
 @pytest.fixture()
@@ -85,6 +86,9 @@ def _bootstrap_csf(c: TestClient) -> tuple[dict, str, str]:
     ]
     c.post(f"/csf/services/{svc_id}/assessments", headers=h)
     c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent, and a
+    # batched run needs more than one batch of them.
+    note_every_answer(svc_id)
     code = SUBCATEGORIES[0].code
     # Give one subcategory interview signal WITH an email so redaction has work.
     latest = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()

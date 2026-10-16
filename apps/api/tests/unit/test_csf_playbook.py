@@ -38,7 +38,9 @@ def test_maturity_level_mapping(score: int, level: int) -> None:
 def test_evidence_cap_clamps_implementation_and_level() -> None:
     # Full marks but NO evidence: Implementation -> 1, level -> 2.
     ds = DimensionScores(2, 2, 2, 2, 2)  # total 10, level 5
-    capped = score_tier(ds, has_evidence=False)
+    # `cap=True`: the frozen cap of an assessment approved under rules 1 or 2
+    # (D-114); since Options 1 and 3 no other assessment is capped.
+    capped = score_tier(ds, has_evidence=False, cap=True)
     assert capped.dimensions.implementation == 1
     assert capped.total == 9  # 2+2+1+2+2
     assert capped.level == 2  # clamped from 4
@@ -48,7 +50,7 @@ def test_evidence_cap_clamps_implementation_and_level() -> None:
 @pytest.mark.unit
 def test_evidence_present_no_cap() -> None:
     ds = DimensionScores(2, 2, 2, 2, 2)
-    r = score_tier(ds, has_evidence=True)
+    r = score_tier(ds, has_evidence=True, cap=True)
     assert r.total == 10
     assert r.level == 5
     assert r.evidence_capped is False
@@ -72,7 +74,7 @@ def test_evidence_present_no_cap() -> None:
 def test_evidence_cap_by_level_clamp(
     dims: tuple[int, int, int, int, int], has_evidence: bool, total: int, level: int, capped: bool
 ) -> None:
-    r = score_tier(DimensionScores(*dims), has_evidence=has_evidence)
+    r = score_tier(DimensionScores(*dims), has_evidence=has_evidence, cap=True)
     assert r.dimensions.implementation == dims[2]
     assert r.total == total
     assert r.level == level

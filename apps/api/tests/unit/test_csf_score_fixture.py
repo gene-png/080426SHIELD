@@ -55,16 +55,17 @@ def _sentence(after: str) -> str:
     return lines[lines.index(after) + 1]
 
 
-_NO_ANSWER = _sentence(
-    "When a Subcategory has no entry in `answers`, assign 0 to all five dimensions"
-    " and use this exact what_we_found:"
-)
 _EVIDENCE_ATTACHED = _sentence(
     "When `has_evidence` is true, end what_we_found with this exact sentence:"
 )
 _NO_EVIDENCE = _sentence(
-    "When `has_evidence` is false, or the Subcategory has no entry in `answers`,"
-    " end what_we_found with this exact sentence:"
+    "When `has_evidence` is false, end what_we_found with this exact sentence:"
+)
+#: Section 9 (v4, #736 6205956728), verbatim: a Subcategory with no notes gets
+#: no row at all.
+_NO_NOTES_RULE = (
+    "When a Subcategory has no entry in `answers`, or its notes are null, empty, or only "
+    "whitespace, return no row for it, for any tier."
 )
 _RATING = {
     int(n): f"The recorded maturity rating is Tier {n} ({label})."
@@ -84,7 +85,7 @@ def _fixture(payload: dict[str, Any]) -> dict[str, Any]:
 def test_the_sentences_were_read_from_the_prompt() -> None:
     """The expectations below are only as good as this parse of the prompt."""
     assert _DIMENSIONS == ["governance", "policy", "implementation", "monitoring", "improvement"]
-    assert _NO_ANSWER.startswith("No answer was recorded.")
+    assert _NO_NOTES_RULE in _PROMPT
     assert _EVIDENCE_ATTACHED.startswith("Supporting evidence was attached")
     assert _NO_EVIDENCE == "No supporting evidence was attached to the answer."
     assert sorted(_RATING) == [1, 2, 3, 4]
@@ -97,7 +98,11 @@ def test_rows_follow_subcategories_then_tiers_in_input_order() -> None:
     payload = {
         "tiers": ["moderate", "high"],
         "subcategories": ["ID.AM-01", "GV.OC-01", "DE.CM-01"],
-        "answers": {},
+        # v4: only a Subcategory with notes gets rows.
+        "answers": {
+            code: {"maturity_tier": None, "notes": "Noted.", "has_evidence": False}
+            for code in ("ID.AM-01", "GV.OC-01", "DE.CM-01")
+        },
     }
     rows = _fixture(payload)["scores"]
     assert [(r["subcategory_code"], r["tier"]) for r in rows] == [
@@ -128,34 +133,46 @@ def test_a_code_in_answers_but_not_in_subcategories_gets_no_row() -> None:
     payload = {
         "tiers": ["high"],
         "subcategories": ["GV.OC-01"],
-        "answers": {"PR.AA-01": {"maturity_tier": 3, "notes": "MFA.", "has_evidence": True}},
+        "answers": {
+            # v4: GV.OC-01 has notes, so it gets its row.
+            "GV.OC-01": {"maturity_tier": 2, "notes": "Owned.", "has_evidence": False},
+            "PR.AA-01": {"maturity_tier": 3, "notes": "MFA.", "has_evidence": True},
+        },
     }
     rows = _fixture(payload)["scores"]
     assert [r["subcategory_code"] for r in rows] == ["GV.OC-01"]
 
 
-def test_a_subcategory_with_no_answer_gets_zeros_and_the_exact_sentence() -> None:
-    """Section 9, verbatim."""
-    payload = {"tiers": ["high", "low"], "subcategories": ["GV.OC-01"], "answers": {}}
-    for row in _fixture(payload)["scores"]:
-        assert [row[d] for d in _DIMENSIONS] == [0, 0, 0, 0, 0]
-        assert row["what_we_found"] == _NO_ANSWER
+def test_a_subcategory_with_no_answer_gets_no_row() -> None:
+    """Section 9 (v4): no entry in `answers`, no row, for any tier. The noted
+    code beside it still gets its rows (positive first)."""
+    payload = {
+        "tiers": ["high", "low"],
+        "subcategories": ["GV.OC-01", "GV.OC-02"],
+        "answers": {"GV.OC-02": {"maturity_tier": 2, "notes": "Owned.", "has_evidence": False}},
+    }
+    rows = _fixture(payload)["scores"]
+    assert [(r["subcategory_code"], r["tier"]) for r in rows] == [
+        ("GV.OC-02", "high"),
+        ("GV.OC-02", "low"),
+    ]
 
 
 @pytest.mark.parametrize("blank", [None, "", "   \n"])
-def test_blank_notes_get_zeros_the_rating_and_the_evidence_sentence(blank) -> None:
-    """Section 9: blank notes score 0 everywhere; the rating and the evidence
-    status are still reported, the evidence sentence last (section 10)."""
+def test_blank_notes_get_no_row(blank) -> None:
+    """Section 9 (v4): null, empty or whitespace-only notes, no row for any
+    tier, whatever the rating and evidence say. The noted code beside it
+    still gets its row (positive first)."""
     payload = {
         "tiers": ["high"],
-        "subcategories": ["GV.OC-01"],
-        "answers": {"GV.OC-01": {"maturity_tier": 3, "notes": blank, "has_evidence": True}},
+        "subcategories": ["GV.OC-01", "GV.OC-02"],
+        "answers": {
+            "GV.OC-01": {"maturity_tier": 3, "notes": blank, "has_evidence": True},
+            "GV.OC-02": {"maturity_tier": 2, "notes": "Owned.", "has_evidence": False},
+        },
     }
-    (row,) = _fixture(payload)["scores"]
-    assert [row[d] for d in _DIMENSIONS] == [0, 0, 0, 0, 0]
-    assert _RATING[3] in row["what_we_found"]
-    assert row["what_we_found"].endswith(_EVIDENCE_ATTACHED)
-    assert row["what_we_found"] != _NO_ANSWER
+    rows = _fixture(payload)["scores"]
+    assert [r["subcategory_code"] for r in rows] == ["GV.OC-02"]
 
 
 @pytest.mark.parametrize(
@@ -257,8 +274,10 @@ def world(tmp_path) -> Iterator[tuple[TestClient, sessionmaker, FixtureProvider,
 
 def test_through_the_run_only_the_noted_subcategory_moves_a_dimension(world) -> None:
     """The s7 premise (#806 A5): on a draft with one noted answer, the fixture
-    run applies every row with no drop, moves a dimension on the noted code
-    only, and writes the section 9 sentence on every unanswered row."""
+    run applies every row with no drop and moves a dimension on the noted code
+    only. Since CSF Option 1 (D-114) an unanswered row is never sent, so the
+    run writes nothing on it: its `what_we_found` stays empty, where before it
+    got the section 9 sentence."""
     from app.ai.fixtures import _fixture_csf_score
 
     c, sessions, provider, h, svc_id = world
@@ -282,4 +301,4 @@ def test_through_the_run_only_the_noted_subcategory_moves_a_dimension(world) -> 
     assert len(rows) == 318
     for r in rows:
         if r.subcategory_code != "GV.OC-01":
-            assert r.what_we_found == _NO_ANSWER, r.subcategory_code
+            assert r.what_we_found is None, r.subcategory_code

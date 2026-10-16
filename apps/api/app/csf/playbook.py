@@ -5,7 +5,11 @@ CSF_Flow_Spec section 8:
 
   - total per subcategory per tier = sum of the five dimension scores (0..10)
   - maturity level from total (1..5)
-  - the evidence cap (no evidence -> Implementation <= 1 AND level <= 2)
+  - the evidence cap (no evidence -> Implementation <= 1 AND level <= 2), now
+    applied only to an assessment approved before Option 3 (`csf/rules.py`,
+    `evidence_cap_applies`; Gene, #736 6200638511 and 6201691989 Q2). Every
+    other assessment computes the level from the scores alone, and evidence
+    only labels it.
   - the weighted-floor roll-up to the Enterprise score (six ordered rules,
     first match wins; the rule number is recorded)
   - gap detection (current < target) and P1/P2/P3 priority
@@ -77,14 +81,20 @@ class TierResult:
     evidence_capped: bool
 
 
-def score_tier(ds: DimensionScores, *, has_evidence: bool) -> TierResult:
-    """Total + maturity level for one tier, applying the evidence cap.
+def score_tier(ds: DimensionScores, *, has_evidence: bool, cap: bool) -> TierResult:
+    """Total + maturity level for one tier.
 
-    Evidence cap (CSF_Flow_Spec section 8): if evidence cannot be produced,
-    Implementation cannot exceed 1 AND the maturity level cannot exceed 2.
+    `cap` is the frozen evidence cap (CSF_Flow_Spec section 8, before Option
+    3): if evidence cannot be produced, Implementation cannot exceed 1 AND the
+    maturity level cannot exceed 2. Required, so every caller says which rule
+    its assessment is under (`csf/rules.py::evidence_cap_applies`). Without
+    it, `has_evidence` changes nothing here.
     """
     d = ds.clamped()
     capped = False
+    if not cap:
+        t = total(d)
+        return TierResult(dimensions=d, total=t, level=maturity_level(t), evidence_capped=False)
     if not has_evidence and d.implementation > 1:
         d = DimensionScores(
             governance=d.governance,

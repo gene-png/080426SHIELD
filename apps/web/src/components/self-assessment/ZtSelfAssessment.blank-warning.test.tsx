@@ -145,7 +145,7 @@ describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(ONE_BLANK));
     expect(
       screen.getByText(
-        "1 of 4 capabilities have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "1 of 4 capabilities have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(ztClient.submitSelfAssessment).not.toHaveBeenCalled();
