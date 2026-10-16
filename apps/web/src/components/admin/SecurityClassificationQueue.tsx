@@ -4,6 +4,7 @@ import * as React from "react";
 import { Card, CardBody, CardHeader, CardTitle } from "@shield/design-system";
 
 import {
+  bulkConfirmSecurityClassification,
   confirmSecurityClassification,
   overrideSecurityClassification,
 } from "@/lib/tech_debt/client";
@@ -12,6 +13,9 @@ import type {
   CapabilityList,
   SecurityFunction,
 } from "@/lib/tech_debt/types";
+
+import { useRowSelection } from "./useRowSelection";
+import type { RowSelection } from "./useRowSelection";
 
 /**
  * Sign-off queue for NEGATIVE security classifications.
@@ -43,6 +47,15 @@ function awaitingSignoff(item: CapabilityItem): boolean {
 function notInUse(item: CapabilityItem): boolean {
   return item.signoff_kind === "not_in_use";
 }
+
+/* #1174: the bulk confirm's labels, approved on #736 (6206818759 item 7). */
+const SELECT_ALL = (n: number) => `Select all (${n})`;
+const BULK_NOT_IN_USE = (k: number) =>
+  k === 1
+    ? "Not in use: remove 1 from ATT&CK"
+    : `Not in use: remove ${k} from ATT&CK`;
+const BULK_NOT_SECURITY = (k: number) =>
+  k === 1 ? "Not security: confirm 1" : `Not security: confirm ${k}`;
 
 /* Copy approved on #845 (issue 845 comment 5983735296; 736 comment 5986057990). */
 const Q1 = (n: number) => `Security tools not in use (${n})`;
@@ -76,6 +89,9 @@ export function SecurityClassificationQueue({
   const [picked, setPicked] = React.useState<
     Record<string, SecurityFunction[]>
   >({});
+  // #1174: "select all, then untick the exceptions", one selection per card.
+  const notInUseSel = useRowSelection(notInUseRows.map((i) => i.id));
+  const notSecuritySel = useRowSelection(notSecurityRows.map((i) => i.id));
 
   if (pending.length === 0 && contradictions === 0) return null;
 
@@ -97,6 +113,41 @@ export function SecurityClassificationQueue({
     }
   }
 
+  /**
+   * #1174: a card's select-all and its bulk confirm. The bulk call sends
+   * exactly the ticked rows; the server refuses the whole request if any of
+   * them no longer needs sign-off, and `run` shows that refusal.
+   */
+  function bulkBar(n: number, sel: RowSelection, label: (k: number) => string) {
+    const k = sel.selected.length;
+    return (
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={sel.allSelected}
+            onChange={sel.toggleAll}
+            disabled={busyId !== null}
+          />
+          {SELECT_ALL(n)}
+        </label>
+        <button
+          type="button"
+          disabled={k === 0 || busyId !== null}
+          onClick={() =>
+            run(
+              () => bulkConfirmSecurityClassification(list.id, sel.selected),
+              "bulk",
+            )
+          }
+          className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          {label(k)}
+        </button>
+      </div>
+    );
+  }
+
   function toggle(itemId: string, fn: SecurityFunction) {
     setPicked((prev) => {
       const cur = prev[itemId] ?? [];
@@ -107,12 +158,25 @@ export function SecurityClassificationQueue({
     });
   }
 
-  function row(item: CapabilityItem, kind: "not_in_use" | "not_security") {
+  function row(
+    item: CapabilityItem,
+    kind: "not_in_use" | "not_security",
+    sel: RowSelection,
+  ) {
     const chosen = picked[item.id] ?? [];
     const busy = busyId === item.id;
     return (
       <li key={item.id} className="flex flex-col gap-2 py-3">
         <div className="flex flex-wrap items-baseline gap-2">
+          {editable ? (
+            <input
+              type="checkbox"
+              checked={sel.isSelected(item.id)}
+              onChange={() => sel.toggle(item.id)}
+              disabled={busyId !== null}
+              aria-label={`Select ${item.name}`}
+            />
+          ) : null}
           <span className="font-medium text-ink-primary">{item.name}</span>
           {item.vendor ? (
             <span className="text-sm text-ink-secondary">{item.vendor}</span>
@@ -234,8 +298,11 @@ export function SecurityClassificationQueue({
           </CardHeader>
           <CardBody className="space-y-4">
             <p className="max-w-prose text-sm text-ink-secondary">{Q2}</p>
+            {editable
+              ? bulkBar(notInUseRows.length, notInUseSel, BULK_NOT_IN_USE)
+              : null}
             <ul className="divide-y divide-slate-200">
-              {notInUseRows.map((item) => row(item, "not_in_use"))}
+              {notInUseRows.map((item) => row(item, "not_in_use", notInUseSel))}
             </ul>
           </CardBody>
         </Card>
@@ -256,8 +323,17 @@ export function SecurityClassificationQueue({
               its absence would read as a coverage gap rather than a missing
               input.
             </p>
+            {editable
+              ? bulkBar(
+                  notSecurityRows.length,
+                  notSecuritySel,
+                  BULK_NOT_SECURITY,
+                )
+              : null}
             <ul className="divide-y divide-slate-200">
-              {notSecurityRows.map((item) => row(item, "not_security"))}
+              {notSecurityRows.map((item) =>
+                row(item, "not_security", notSecuritySel),
+              )}
             </ul>
           </CardBody>
         </Card>

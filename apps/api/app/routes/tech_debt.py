@@ -95,6 +95,7 @@ from app.schemas.tech_debt import (
     OverlapBucketResponse,
     SavingsPreviewRequest,
     SavingsPreviewResponse,
+    SecurityClassificationBulkConfirm,
     SecurityClassificationOverride,
     ServiceCreateRequest,
     ServiceResponse,
@@ -130,6 +131,7 @@ from app.tech_debt.reconcile import exclusion_count_state, unconfirmed_exclusion
 from app.tech_debt.savings import estimated_savings
 from app.tech_debt.security_scope import (
     PROMPT_VERSIONS_WITH_PREFIX,
+    awaiting_security_signoff,
     not_in_use_contradiction,
     not_in_use_security_tool,
     security_scope_filter,
@@ -1158,8 +1160,20 @@ def confirm_security_classification(
             },
         )
 
-    item.security_class_confirmed = True
     _record_edit(db, item.capability_list_id)
+    _confirm_signoff(db, item, user)
+    db.commit()
+    db.refresh(cap_list)
+    return _serialize_list_with_items(db, cap_list)
+
+
+def _confirm_signoff(db: Session, item: CapabilityItem, user: User) -> None:
+    """ONE row's sign-off, called by the single and the bulk confirm (#1174),
+    so the two cannot drift. Each row gets its own audit row: ATT&CK's what-if
+    dates a row's exit from scope by its first per-item confirmation
+    (`routes/attack_scenarios.py`). The caller has checked the row is awaiting
+    sign-off and called `_record_edit`."""
+    item.security_class_confirmed = True
     # #845: a security tool the extraction marked not in use is taken out of
     # ATT&CK scope, not judged "not security-related", and the record says so.
     removed = not_in_use_security_tool(item)
@@ -1175,9 +1189,87 @@ def confirm_security_classification(
         actor_user_id=user.id,
         details={"name": item.name, "notes": item.notes} if removed else {"name": item.name},
     )
+
+
+@router.post(
+    "/capability-lists/{list_id}/items/security-classification/confirm",
+    response_model=CapabilityListResponse,
+    summary="Agree many capabilities are not security-related, at once (admin, #1174)",
+)
+def bulk_confirm_security_classification(
+    list_id: uuid.UUID,
+    body: SecurityClassificationBulkConfirm,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CapabilityListResponse:
+    """#1174: "select all, then untick the exceptions". The bulk twin of
+    `confirm_security_classification`, with its per-row effect (and audit
+    rows), all or nothing: one selected row that is not awaiting sign-off, or
+    is not in this list, refuses the whole request and nothing is written."""
+    cap_list = _editable_list_or_404(db, list_id, client)
+    wanted = set(body.item_ids)
+    if not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "no_items_selected",
+                "message": "Select at least one row to classify.",
+            },
+        )
+    items = (
+        db.execute(
+            select(CapabilityItem)
+            .where(CapabilityItem.capability_list_id == cap_list.id)
+            .where(CapabilityItem.id.in_(wanted))
+        )
+        .scalars()
+        .all()
+    )
+    missing = len(wanted) - len(items)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "reason": "capability_items_not_in_list",
+                "message": (
+                    f"{missing} of the {len(wanted)} selected rows are not in this "
+                    "capability list. Nothing was changed. Reload the list and "
+                    "select again."
+                ),
+            },
+        )
+    # The list row's lock first, as every edit path takes it (sessions do not
+    # autoflush), so the item rows below are taken after it.
+    _record_edit(db, cap_list.id)
+    not_awaiting = [i for i in items if not awaiting_security_signoff(i)]
+    if not_awaiting:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "not_a_negative_classification",
+                "message": _not_awaiting_message(len(not_awaiting), len(wanted)),
+            },
+        )
+    for item in items:
+        _confirm_signoff(db, item, user)
     db.commit()
+    _log.info(
+        "tech_debt.bulk_security_signoff",
+        capability_list_id=str(cap_list.id),
+        item_count=len(items),
+    )
     db.refresh(cap_list)
     return _serialize_list_with_items(db, cap_list)
+
+
+def _not_awaiting_message(not_awaiting: int, selected: int) -> str:
+    """#1174. PLACEHOLDER copy, pending approval on #736."""
+    return (
+        f"{not_awaiting} of the {selected} selected rows do not need sign-off. "
+        "Nothing was changed. Reload the list and try again."
+    )
 
 
 #: The audit action an override writes. Named so its readers import it: the
