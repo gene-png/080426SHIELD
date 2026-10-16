@@ -152,10 +152,16 @@ Every merge is pinned to the head that was checked:
   repository's "Allow auto-merge" setting on that day: "allow auto merge if
   all checks are passed and the adversarial review also passed". Enable it on
   a plain PR only once the reviewer has run at that head and every
-  NON-required gate on it has finished green; auto-merge then waits for the
-  required checks itself. On an extra-care PR, enable it only after the
+  NON-required gate on it has finished green, except the red-by-design gates
+  that condition 1 lets an advisor approval clear; auto-merge then waits for
+  the required checks itself. On an extra-care PR, enable it only after the
   advisor's "merge approved at <sha>", at exactly that SHA. Read the head
   from `gh pr view <n> --json headRefOid`, never type it.
+- **If a commit is pushed after auto-merge is enabled,** disable it
+  (`gh pr merge <n> --disable-auto`) at once: the new head has not been
+  reviewed or approved. Re-review it, and re-enable only at the new head (an
+  extra-care PR needs a fresh advisor approval naming it, or rule 0's
+  patch-id carry).
 - **If a PR's body is edited after auto-merge is enabled,** disable it
   (`gh pr merge <n> --disable-auto`) and re-enable only once the body-reading
   gates have finished green again; the head guard cannot see a body edit.
