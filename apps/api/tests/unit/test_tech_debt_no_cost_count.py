@@ -208,7 +208,6 @@ def test_the_xlsx_names_line_holds_the_name_verbatim_and_cannot_start_a_formula(
     ]
     assert [c.value for c in notes] == ["Tool with no cost: =SUM(1,2)."]
     assert notes[0].data_type == "s"
-    assert not notes[0].value.startswith(("=", "+", "-", "@", "\t", "\r"))
 
 
 @RENDERERS
