@@ -63,4 +63,88 @@ describe("EnsureActiveClient across a service change (#1262)", () => {
     expect(screen.getByText("Opening workspace…")).toBeVisible();
     expect(screen.queryByText(`client:${CLIENT_1}`)).toBeNull();
   });
+
+  it("does not carry one service's error to the next (#1266)", async () => {
+    const CLIENT_2 = "00000000-0000-4000-8000-0000000000c2";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === `/api/proxy/admin/services/${SERVICE_1}`) {
+          return new Response("{}", { status: 500 });
+        }
+        if (url === `/api/proxy/admin/services/${SERVICE_2}`) {
+          return json({ client_id: CLIENT_2 });
+        }
+        if (url === "/api/active-client") return json({ active: CLIENT_2 });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    const { rerender } = render(
+      <EnsureActiveClient serviceId={SERVICE_1}>
+        <Probe />
+      </EnsureActiveClient>,
+    );
+    expect(await screen.findByRole("alert")).toBeVisible();
+
+    await act(async () => {
+      rerender(
+        <EnsureActiveClient serviceId={SERVICE_2}>
+          <Probe />
+        </EnsureActiveClient>,
+      );
+    });
+    expect(await screen.findByText(`client:${CLIENT_2}`)).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("never writes the cookie for a lookup a newer service superseded (#1266)", async () => {
+    const CLIENT_2 = "00000000-0000-4000-8000-0000000000c2";
+    let releaseService1: (r: Response) => void = () => undefined;
+    const posted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === `/api/proxy/admin/services/${SERVICE_1}`) {
+          return new Promise<Response>((resolve) => {
+            releaseService1 = resolve;
+          });
+        }
+        if (url === `/api/proxy/admin/services/${SERVICE_2}`) {
+          return json({ client_id: CLIENT_2 });
+        }
+        if (url === "/api/active-client" && init?.method === "POST") {
+          posted.push(
+            (JSON.parse(String(init.body)) as { clientId: string }).clientId,
+          );
+          return json({ ok: true });
+        }
+        // The cookie names neither, so every current lookup writes it.
+        if (url === "/api/active-client") return json({ active: null });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    const { rerender } = render(
+      <EnsureActiveClient serviceId={SERVICE_1}>
+        <Probe />
+      </EnsureActiveClient>,
+    );
+    // Switch before service 1's lookup answers; service 2 opens.
+    await act(async () => {
+      rerender(
+        <EnsureActiveClient serviceId={SERVICE_2}>
+          <Probe />
+        </EnsureActiveClient>,
+      );
+    });
+    expect(await screen.findByText(`client:${CLIENT_2}`)).toBeVisible();
+    // Now the stale lookup answers. It must not write the cookie.
+    await act(async () => {
+      releaseService1(json({ client_id: CLIENT_1 }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(posted).toEqual([CLIENT_2]);
+    expect(screen.getByText(`client:${CLIENT_2}`)).toBeVisible();
+  });
 });
