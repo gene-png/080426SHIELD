@@ -198,3 +198,17 @@ def test_on_chat_sized_inputs_the_block_scope_changes_nothing(shape: str, text: 
     assert redact_for_ai(text, mode="strict", signature_scope="block") == redact_for_ai(
         text, mode="strict"
     ), shape
+
+
+def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
+    # "Thanks" here is followed by a title too long to be a signatory and with
+    # no contact hint, so it starts no block of its own -- and must not end
+    # Regards' window either, or the title survives (review of 578e42b6).
+    text = (
+        "Regards,\nDana Whitfield\nThanks\n"
+        "Chief Information Security Officer, Atlas Defense Solutions\n\n" + _AFTER
+    )
+    cleaned, counts = redact_for_ai(text, mode="strict", signature_scope="block")
+    assert counts["signature_block"] == 1
+    for leaked in ("CISO", "Officer", "Atlas", "Thanks"):
+        assert leaked not in cleaned, f"{leaked!r} survived"

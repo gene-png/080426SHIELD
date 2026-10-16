@@ -651,8 +651,8 @@ def _block_end(lines: list[str], idx: int) -> int:
     THE LOOKAHEAD WINDOW, as ruled (#736 6128447366 item 2: "bound the signature
     cut for documents to its lookahead window"): every line up to and including
     the `_SIGNATURE_LOOKAHEAD_LINES`-th non-blank line after the opener, blank
-    lines and sentences inside it included. It stops early only at another
-    sign-off, which starts a block of its own.
+    lines and sentences inside it included. It stops early only at a line
+    that starts a block of its own (`_starts_block`), which the scan then cuts.
 
     It does NOT stop at a blank line or at a sentence, and both were tried: a
     blank line between the name and the title, and a title ending in an
@@ -667,7 +667,11 @@ def _block_end(lines: list[str], idx: int) -> int:
         stripped = lines[j].strip()
         if not stripped:
             continue
-        if stripped.lower().rstrip(",.!") in _SIGNATURE_OPENERS or _split_inline_signoff(lines[j]):
+        # Only a line that STARTS a block of its own ends this one. A bare
+        # opener word that starts nothing ("Thanks" over a long title line) is
+        # part of this window, or the title after it would survive (review of
+        # 578e42b6).
+        if _starts_block(lines, j):
             break
         seen += 1
         end = j
@@ -728,50 +732,54 @@ def _redact_signature_blocks(text: str, scope: SignatureScope = "to_end") -> tup
 
 
 def _first_signature_cut(lines: list[str], start: int) -> int | None:
-    """The index of the first opener at or after `start` that begins a sign-off
+    """The index of the first line at or after `start` that begins a sign-off
     block, or None."""
-    cut: int | None = None
     for idx in range(start, len(lines)):
-        raw = lines[idx]
-        # B6: the opener and the signatory can share a line.
-        if _split_inline_signoff(raw):
-            cut = idx
-            break
-        if raw.strip().lower().rstrip(",.!") not in _SIGNATURE_OPENERS:
-            continue
-        following = [nxt for _j, nxt in _next_nonblank(lines, idx)]
-        if not following:
-            continue
-        # Walk forward line by line and STOP AT THE FIRST SENTENCE.
-        #
-        # The previous version asked whether ANY of the next five lines was
-        # contact-shaped, independently of what lay between -- and
-        # `_RE_CONTACT_HINT` fires on any IP address, any date, and any run of
-        # seven digits. Zero Trust findings are made of IP addresses and Tech
-        # Debt notes are made of dates and spend figures, so a wrapped `Best`
-        # or `Thanks` anywhere near ordinary technical content deleted the rest
-        # of the input and recorded a successful redaction (#135, reintroduced
-        # by its own fix).
-        #
-        # The contact hint is still needed -- "Regards," followed by a phone
-        # number or an email is a real layout the name test alone rejects. What
-        # it must not do is reach ACROSS prose to find its evidence.
-        for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]:
-            candidate = nxt.strip()
-            # PROSE IS CHECKED FIRST, and the order is load-bearing. A
-            # sentence is still a sentence when it contains an IP address, and
-            # the contact hint matches any dotted quad -- so testing the hint
-            # first put `10.20.30.40 remains reachable.` back in the cut path,
-            # which is B1 wearing different clothes. Caught by the truth table
-            # in the round that introduced it.
-            if _looks_like_prose(candidate):
-                break
-            if _looks_like_a_signatory(candidate) or _RE_CONTACT_HINT.search(candidate):
-                cut = idx
-                break
-        if cut is not None:
-            break
-    return cut
+        if _starts_block(lines, idx):
+            return idx
+    return None
+
+
+def _starts_block(lines: list[str], idx: int) -> bool:
+    """Whether line `idx` begins a sign-off block: an inline sign-off, or an
+    opener whose lookahead finds a signatory or contact line before a sentence.
+    Bounded by the lookahead window, so asking it of any line is cheap."""
+    raw = lines[idx]
+    # B6: the opener and the signatory can share a line.
+    if _split_inline_signoff(raw):
+        return True
+    if raw.strip().lower().rstrip(",.!") not in _SIGNATURE_OPENERS:
+        return False
+    following = [nxt for _j, nxt in _next_nonblank(lines, idx)]
+    if not following:
+        return False
+    # Walk forward line by line and STOP AT THE FIRST SENTENCE.
+    #
+    # The previous version asked whether ANY of the next five lines was
+    # contact-shaped, independently of what lay between -- and
+    # `_RE_CONTACT_HINT` fires on any IP address, any date, and any run of
+    # seven digits. Zero Trust findings are made of IP addresses and Tech
+    # Debt notes are made of dates and spend figures, so a wrapped `Best`
+    # or `Thanks` anywhere near ordinary technical content deleted the rest
+    # of the input and recorded a successful redaction (#135, reintroduced
+    # by its own fix).
+    #
+    # The contact hint is still needed -- "Regards," followed by a phone
+    # number or an email is a real layout the name test alone rejects. What
+    # it must not do is reach ACROSS prose to find its evidence.
+    for nxt in following[:_SIGNATURE_LOOKAHEAD_LINES]:
+        candidate = nxt.strip()
+        # PROSE IS CHECKED FIRST, and the order is load-bearing. A
+        # sentence is still a sentence when it contains an IP address, and
+        # the contact hint matches any dotted quad -- so testing the hint
+        # first put `10.20.30.40 remains reachable.` back in the cut path,
+        # which is B1 wearing different clothes. Caught by the truth table
+        # in the round that introduced it.
+        if _looks_like_prose(candidate):
+            return False
+        if _looks_like_a_signatory(candidate) or _RE_CONTACT_HINT.search(candidate):
+            return True
+    return False
 
 
 _STREET_WORDS = (
