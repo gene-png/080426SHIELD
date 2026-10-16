@@ -141,8 +141,6 @@ describe("AttackCitationAccounting", () => {
     render(
       <AttackCitationAccounting result={result({ citations_confirmed: 7 })} />,
     );
-    // Sidesteps the apostrophe: `&rsquo;` renders as U+2019, not "'", so
-    // pinning it would assert the HTML entity rather than the copy.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
       /We checked 7 of these\./,
     );
@@ -331,7 +329,7 @@ describe("AttackCitationAccounting", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("singularises one citation", () => {
+  it("counts one citation as one", () => {
     render(
       <AttackCitationAccounting result={result({ citations_confirmed: 1 })} />,
     );
