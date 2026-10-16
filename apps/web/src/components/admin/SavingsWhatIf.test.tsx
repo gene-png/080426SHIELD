@@ -46,6 +46,7 @@ function preview(over: Partial<SavingsPreview> = {}): SavingsPreview {
     capability_list_id: "list-1",
     estimated_annual_savings: 830000,
     savings_cost_known: true,
+    savings_ai_estimate_count: 0,
     keep_count: 0,
     consolidate_count: 0,
     cut_count: 2,
@@ -77,6 +78,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -92,6 +94,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -117,6 +120,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -141,6 +145,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={onApplied}
       />,
@@ -173,6 +178,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -197,6 +203,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -217,6 +224,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -241,6 +249,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={onApplied}
       />,
@@ -276,6 +285,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -293,6 +303,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={edited}
         planSavings={0}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -311,6 +322,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly
         onApplied={vi.fn()}
       />,
@@ -336,6 +348,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={onApplied}
       />,
@@ -374,6 +387,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={list()}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
@@ -391,6 +405,7 @@ describe("SavingsWhatIf (#804)", () => {
         list={repriced}
         planSavings={480000}
         planKnown
+        planEstimateCount={0}
         readOnly={false}
         onApplied={vi.fn()}
       />,
