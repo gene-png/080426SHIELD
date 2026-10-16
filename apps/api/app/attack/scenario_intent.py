@@ -83,6 +83,12 @@ def sent_description(
     """The description AS THE AI RECEIVES IT: the same payload through the same
     `redact_ai_payload` call `LLMClient.invoke` makes, with the same inputs, called
     rather than repeated. Condition 1 is checked against this text."""
+    # #1080 review A2: this copy is never sent, yet `redact_ai_payload` counts
+    # it as a payload CLEARED for sending (its call has no `egress` flag).
+    # Harmless while the chat route has no run key -- each call is a one-call
+    # place of its own -- but wrapping the route in a run or
+    # `redaction_scope` would make a later refusal read "sent before". Filed
+    # as #1350 (A2); `catalog_fields` is outside this change's grant.
     cleaned, _counts = redact_ai_payload(
         payload(description, cited),
         mode=redaction_mode,

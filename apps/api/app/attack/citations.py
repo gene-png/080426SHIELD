@@ -79,7 +79,7 @@ cited anything for this row", and those two must score differently.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -139,6 +139,16 @@ class Resolution:
     review_reason: ReviewReason | None = None
     #: "unknown" (no candidate) or "ambiguous" (more than one). None when resolved.
     rejected_reason: str | None = None
+
+
+def resolver_names(candidates: Iterable[Candidate]) -> list[str]:
+    """Every string a `CitationResolver` over `candidates` asks the shown form
+    of: each name, and each vendor that is not blank. ONE rule, so a caller
+    that asks ahead (`shown=`) asks for exactly these (#1080 review A1)."""
+    candidates = list(candidates)
+    return [c.name for c in candidates] + [
+        c.vendor for c in candidates if c.vendor and c.vendor.strip()
+    ]
 
 
 class CitationResolver:
@@ -210,9 +220,7 @@ class CitationResolver:
         #: #1080: every name and vendor's shown form, asked ONCE for the whole
         #: build (`shown_forms`: through the redaction child when the build
         #: carries name hints), never once per name in this process.
-        needed = [c.name for c in candidates] + [
-            c.vendor for c in candidates if c.vendor and c.vendor.strip()
-        ]
+        needed = resolver_names(candidates)
         given = dict(shown or {})
         missing = [n for n in needed if n not in given]
         self._shown = given | shown_forms(

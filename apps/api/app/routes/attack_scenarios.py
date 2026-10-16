@@ -40,7 +40,7 @@ from app.ai.runs import (
     start_run,
 )
 from app.attack import added_since_base, scenario, scenario_intent
-from app.attack.citations import Candidate
+from app.attack.citations import Candidate, resolver_names
 from app.attack.computed import awaiting_review_sentence
 from app.attack.pending import row_tools
 from app.attack.rules import parents_computed
@@ -1259,7 +1259,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # asked ONCE and BEFORE anything is sent. A refusal here stops the run
     # with nothing sent; reading the paid-for answers below asks nothing.
     shown = shown_forms(
-        [n for c in remaining for n in (c.name, c.vendor) if n and n.strip()],
+        resolver_names(remaining),
         mode=mode,
         client_org_name=client.legal_name,
         name_hints=hints,

@@ -276,7 +276,13 @@ def test_a_refused_check_before_the_chat_call_is_a_typed_503_with_nothing_sent(
         json={"text": VAGUE, "serves": "live"},
     )
     assert r.status_code == 503, r.text
-    assert _error(r)["reason"] == "redaction_capacity_busy"
+    assert _error(r) == {
+        "reason": "redaction_capacity_busy",
+        "message": (
+            "The check for people's names is busy with other AI work, so this was "
+            "stopped and nothing was sent to the AI provider. Try again in a minute."
+        ),
+    }
     assert seen == []
 
 
@@ -421,3 +427,77 @@ def test_a_what_if_run_refused_at_its_first_batch_says_nothing_was_sent(
     assert body["run_status"] == "failed", body
     assert body["run_error"]["reason"] == "redaction_budget_exceeded", body["run_error"]
     assert body["run_error"]["message"].endswith(_NOTHING_SENT_TAIL), body["run_error"]
+
+
+# --- re-review of 08399fa8: A1 and A3 -------------------------------------------------
+
+
+def test_asking_ahead_with_resolver_names_leaves_the_resolver_nothing_to_ask(
+    child_calls,
+) -> None:
+    """A1: the what-if job asks ahead with `resolver_names`, the resolver's
+    own rule, so a resolver given that map asks the child nothing more --
+    a blank name included. A RATCHET: no blank name reaches the job today
+    (`_client_capability_membership` drops blank names, `validate_added`
+    refuses a blank added name), but a filter copied by hand let one through
+    (review of 08399fa8)."""
+    from app.attack.citations import resolver_names
+
+    candidates = [
+        Candidate(name="   ", vendor="Acme"),
+        Candidate(name=DANA_TOOL, vendor="   "),
+        Candidate(name="Plain Tool", vendor="Vendor Co"),
+    ]
+    ahead = shown_module.shown_forms(
+        resolver_names(candidates), mode="strict", client_org_name="Acme", name_hints=HINTS
+    )
+    asked_ahead = len(child_calls)
+    resolver = CitationResolver(
+        candidates,
+        client_org_name="Acme",
+        redaction_mode="strict",
+        name_hints=HINTS,
+        shown=ahead,
+    )
+    assert asked_ahead == 1, child_calls
+    assert len(child_calls) == 1, child_calls
+    assert resolver.named_by(DANA_TOOL_SHOWN) == frozenset({DANA_TOOL})
+
+
+def test_a_mitre_map_run_whose_index_build_is_refused_sends_nothing(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """A3: the refusal comes at the index build itself, inside the run and
+    before any batch. The run says nothing was sent, reads not charged, and
+    the provider is never called."""
+    from tests._ai_runs import defer_runs, get_run, start_run
+    from tests.unit.test_ai_runs_attack import _world as _mitre_world
+
+    w = _mitre_world(app_parts)
+    runner = defer_runs(w.app)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    called: list[dict] = []
+
+    def respond(payload: dict):
+        from app.ai.llm import LLMResponse
+
+        called.append(payload)
+        return LLMResponse('{"techniques": []}')
+
+    w.provider.register("mitre_map", respond)
+    real = isolation._run_child
+
+    def run_child(target_ref, payload, *args):
+        if isinstance(payload, list):
+            return "timeout", None
+        return real(target_ref, payload, *args)
+
+    monkeypatch.setattr(isolation, "_run_child", run_child)
+    started = start_run(w.c, w.run_url, w.h)
+    assert runner.run_all() == 1
+    run = get_run(w.c, started["run_id"], w.h)
+    assert (run["status"], run["error_reason"]) == ("failed", "redaction_budget_exceeded"), run
+    assert run["error_message"].endswith(_NOTHING_SENT_TAIL), run["error_message"]
+    assert run["charged_likely"] is False, run
+    assert called == []
