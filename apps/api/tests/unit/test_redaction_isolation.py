@@ -92,7 +92,7 @@ def test_extract_redacts_in_a_child_process_not_the_api(world, monkeypatch) -> N
 def test_child_over_budget_is_killed_and_its_pid_is_gone(world, monkeypatch) -> None:
     import app.ai.isolation as isolation
 
-    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
+    rw.set_budget(monkeypatch, rw.SPIN_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
     pid_file = world["tmp"] / "child.pid"
     svc_id, artifact_id = rw.service_and_artifact(
@@ -300,7 +300,7 @@ def test_a_child_that_survives_sigkill_fails_closed_typed(world, monkeypatch) ->
         real_kill(child)
         raise RuntimeError(f"redaction child {child.pid} survived SIGKILL")
 
-    rw.set_budget(monkeypatch, rw.OVER_BUDGET_S)
+    rw.set_budget(monkeypatch, rw.SPIN_BUDGET_S)
     monkeypatch.setattr(isolation, "_TARGET", targets.write_pid_then_spin)
     monkeypatch.setattr(isolation, "_kill", _kill_then_report_a_survivor)
     pid_file = world["tmp"] / "survivor.pid"

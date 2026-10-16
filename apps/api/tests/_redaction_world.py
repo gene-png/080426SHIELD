@@ -48,6 +48,14 @@ ROOM_TO_REDACT_S = "10"
 #: with "0.5-second" in it. Short, so a deliberate overrun costs half a second.
 OVER_BUDGET_S = "0.5"
 
+#: The budget for a test whose child spins until it is stopped AND must first
+#: prove it started, by writing its PID (#1132). The budget counts the child's
+#: start-up (0.6 to 1.8 s on a shared CPU, above), so at 0.5 s a loaded runner
+#: killed the child before it wrote the PID and the test could not tell "ran
+#: and was stopped" from "never ran". 5 s clears that start-up with room and
+#: stays well under `HANG_GUARD_S`; the child still spins past it.
+SPIN_BUDGET_S = "5"
+
 #: apps/api: where a stand-in api process must start, so `app` and `tests` import.
 API_DIR = Path(__file__).resolve().parent.parent
 
