@@ -15,7 +15,7 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
-**2026-10-16: #1116, intake website "https:8080" is refused.** A website typed as a bare `http`/`https` scheme followed by a digit is refused instead of being stored with host "https". Status: the 2026-10-16 #1116 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+**2026-10-16: #1116, intake website "https:8080" is refused.** A website typed as a bare `http`/`https` scheme followed by a digit, or as a bare number that `HttpUrl` would turn into an IP address, is refused instead of being stored with a nonsense host. Status: the 2026-10-16 #1116 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1170, intake suite-listing banner moved to Step 5.** The banner asking Tech Debt and ATT&CK clients to list each product separately now renders at the top of Notes and artifacts (Step 5) and no longer on Systems (Step 4); same variant rule, same approved copy. Status: the 2026-10-16 #1170 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
