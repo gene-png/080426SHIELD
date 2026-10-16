@@ -107,6 +107,9 @@ from app.risk.selection import (
 from app.risk.zt_capped import CAPPED_TARGET_KEY as ZT_CAPPED_TARGET_KEY
 from app.risk.zt_capped import capped_target_codes as zt_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as zt_capped_target_sentence
+from app.risk.zt_target_origin import UNRECORDED_TARGET_KEY as ZT_UNRECORDED_TARGET_KEY
+from app.risk.zt_target_origin import unrecorded_target_codes as zt_unrecorded_codes
+from app.risk.zt_target_origin import unrecorded_target_lines as zt_unrecorded_lines
 from app.routes.artifacts import _storage_dep
 from app.routes.attack import _technique_details
 from app.routes.csf import _subcategory_definitions
@@ -140,6 +143,7 @@ from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.catalog import pillar_by_code as zt_pillar_by_code
 from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import capability_max_stage, resolve_target_stage
+from app.zt.target_origin import unrecorded_target_codes as zt_target_origin_codes
 
 router = APIRouter(prefix="/risk", tags=["risk-register"])
 
@@ -465,6 +469,10 @@ class _InputSnapshot:
     #: of the audit row's `targets`, not a key inside its entries, whose exact
     #: shape tests pin.
     cap_lowered: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+    #: #1343: per ZT source (`scope_key`), the codes of the findings whose
+    #: target is a per-capability target with no recorded origin, in row
+    #: order; filled by `_gather_findings`, read by `risk/zt_target_origin.py`.
+    origin_unrecorded: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     #: R10 (#736 6102665946): per CSF source (`scope_key`), its Playbook's
     #: `unscored_targeted` count; filled by `_gather_findings`, summed into
     #: provenance `csf_unscored_targets` by `generate`.
@@ -1463,6 +1471,9 @@ def _gather_findings(
         # #915: the rows whose target the #839 cap lowered, in row order, kept
         # beside this source's target in the audit row. Empty when none were.
         lowered: list[str] = []
+        # #1343: the one predicate the ZT deliverable and dashboard use.
+        no_origin = set(zt_target_origin_codes(zt_fw, zt_rows))
+        unrecorded: list[str] = []
         for r in zt_rows:
             # Per-capability target first, then the ENGAGEMENT target. The
             # fallback was a hardcoded 3 (#84); it is now the client's
@@ -1512,7 +1523,10 @@ def _gather_findings(
                         },
                     }
                 )
+                if r.capability_code in no_origin:
+                    unrecorded.append(r.capability_code)  # #1343
         snap.cap_lowered[src.scope_key] = lowered
+        snap.origin_unrecorded[src.scope_key] = unrecorded
         _record_drafted_from(snap, findings[start:], src)
 
     return findings, valid_techniques, valid_controls, target_sources, link_scopes
@@ -2715,6 +2729,10 @@ def generate(
         # client dashboard and the three files. A sibling key, so the pinned
         # key sets of `targets` are unchanged.
         _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
+        # #1343: per ZT source, the findings whose target's origin is not
+        # recorded, read back by `risk/zt_target_origin.py` for the register,
+        # the client dashboard and the three files. A sibling key, as #915's.
+        _prov_with_count[ZT_UNRECORDED_TARGET_KEY] = snap.origin_unrecorded
         _prov_with_count[CSF_FINDINGS_KEY] = sum(1 for f in findings if f["kind"] == "csf")
         # R10 (#736 6102665946): targeted subcategories that raised no finding
         # for want of a scored-and-targeted tier row, read back by the files
@@ -3192,6 +3210,8 @@ def _render_and_store(
         ),
         # #915: the same reader and sentence the register response uses.
         zt_capped_target_note=zt_capped_target_sentence(zt_capped_target_codes(reg.provenance)),
+        # #1343: the same reader and lines the register response uses.
+        zt_unrecorded_target_notes=zt_unrecorded_lines(zt_unrecorded_codes(reg.provenance)),
         csf_source_note=csf_source_note(reg.provenance),
         csf_unscored_targets_note=csf_unscored_targets_note(reg.provenance),
         csf_no_shared_row=csf_no_shared_row(reg.provenance),
@@ -4127,9 +4147,13 @@ def _serialize(
     )
     # #915: read through the one reader the dashboard and the files call.
     _capped = zt_capped_target_codes(stored)
+    # #1343: read through the one reader the dashboard and the files call.
+    _unrecorded = zt_unrecorded_codes(stored)
     return RiskRegisterResponse(
         capped_target_codes=_capped,
         zt_capped_target_note=zt_capped_target_sentence(_capped),
+        unrecorded_target_codes=_unrecorded,
+        zt_unrecorded_target_notes=zt_unrecorded_lines(_unrecorded),
         csf_source_note=csf_source_note(stored),
         # #736 6104067136: the files' reader, so the screen and the files agree.
         csf_no_shared_row=csf_no_shared_row(stored),
