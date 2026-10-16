@@ -74,6 +74,9 @@ export interface IntakeStateResponse {
   intake_completed_at: string | null;
   /** The primary contact, so Review & submit can show what is being sent. */
   contact?: IntakeContactResponse | null;
+  /** #1282: the submitter's OWN account details, never an override's. Step 3's
+   *  own inputs read these, so a blur never writes the override onto them. */
+  submitter?: IntakeContactResponse | null;
 }
 
 /** One assessment = one Service (workspace) the client owns. */
