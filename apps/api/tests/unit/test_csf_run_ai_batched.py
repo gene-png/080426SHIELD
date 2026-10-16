@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.models.llm_call import LLMCall
 from tests._ai_runs import csf_run_ai, defer_runs, get_run, start_run
+from tests._csf_notes import note_every_answer
 
 # The provider figures above, restated rather than imported (see the docstring).
 _NON_STREAMED_CAP = 8192
@@ -112,6 +113,9 @@ def world(tmp_path) -> Iterator[World]:
         assert a.status_code in (200, 201), a.text
         seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": _TIERS})
         assert seeded.status_code in (200, 201), seeded.text
+        # CSF Option 1 (D-114): only rows whose answer has notes are sent, and
+        # these tests are about how a FULL Working Profile is batched.
+        note_every_answer(svc_id)
         yield World(c, sessions, provider, h, svc_id)
 
 

@@ -305,7 +305,9 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                             "wd": wd,
                             "name": "the certified selection, NARROWED by preflight to the same files as the run",
                             "script": (
-                                f"python -m pytest --collect-only -q -p no:cacheprovider -m unit {files}"
+                                # No `-q`: addopts already carries one, and at `-qq`
+                                # collect-only prints per-file counts, no node ids.
+                                f"python -m pytest --collect-only -p no:cacheprovider -m unit {files}"
                                 f' | grep "::" > {out}\n'
                                 f'test -s {out}\necho "narrowed selection: $(wc -l < {out}) test(s)"\n'
                             ),
