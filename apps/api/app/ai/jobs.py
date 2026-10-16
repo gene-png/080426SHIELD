@@ -63,6 +63,26 @@ register_job(
 )
 
 
+# --- Tech Debt opt-in cost estimate (TD-5, for #1060) ----------------------
+# Its own block, kept apart from the CSF and Risk ones. The prompt (P-TD5) is
+# approved on #736 and pinned by sha256 in `test_tech_debt_cost_estimate_prompt.py`.
+from app.tech_debt.cost_estimate import (  # noqa: E402  (import after engine to avoid a cycle)
+    JOB_NAME as _COST_ESTIMATE_JOB,
+)
+from app.tech_debt.cost_estimate import PROMPT as _COST_ESTIMATE_PROMPT  # noqa: E402
+from app.tech_debt.cost_estimate import PURPOSE as _COST_ESTIMATE_PURPOSE  # noqa: E402
+from app.tech_debt.cost_estimate import TOP_LEVEL_KEY as _COST_ESTIMATE_KEY  # noqa: E402
+
+register_job(
+    AIJob(
+        name=_COST_ESTIMATE_JOB,
+        purpose=_COST_ESTIMATE_PURPOSE,
+        prompt=_COST_ESTIMATE_PROMPT,
+        top_level_key=_COST_ESTIMATE_KEY,
+    )
+)
+
+
 # --- CSF dimension-score suggestions ---------------------------------------
 # The approved CSF scoring prompt (#806): Gene's text, #806 comment 5982122270,
 # placed verbatim with no `.format()`, then amended by the two section-12 edits

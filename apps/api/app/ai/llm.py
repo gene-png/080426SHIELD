@@ -324,6 +324,12 @@ _MAX_OUTPUT_TOKENS_BY_PURPOSE: dict[str, int] = {
     # default, CHOSEN: it keeps the non-streamed adapters sending what main
     # sent. Unmeasured; re-derived from the first live call by the 3x rule.
     "attack_scenario_intent": _MAX_OUTPUT_TOKENS,
+    # TD-5 (for #1060), the opt-in cost estimate. The shared default, CHOSEN by
+    # the 3x rule: the run sends 50 tools per call (`_ESTIMATE_BATCH`), each
+    # answer about 50 tokens, so a batch is about 2,500 and 3x is 7,500. An
+    # inventory of any size is batched, never truncated. Unmeasured; re-derived
+    # from the first live call.
+    "tech_debt.cost_estimate": _MAX_OUTPUT_TOKENS,
 }
 
 

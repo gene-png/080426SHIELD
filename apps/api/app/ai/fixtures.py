@@ -753,6 +753,46 @@ def _fixture_attack_scenario_delta(payload: dict[str, Any]) -> LLMResponse:
     return _resp({"rows": rows})
 
 
+# --- Tech Debt opt-in cost estimate (TD-5, for #1060) ----------------------
+# Its own block, kept apart from the CSF and Risk ones. Keys are authored from
+# the approved PROMPT's JSON example (`{"estimates": [{"ref": ..., "annual_cost_usd":
+# ..., "basis": ...}]}`), never from the parser's constants. Deterministic: a
+# tool with a license count is estimated at $100 a license, one without is one
+# $12,000 organization-wide subscription, and a tool whose notes say it has no
+# published price is declined (null), as the prompt's rule 2 asks.
+PURPOSE_TECH_DEBT_COST_ESTIMATE = "tech_debt.cost_estimate"
+
+
+def _fixture_tech_debt_cost_estimate(payload: dict[str, Any]) -> LLMResponse:
+    estimates: list[dict[str, Any]] = []
+    for tool in payload.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        notes = str(tool.get("notes") or "").lower()
+        licenses = tool.get("license_count")
+        if "no published price" in notes:
+            estimates.append(
+                {"ref": tool.get("ref"), "annual_cost_usd": None, "basis": "No published price."}
+            )
+        elif isinstance(licenses, int) and not isinstance(licenses, bool) and licenses > 0:
+            estimates.append(
+                {
+                    "ref": tool.get("ref"),
+                    "annual_cost_usd": 100 * licenses,
+                    "basis": f"Fixture: {licenses} licenses at $100 each.",
+                }
+            )
+        else:
+            estimates.append(
+                {
+                    "ref": tool.get("ref"),
+                    "annual_cost_usd": 12000,
+                    "basis": "Fixture: one organization-wide subscription assumed.",
+                }
+            )
+    return _resp({"estimates": estimates})
+
+
 # ---------------------------------------------------------------------------
 # Runtime provider
 # ---------------------------------------------------------------------------
@@ -764,6 +804,7 @@ _RUNTIME_FIXTURES: dict[str, Any] = {
     PURPOSE_TECH_DEBT: _fixture_tech_debt,
     PURPOSE_RISK_SYNTHESIZE: _fixture_risk_synthesize,
     PURPOSE_ATTACK_SCENARIO_DELTA: _fixture_attack_scenario_delta,
+    PURPOSE_TECH_DEBT_COST_ESTIMATE: _fixture_tech_debt_cost_estimate,
 }
 
 

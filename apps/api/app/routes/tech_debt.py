@@ -46,8 +46,7 @@ from sqlalchemy import and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.ai.engine import run_job
-from app.ai.failures import ai_call_boundary
+from app.ai.batching import run_batches
 from app.ai.isolation import REDACTION_BUDGET_EXCEEDED, RedactionRefused, limit_text
 from app.ai.llm import LLMClient
 from app.ai.runs import (
@@ -112,6 +111,7 @@ from app.storage import StorageBackend
 from app.tech_debt.bounds import NOT_WHOLE_CENTS, cost_problem, license_problem
 from app.tech_debt.components import is_component, savings_cost
 from app.tech_debt.cost_estimate import (
+    BATCH_FAILED,
     CHANGED_MEANWHILE,
     build_payload,
     estimate_targets,
@@ -1739,6 +1739,16 @@ def bulk_set_disposition(
 #: TD-5 (for #1060). PLACEHOLDER copy, pending approval on #736: the stale-tab
 #: case, where the button was shown but every uncosted row has since been costed.
 _NOTHING_TO_ESTIMATE = "No tools without a cost are left to estimate."
+#: Tools per call: 50 answers of about 50 tokens each, far inside the purpose's
+#: output budget, so no inventory is ever truncated.
+_ESTIMATE_BATCH = 50
+_ESTIMATE_MAX_WORKERS = 4
+#: PLACEHOLDER copy, pending approval on #736 (CSF's approved deadline sentence
+#: without its CSF-specific ending).
+_ESTIMATE_DEADLINE = (
+    "This run did not finish within its time limit, so it was stopped and "
+    "nothing from it was applied. Run it again."
+)
 
 
 @router.post(
@@ -1839,29 +1849,49 @@ def _cost_estimate_run_work(
     estimated = 0
     declined = 0
     stray = 0
+    batches_total = 0
+    batches_failed = 0
     if targets:
         payload, refs = build_payload(targets)
-        with ai_call_boundary(db, ctx.llm, purpose=COST_ESTIMATE_PURPOSE):
-            result = run_job(
-                db,
-                ctx.llm,
-                COST_ESTIMATE_JOB,
-                inputs=payload,
-                requested_by=ctx.requested_by,
-                service_id=ctx.service_id,
-                client_id=ctx.client_id,
-                client_org_name=client_org_name_for_tenant(db, ctx.client_id),
-                name_hints=name_hints_for_tenant(db, ctx.client_id),
-            )
-        # The provider call is over and recorded: keep its `llm_calls` row
-        # whatever happens to the apply below.
-        db.commit()
-        outcome = parse_estimates(result.data[COST_ESTIMATE_KEY], refs)
-        declined = len(outcome.declined)
-        stray = outcome.stray_entries
-        for reason, refs_refused in outcome.refused.items():
-            refused[reason] = refused.get(reason, 0) + len(refs_refused)
-        for ref, estimate in outcome.estimates.items():
+        tools = payload["tools"]
+        # Batched so an inventory of any size fits the purpose's output budget
+        # (`_MAX_OUTPUT_TOKENS_BY_PURPOSE`): a batch of 50 answers is a few
+        # thousand tokens. A failed batch costs its own tools (counted below),
+        # a redaction refusal fails the run whole, and a credential rejection
+        # stops further batches (`run_batches`).
+        batched = run_batches(
+            db,
+            ctx.llm,
+            COST_ESTIMATE_JOB,
+            [
+                {"tools": tools[i : i + _ESTIMATE_BATCH]}
+                for i in range(0, len(tools), _ESTIMATE_BATCH)
+            ],
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            client_org_name=client_org_name_for_tenant(db, ctx.client_id),
+            name_hints=name_hints_for_tenant(db, ctx.client_id),
+            deadline_at=ctx.deadline_at,
+            max_workers=_ESTIMATE_MAX_WORKERS,
+            deadline_message=_ESTIMATE_DEADLINE,
+        )
+        batches_total, batches_failed = batched.total, batched.failed
+        answered: set[str] = set()
+        estimates = {}
+        for answer, inputs in zip(batched.answers, batched.inputs, strict=True):
+            asked_refs = [t["ref"] for t in inputs["tools"]]
+            answered.update(asked_refs)
+            outcome = parse_estimates(answer[COST_ESTIMATE_KEY], asked_refs)
+            declined += len(outcome.declined)
+            stray += outcome.stray_entries
+            for reason, refs_refused in outcome.refused.items():
+                refused[reason] = refused.get(reason, 0) + len(refs_refused)
+            estimates.update(outcome.estimates)
+        lost = len(refs) - len(answered)
+        if lost:
+            refused[BATCH_FAILED] = lost
+        for ref, estimate in estimates.items():
             item = db.get(CapabilityItem, refs[ref])
             # Re-checked at the write: the consultant may have costed or locked
             # the row during the provider call.
@@ -1878,6 +1908,8 @@ def _cost_estimate_run_work(
         "declined": declined,
         "refused": dict(sorted(refused.items())),
         "stray_entries": stray,
+        "batches_total": batches_total,
+        "batches_failed": batches_failed,
     }
     if estimated:
         _record_edit(db, cap_list.id)
@@ -1892,6 +1924,8 @@ def _cost_estimate_run_work(
     return RunOutcome(
         result=counts,
         applied_count=estimated,
+        batches_total=max(batches_total, 1),
+        batches_failed=batches_failed,
         accounting=(
             "tech_debt.cost_estimate_applied",
             {"capability_list_id": str(cap_list.id), **counts},

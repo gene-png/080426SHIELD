@@ -41,6 +41,9 @@ TOP_LEVEL_KEY = "estimates"
 OMITTED = "omitted"
 INVALID_COST = "invalid_cost"
 CHANGED_MEANWHILE = "changed_meanwhile"
+#: A batch the provider did not answer (`run_batches` counts it); its tools
+#: keep no cost.
+BATCH_FAILED = "batch_failed"
 
 #: P-TD5, approved verbatim on #736 (6205600298), with the addition to rule 2
 #: ruled in 6206818759 item 5 ("…including when the product has no published
