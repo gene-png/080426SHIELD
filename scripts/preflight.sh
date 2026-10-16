@@ -268,7 +268,7 @@ printf '\n%s %-4s %-9s %-6s %s\n' "$P" "step" "kind" "exit" "workflow / job / st
 while IFS=$'\t' read -r idx kind wf job wd name; do
   st="-"
   if [ -f "$T/plan.keep/step-$idx.sh" ]; then
-    st="$(grep -E "^PREFLIGHT-STEP $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}')"
+    st="$(grep -E "^PREFLIGHT-STEP $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}' || true)"
     if [ -z "$st" ]; then
       st="NONE"; cnl=$((cnl + 1))
     elif [ "$kind" = "run" ]; then
@@ -276,7 +276,7 @@ while IFS=$'\t' read -r idx kind wf job wd name; do
       [ "$st" -eq 0 ] || fails=$((fails + 1))
     fi
   fi
-  secs="$(grep -E "^PREFLIGHT-TIME $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}')"
+  secs="$(grep -E "^PREFLIGHT-TIME $idx [0-9]+$" "$LOG" | tail -1 | awk '{print $3}' || true)"
   printf '%s %-4s %-9s %-6s %s / %s / %s%s\n' "$P" "$idx" "$kind" "$st" "$wf" "$job" "$name" "${secs:+ (${secs}s)}"
 done < "$T/plan.keep/steps.tsv"
 printf '%s %-4s %-9s %-6s %s\n' "$P" "W1" "web" "$prc" "prettier@$v --check \"$glob\""
