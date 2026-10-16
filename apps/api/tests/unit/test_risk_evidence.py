@@ -63,7 +63,17 @@ ATTACK_KEYS = {
     "rationale",
     "notes",
 }
-CSF_KEYS = {"enterprise_level", "target_level", "tier_levels", "evidence_capped", "tier_notes"}
+#: risk_synthesize v5 (#736 6205956728) adds `evidence`; `evidence_capped` is
+#: sent only for an assessment approved before Options 1 and 3, which the CSF
+#: world below is (`_approved_before_option_3`).
+CSF_KEYS = {
+    "enterprise_level",
+    "target_level",
+    "tier_levels",
+    "evidence",
+    "evidence_capped",
+    "tier_notes",
+}
 ZT_KEYS = {"stage", "target_stage", "notes"}
 
 NO_ADVANCED = "DOD.USR.01"  # 1.1 User Inventory: no Advanced activity, highest stage 2
@@ -163,7 +173,12 @@ def _seed_csf(c, h: dict) -> None:
     Both tiers at 2, so the Enterprise level is 2, below the target of 3.
 
     The questionnaire note on CSF_A is set too: ruling 3 says it is no longer
-    sent, and the Playbook does not read it."""
+    sent, and the Playbook does not read it.
+
+    Since CSF Options 1 and 3 (D-114) only an assessment approved under rules
+    1 or 2 is capped, so this one is recorded as approved under 2 after its
+    approve, which now stamps 3: ruling 2's `evidence_capped` is about such an
+    assessment."""
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()
     a = c.post(f"/csf/services/{svc['id']}/assessments", headers=h).json()
     seeded = c.post(
@@ -199,6 +214,23 @@ def _seed_csf(c, h: dict) -> None:
     assert r.status_code == 200, r.text
     r = c.post(f"/csf/assessments/{a['id']}/approve", headers=h)
     assert r.status_code == 200, r.text
+    _approved_before_option_3(a["id"])
+
+
+def _approved_before_option_3(assessment_id: str) -> None:
+    """Setup only: the rules value an assessment approved under #1031, before
+    Options 1 and 3, carries (`app/csf/rules.py`, 2)."""
+    from app.models.csf_assessment import CsfAssessment
+
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with Session(engine) as db:
+        n = db.execute(
+            update(CsfAssessment)
+            .where(CsfAssessment.id == uuid.UUID(assessment_id))
+            .values(rollup_rules=2)
+        ).rowcount
+        db.commit()
+    assert n == 1, n
 
 
 def _seed_zt(c, h: dict) -> None:
@@ -305,6 +337,9 @@ def test_csf_evidence_is_the_playbook_per_tier(app_client) -> None:  # noqa: F81
         "enterprise_level": 2,
         "target_level": 3,
         "tier_levels": {"high": 2, "moderate": 2},
+        # v5: each tier's evidence value (migration 0075 read `has_evidence`
+        # true as `on_file`, false as `neither`).
+        "evidence": {"high": "on_file", "moderate": "neither"},
         # Ruling 2: per tier, true only where the cap lowered that tier.
         "evidence_capped": {"high": False, "moderate": True},
         # Ruling 3.

@@ -4,7 +4,9 @@ The text is Gene's CSF scoring prompt, #806 comment 5982122270 (approved
 2026-10-04, never edited: its `updated_at` equals its `created_at`), the body
 of its ```text block placed verbatim. The build was approved as A1 to A5 in
 #736 comment 6075712436. v3 (#1046, C-1) applies the two section-12 edits the
-advisor approved verbatim in #736 comment 6115773247, and nothing else. Every
+advisor approved verbatim in #736 comment 6115773247, and nothing else. v4
+(CSF Option 1, D-114) applies the seven-hunk diff in #736 comment 6204461502
+section 1, approved verbatim by Gene in 6205956728, and nothing else. Every
 expected value below is read from the prompt text, never from the parser's
 constants, except where a test checks the parser AGAINST the prompt and says
 so.
@@ -24,11 +26,14 @@ from app.csf.maturity import TIER_DEFINITIONS
 pytestmark = pytest.mark.unit
 
 # sha256 of the ```text block in #806 comment 5982122270 with the two edits of
-# #736 comment 6115773247 applied (v3), with no trailing newline. A one-byte
-# drift turns this red.
-CSF_SCORE_PROMPT_SHA256 = "523fee871b04876829d5603f8f21013ee56ace543fe53d7db78aee2640d7404a"
+# #736 comment 6115773247 applied (v3: 13871 bytes, sha256 523fee871b04876829d5
+# 603f8f21013ee56ace543fe53d7db78aee2640d7404a), then the seven hunks of #736
+# comment 6204461502 section 1 (v4), with no trailing newline. Derived by
+# script from main's v3 text and the comment's diff, each hunk asserted to
+# match once, not read from the module. A one-byte drift turns this red.
+CSF_SCORE_PROMPT_SHA256 = "c4ac59b7668d04b1eb143eb754ab784580a47e4e004bec20243e4909920bdfc8"
 # Its length in UTF-8 bytes, beside the hash.
-CSF_SCORE_PROMPT_BYTES = 13871
+CSF_SCORE_PROMPT_BYTES = 13977
 
 
 def _prompt() -> str:
@@ -50,8 +55,9 @@ def test_the_prompt_is_plain_ascii_with_no_control_characters() -> None:
 
 def test_the_job_records_the_new_prompt_version() -> None:
     # C9: old and new runs must differ in `llm_calls.prompt_version`. The v1
-    # text was every csf_score call before #806; v2 every call before #1046.
-    assert get_job("csf_score").prompt_version == "v3"
+    # text was every csf_score call before #806; v2 every call before #1046;
+    # v3 every call before CSF Option 1 (D-114).
+    assert get_job("csf_score").prompt_version == "v4"
 
 
 def test_the_first_json_example_is_the_scores_object() -> None:

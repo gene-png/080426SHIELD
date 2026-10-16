@@ -35,14 +35,15 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, True), (2, True), (1, False)],
-    ids=["NULL-a-draft-scored-only", "2-scored-only", "1-every-tier"],
+    [(None, True), (3, True), (2, True), (1, False)],
+    ids=["NULL-a-draft-scored-only", "3-uncapped-scored-only", "2-scored-only", "1-every-tier"],
 )
-def test_the_three_known_values(value, expected) -> None:
+def test_the_known_values(value, expected) -> None:
+    """3 is Options 1 and 3 (D-114), which still rolls up scored tiers only."""
     assert scored_tiers_only(SimpleNamespace(id="a", rollup_rules=value)) is expected
 
 
-@pytest.mark.parametrize("value", [0, 3, "2", True])
+@pytest.mark.parametrize("value", [0, 4, "2", True])
 def test_an_unknown_value_raises_and_never_defaults(value) -> None:
     with pytest.raises(UnknownRollupRules):
         scored_tiers_only(SimpleNamespace(id="a", rollup_rules=value))
@@ -150,8 +151,8 @@ def test_downgrading_0070_refuses_an_approved_row_with_no_rule_recorded(tmp_path
 
 def test_an_approved_row_written_through_the_orm_records_the_rule(tmp_path) -> None:
     """F3, made impossible at the source: an APPROVED or RELEASED CSF row
-    written through the ORM without a rule (the seed, a fixture) records 2,
-    which is what NULL would have read as."""
+    written through the ORM without a rule (the seed, a fixture) records 3,
+    which is what NULL reads as since Options 1 and 3 (D-114)."""
     from sqlalchemy.orm import Session
 
     from app.models.client import Client
@@ -178,11 +179,11 @@ def test_an_approved_row_written_through_the_orm_records_the_rule(tmp_path) -> N
         db.add_all(rows.values())
         db.flush()
         got = {s.value: r.rollup_rules for s, r in rows.items()}
-        assert got == {"approved": 2, "released": 2, "draft": None}, got
+        assert got == {"approved": 3, "released": 3, "draft": None}, got
         # A draft approved later through the ORM records it on that flush too.
         rows[CsfAssessmentStatus.DRAFT].status = CsfAssessmentStatus.APPROVED
         db.flush()
-        assert rows[CsfAssessmentStatus.DRAFT].rollup_rules == 2
+        assert rows[CsfAssessmentStatus.DRAFT].rollup_rules == 3
         # An explicit 1 (the backfill's value) is never overwritten.
         frozen = CsfAssessment(
             service_id=uuid.uuid4(),
@@ -201,4 +202,4 @@ def test_an_approved_row_written_through_the_orm_records_the_rule(tmp_path) -> N
             raw.execute(text("SELECT status, rollup_rules FROM csf_assessments")).all(),
             key=lambda r: (r[0], r[1] or 0),
         )
-    assert stored == [("APPROVED", 2), ("APPROVED", 2), ("RELEASED", 1), ("RELEASED", 2)], stored
+    assert stored == [("APPROVED", 3), ("APPROVED", 3), ("RELEASED", 1), ("RELEASED", 3)], stored

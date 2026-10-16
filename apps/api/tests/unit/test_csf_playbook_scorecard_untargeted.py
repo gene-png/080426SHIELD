@@ -152,9 +152,11 @@ def test_the_scorecard_states_each_functions_untargeted_rows_and_nothing_bleeds(
     _assert_scorecard(
         out,
         [
-            ("Govern", "3", "L2", "L3", "0 (2 no target)"),
-            ("Identify", "2", "L3", "L3", "1"),
-            ("Protect", "1", "L4", "No target", "—"),
+            # W3/W4 (#736 6205956728): averages to one decimal, rounded
+            # down, with the level's name; levels by name.
+            ("Govern", "3", "2.0 of 5 (Developing)", "Defined", "0 (2 no target)"),
+            ("Identify", "2", "3.0 of 5 (Defined)", "Defined", "1"),
+            ("Protect", "1", "4.0 of 5 (Managed)", "No target", "—"),
         ],
     )
 
@@ -166,10 +168,12 @@ def test_the_full_files_function_line_states_each_functions_untargeted_rows() ->
         text = out[name]
         assert isinstance(text, str)
         for line in (
-            "3 subcategories · average Level 2 · 0 gaps among the 1 with a target · "
+            "3 subcategories · average 2.0 of 5 (Developing) · 0 gaps among the 1 with a "
+            "target · "
             "2 with no target set.",
-            "2 subcategories · average Level 3 · 1 gap.",
-            "1 subcategory · average Level 4 · no target set, so not assessed for gaps.",
+            "2 subcategories · average 3.0 of 5 (Defined) · 1 gap.",
+            "1 subcategory · average 4.0 of 5 (Managed) · no target set, so not assessed for "
+            "gaps.",
         ):
             assert line in text, f"{name}: {line!r} not in {text[:3000]!r}"
 
@@ -178,10 +182,11 @@ def test_the_full_files_function_line_states_each_functions_untargeted_rows() ->
 def test_one_untargeted_row_beside_two_targeted_is_counted_in_number() -> None:
     rows = [_row("GV.OC-01", 3, 3), _row("GV.OC-02", 1, 3), _row("GV.OC-03", 2, None)]
     out = _render(rows)
-    _assert_scorecard(out, [("Govern", "3", "L2", "L3", "1 (1 no target)")])
+    _assert_scorecard(out, [("Govern", "3", "2.0 of 5 (Developing)", "Defined", "1 (1 no target)")])
     for name in FULL:
         assert (
-            "3 subcategories · average Level 2 · 1 gap among the 2 with a target · "
+            "3 subcategories · average 2.0 of 5 (Developing) · 1 gap among the 2 with a "
+            "target · "
             "1 with no target set." in out[name]
         ), name
 
@@ -210,9 +215,9 @@ def test_with_no_target_anywhere_every_function_says_so() -> None:
     _assert_scorecard(
         out,
         [
-            ("Govern", "1", "L2", "No target", "—"),
-            ("Identify", "1", "L1", "No target", "—"),
-            ("Protect", "1", "L4", "No target", "—"),
+            ("Govern", "1", "2.0 of 5 (Developing)", "No target", "—"),
+            ("Identify", "1", "1.0 of 5 (Ad hoc)", "No target", "—"),
+            ("Protect", "1", "4.0 of 5 (Managed)", "No target", "—"),
         ],
     )
     assert set(out["xlsx"].values()) == {"No target"}  # type: ignore[union-attr]
@@ -262,10 +267,13 @@ def test_a_fully_targeted_assessment_keeps_its_figures() -> None:
     out = _render(_targeted_world())
     _assert_scorecard(
         out,
-        [("Govern", "1", "L4", "L3", "0"), ("Identify", "1", "L4", "L4", "0")],
+        [
+            ("Govern", "1", "4.0 of 5 (Managed)", "Defined", "0"),
+            ("Identify", "1", "4.0 of 5 (Managed)", "Managed", "0"),
+        ],
     )
     for name in FULL:
-        assert "1 subcategory · average Level 4 · 0 gaps." in out[name], name
+        assert "1 subcategory · average 4.0 of 5 (Managed) · 0 gaps." in out[name], name
     for name in (*PDFS, *DOCXS):
         text = out[name]
         assert isinstance(text, str)
