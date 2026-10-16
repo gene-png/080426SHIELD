@@ -34,6 +34,7 @@ interface UploadingItem {
 
 export function Dropzone({
   onUploaded,
+  clientId,
   maxBytes = 50 * 1024 * 1024,
   accept = DEFAULT_ACCEPT,
 }: DropzoneProps): JSX.Element {

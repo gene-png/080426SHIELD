@@ -37,9 +37,9 @@ async function bearerOrUnauthorized(): Promise<string | NextResponse> {
  * client whatever X-Client-Id says (`current_client`).
  */
 async function requestClient(
-  request: Request,
+  request?: Request,
 ): Promise<string | undefined | NextResponse> {
-  const named = namedClientId(request, "/artifacts");
+  const named = request ? namedClientId(request, "/artifacts") : undefined;
   if (named !== undefined) return named;
   return (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
 }
@@ -107,7 +107,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 }
 
-export async function GET(request: Request): Promise<NextResponse> {
+// `request` is optional only for direct callers (#1265's test calls GET()); Next
+// always passes it, and with none the list reads the cookie, as before.
+export async function GET(request?: Request): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
   const client = await requestClient(request);
