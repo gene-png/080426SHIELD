@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import pytest
@@ -50,11 +51,17 @@ class PoolWatch:
 
     held: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
+    #: The most held at once since `reset_peak`, outside `paused()` blocks: a
+    #: probe the test itself opens is not counted against the code under test.
+    peak: int = 0
+    _paused: bool = False
 
     def attach(self, engine) -> None:
         def _out(*_args) -> None:
             with self.lock:
                 self.held += 1
+                if not self._paused:
+                    self.peak = max(self.peak, self.held)
 
         def _in(*_args) -> None:
             with self.lock:
@@ -66,6 +73,20 @@ class PoolWatch:
     def now(self) -> int:
         with self.lock:
             return self.held
+
+    def reset_peak(self) -> None:
+        with self.lock:
+            self.peak = self.held
+
+    @contextmanager
+    def paused(self):
+        with self.lock:
+            self._paused = True
+        try:
+            yield
+        finally:
+            with self.lock:
+                self._paused = False
 
 
 def _recording(cls_list: list[Session]) -> type[Session]:
@@ -255,15 +276,22 @@ def test_a_caller_with_an_open_read_keeps_one_connection_and_the_row_in_it(
 
     def _answer(payload: dict) -> LLMResponse:
         held = watch.now()
-        seen.append((held, _visible_running(TestSession)))
+        with watch.paused():
+            seen.append((held, _visible_running(TestSession)))
         return LLMResponse("{}")
 
     provider.register("conn_probe", _answer)
     with TestSession() as db:
         db.execute(select(Client).where(Client.id == cid)).scalar_one()
         assert db.in_transaction(), "setup: the caller holds an open read"
+        assert watch.now() == 1, "setup: the caller's read holds one connection"
+        watch.reset_peak()
         llm.invoke(db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id)
+        # The PEAK across the whole call, ledger writes before and after the
+        # provider included: never a second connection beside the caller's.
+        peak = watch.peak
         db.commit()
+    assert peak == 1, peak
     assert seen == [(1, 0)], seen
     with TestSession() as other:
         assert other.execute(select(LLMCall.status)).scalars().all() == [LLMCallStatus.COMPLETED]
