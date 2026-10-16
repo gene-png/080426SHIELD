@@ -3,8 +3,10 @@
 #982 (migration 0076) records who set a per-capability target
 (`zt_answers.target_source`). A NULL origin means the target was stored before
 0076, and some of those were set by earlier AI runs. The consultant's
-questionnaire discloses it; the client outputs (deliverable, dashboard, risk
-register) reuse the same approved sentence (#736 6225076633).
+questionnaire discloses it; the client outputs reuse the same approved
+sentence (#736 6225076633): the deliverable and the client dashboard here, and
+the Risk Register once its follow-up PR for #1343 lands (not yet on this
+branch).
 
 ONE predicate for the deliverable and the client ZT dashboard, so they
 cannot disagree about which targets are unrecorded. A target is listed when
@@ -17,8 +19,9 @@ target, which stays true.
 
 The Risk Register applies a stored per-capability target RAW
 (`routes/risk.py`), not through `capability_target_override`; the two agree
-on every value the writers store today, and the register says how it uses
-this predicate where it calls it.
+on every value the writers store today. The register does not call this
+predicate yet; that follow-up PR for #1343 adds the call and says there how it
+uses it.
 """
 
 from __future__ import annotations
@@ -31,7 +34,8 @@ from app.zt.maturity import ZtFrameworkCode
 from app.zt.scoring import capability_target_override
 
 #: Approved verbatim at #736 comment 6220094031 item 5. The web bundle carries
-#: the same sentence in `ZtQuestionnaire.tsx` (`TARGET_ORIGIN_NOT_RECORDED`).
+#: the same sentence twice, as `TARGET_ORIGIN_NOT_RECORDED` in
+#: `ZtQuestionnaire.tsx` and in `lib/dashboards/zt.ts`; change all three.
 TARGET_ORIGIN_NOT_RECORDED = (
     "Who set this target is not recorded. An earlier AI run may have set it."
 )
