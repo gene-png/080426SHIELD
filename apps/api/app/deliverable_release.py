@@ -57,6 +57,27 @@ class ParentGuard:
     refusal: Callable[[Session, uuid.UUID], HTTPException]
 
 
+#: #1123, approved verbatim at #736 comment 6216024281 (one sentence for every
+#: service): the parent changed between the release's read and its flip.
+PARENT_CHANGED_DURING_RELEASE = (
+    "This assessment changed while the report was being released, so nothing "
+    "was released. Reload the page, check the assessment, and release again."
+)
+
+
+def refuse_parent_changed_during_release() -> HTTPException:
+    """The typed refusal (D-016) for a parent that moved under the release flip
+    (#1123). The caller has not committed, so nothing the release wrote survives:
+    "nothing was released" is true when this is raised."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "reason": "parent_changed_during_release",
+            "message": PARENT_CHANGED_DURING_RELEASE,
+        },
+    )
+
+
 # Which parent record each service kind releases. There was no such map before
 # W4 — `release_deliverable` knew only a `kinds` tuple and an audit-action
 # string, which is why nothing outside the seed script ever assigned RELEASED.
@@ -105,9 +126,14 @@ def _release_parent(
     had checked could change before it landed. It is the ONE writer of a
     released parent, so a guard here covers every path through it: the first
     release and the repair re-release alike. Tech Debt passes a guard (#657), and
-    so does ATT&CK (#622, `attack/release_readiness.py`); CSF and ZT pass none,
-    and for them the only difference is that a status changed concurrently is
-    logged instead of overwritten.
+    so does ATT&CK (#622, `attack/release_readiness.py`) and ZT (#1123).
+
+    A MISSED FLIP (#1123) has three causes, judged on the row as it is now:
+    still APPROVED, so the caller's guard stopped holding (its own refusal);
+    RELEASED, so a sibling release flipped it first (benign: logged, and the
+    release stands); anything else, so the status moved under the release (an
+    unlock, say), which is REFUSED for every service, guard or not, with
+    `refuse_parent_changed_during_release`. It used to be logged and committed.
 
     Returns True only when it flipped the parent. The flip is a bulk UPDATE, so
     it leaves nothing dirty in the session, and a caller that commits only when
@@ -186,6 +212,16 @@ def _release_parent(
     if flipped != 1:
         if guard is not None and row.status == parent.status_enum.APPROVED:
             raise guard.refusal(db, row.id)
+        if row.status != parent.status_enum.RELEASED:
+            _log.warning(
+                "deliverable.release_refused_parent_changed",
+                deliverable_id=str(deliv.id),
+                action=action,
+                service_kind=svc.kind.value,
+                parent_version=deliv.parent_version,
+                parent_status=row.status.value,
+            )
+            raise refuse_parent_changed_during_release()
         _log.warning(
             "deliverable.release_parent_changed_concurrently",
             deliverable_id=str(deliv.id),

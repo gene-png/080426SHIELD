@@ -1,6 +1,5 @@
-"""#1123 item 2 (RED, pending the advisor's ruling at #736 6212272655): a
-release must not commit after the parent's status changed between the
-release's pre-read and its flip.
+"""#1123 item 2 (ruled at #736 6216024281): a release must not commit after the
+parent's status changed between the release's pre-read and its flip.
 
 `deliverable_release._release_parent` flips the parent with a conditional
 UPDATE (`status = APPROVED`, plus the caller's guard). On a missed flip it
@@ -12,10 +11,9 @@ session immediately before the flip, as
 `test_deliverable_release.py::test_a_parent_released_concurrently_is_logged_not_overwritten`
 drives APPROVED -> RELEASED.
 
-The expected outcome is the PROPOSAL, not shipped behaviour: the release is
-refused (409) and nothing is released. Today all three go green on the log
-and commit, which is the defect. The refusal's reason and message are not
-pinned: they wait for approved copy.
+The release is refused with the approved typed 409 and nothing is released.
+On main 2f89930b every one of these returned 200: the release committed over a
+parent that moved. The message is quoted from the ruling, never imported.
 """
 
 from __future__ import annotations
@@ -32,6 +30,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.models.deliverable import Deliverable
 
 pytestmark = pytest.mark.unit
+
+#: Approved verbatim at #736 comment 6216024281 (one sentence, every service).
+CHANGED = (
+    "This assessment changed while the report was being released, so nothing "
+    "was released. Reload the page, check the assessment, and release again."
+)
+
+
+def assert_refused(r) -> None:
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == {"reason": "parent_changed_during_release", "message": CHANGED}
 
 
 @contextmanager
@@ -99,8 +108,68 @@ def test_zt_release_is_refused_when_the_assessment_moved_before_the_flip(
         r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
 
     assert fired, "the hook never ran -- the race was not driven"
-    assert r.status_code == 409, r.text
+    assert_refused(r)
     assert not _released(deliv_id), "a release committed over a parent that moved"
+
+
+def test_zt_release_is_refused_when_the_version_was_approved_after_its_finalize(
+    app_client,  # noqa: F811
+) -> None:
+    """(a), the ratchet: still APPROVED, but the approval in force is newer than
+    the deliverable's finalize, as #1120's unlock followed by a re-approval would
+    leave it. The guard's condition misses in the flip's own WHERE.
+
+    Red-on-revert: drop `parent_guard=` from the ZT release route and this
+    releases (200)."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.zt_assessment import ZtAssessment
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    deliv_id = _zt_finalize_release(c, bearer, svc_id, release=False)
+    parent = _parent_id(ZtAssessment, svc_id)
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        s.get(ZtAssessment, parent).approved_at = datetime.now(UTC) + timedelta(hours=1)
+        s.commit()
+
+    r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
+
+    assert_refused(r)
+    assert not _released(deliv_id)
+
+
+def test_a_zt_release_with_nothing_moved_still_releases(app_client) -> None:  # noqa: F811
+    """The positive state the guards must not break."""
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    deliv_id = _zt_finalize_release(c, bearer, svc_id, release=False)
+
+    r = c.post(
+        f"/zt/deliverables/{deliv_id}/release", headers={"Authorization": f"Bearer {bearer}"}
+    )
+
+    assert r.status_code == 200, r.text
+    assert _released(deliv_id)
 
 
 # --- ATT&CK: its guard does not cover a status change -----------------------
@@ -132,7 +201,7 @@ def test_attack_release_is_refused_when_the_assessment_moved_before_the_flip(
         r = c.post(f"/attack/deliverables/{deliv_id}/release", headers=_auth(bearer))
 
     assert fired, "the hook never ran -- the race was not driven"
-    assert r.status_code == 409, r.text
+    assert_refused(r)
     assert not _released(deliv_id), "a release committed over an assessment that moved"
 
 

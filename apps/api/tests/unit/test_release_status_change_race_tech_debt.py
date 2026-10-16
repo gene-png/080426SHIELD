@@ -1,7 +1,6 @@
-"""#1123 item 2, Tech Debt (RED, pending the advisor's ruling at #736
-6212272655). Tech Debt passes a `ParentGuard`, but its refusal fires only
+"""#1123 item 2, Tech Debt (ruled at #736 6216024281). Tech Debt passes a `ParentGuard`, but its refusal fires only
 while the list is still APPROVED; a status change before the flip commits the
-release. Same hook and same proposal as `test_release_status_change_race.py`.
+release. Same hook and the same approved refusal as `test_release_status_change_race.py`.
 """
 
 from __future__ import annotations
@@ -11,7 +10,11 @@ import uuid
 import pytest
 
 from tests.unit.test_capability_list_revision import app_client  # noqa: F401  (fixture)
-from tests.unit.test_release_status_change_race import _released, _status_moves_before_the_flip
+from tests.unit.test_release_status_change_race import (
+    _released,
+    _status_moves_before_the_flip,
+    assert_refused,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -36,5 +39,5 @@ def test_tech_debt_release_is_refused_when_the_list_moved_before_the_flip(
         r = w.c.post(f"/tech-debt/deliverables/{deliv_id}/release", headers=w.h)
 
     assert fired, "the hook never ran -- the race was not driven"
-    assert r.status_code == 409, r.text
+    assert_refused(r)
     assert not _released(deliv_id), "a release committed over a list that moved"
