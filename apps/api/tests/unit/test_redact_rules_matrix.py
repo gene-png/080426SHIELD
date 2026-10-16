@@ -600,5 +600,10 @@ def test_the_signature_blocks_that_leaked_are_cut(shape: str, tail: str) -> None
     assert not counts.get("address"), f"{shape}: an address/ZIP signal is doing the work"
 
     assert counts.get("signature_block"), f"{shape}: the sign-off was not cut"
-    surname = tail.replace(",", " ").split()[-1].rstrip(".")
+    # The last word that is not a suffix or initial: for "... Whitfield Jr." the
+    # last token is "Jr", which proves nothing about the name (review of
+    # 96b41f97, #1256).
+    tokens = tail.replace(",", " ").split()
+    surname = next(t for t in reversed(tokens) if not (len(t) <= 4 and t.endswith(".")))
+    surname = surname.rstrip(".")
     assert surname not in out, f"{shape}: {surname!r} egressed"
