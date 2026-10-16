@@ -21,9 +21,10 @@ per-run places, whole-run refusal and every release path in
 NO WALL-CLOCK ASSERTION ANYWHERE. Every outcome here is decided by state: which
 reason the run ended with, whether the provider was called, whether a PID
 exists. The one timeout (`post_within`) is a hang guard with a 60 s limit over
-work stopped by a budget well under it (0.5 s, `rw.OVER_BUDGET_S`, where a test
-only needs a child stopped; 5 or 10 s where it must hold one first), so it
-fails only when the budget is gone.
+work stopped by a budget well under it (`rw.SPIN_BUDGET_S`, 5 s, where a
+spinning child must first write its PID; 5 or 10 s where it must hold one), so
+it fails only when the budget is gone. No test here uses the 0.5 s
+`rw.OVER_BUDGET_S` (#1132).
 """
 
 from __future__ import annotations
