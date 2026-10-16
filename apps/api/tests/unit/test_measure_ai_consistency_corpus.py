@@ -422,16 +422,22 @@ def test_zt_sends_the_corpus_notes_redacted_and_says_so(world) -> None:
         assert "[CLIENT] security team runs this daily" in blob
         # Every note sent is a corpus note, as the redactor leaves it.
         assert set(notes) <= _all_corpus_notes("[CLIENT]")
-        assert {"No MFA.", "N/A", "TBD", ""} <= set(notes)
+        assert {"No MFA.", "N/A", "TBD"} <= set(notes)
+        # #1084: a blank note is never sent; "N/A" and "TBD" are notes.
+        assert "" not in set(notes), notes
     setup = report["input_setup"]["notes_corpus"]
     assert setup["corpus"] == "measure-notes-v1"
     assert setup["sha256"] == corpus.sha256
     assert list(setup["classes"]) == SECTION_2_NOTE_CLASSES
-    rows = len(seen[0]["capabilities"])
-    assert setup["rows"] == rows
-    assert sum(v["rows"] for v in setup["classes"].values()) == rows
-    # ZT sends every row it builds, so every row a class landed on was sent.
-    assert all(v["rows"] >= 1 and v["sent"] == v["rows"] for v in setup["classes"].values())
+    assert sum(v["rows"] for v in setup["classes"].values()) == setup["rows"]
+    assert sum(v["sent"] for v in setup["classes"].values()) == len(seen[0]["capabilities"])
+    # ZT sends every row with a note, and no blank one (#1084), as CSF does.
+    classes = setup["classes"]
+    assert classes["blank"]["rows"] >= 1
+    assert classes["blank"]["sent"] == 0
+    assert all(
+        v["rows"] >= 1 and v["sent"] == v["rows"] for k, v in classes.items() if k != "blank"
+    ), classes
     assert setup["client_name_substituted"] >= 1
     assert report["runs_ok"] == 2
 
