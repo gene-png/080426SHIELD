@@ -64,6 +64,8 @@ export interface CapabilityItem {
    * "not recorded" (an uploaded cost), never an estimate.
    */
   cost_source?: "ai_estimate" | "consultant" | null;
+  /** Work Order C2: a locked row is never changed by a Run-AI, the estimate included. */
+  locked?: boolean;
   /** The model's one-sentence basis for an estimate; consultant-only. */
   cost_estimate_basis?: string | null;
   source_artifact_id: string | null;

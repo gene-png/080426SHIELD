@@ -6,6 +6,7 @@ import {
   costEstimateResult,
   estimatePromptText,
   estimateResultLine,
+  estimateTargets,
 } from "./costEstimate";
 
 // TD-5 (for #1060). Copy typed from the approved proposal (#736 6205600298,
@@ -106,5 +107,18 @@ describe("reading a run's result", () => {
         result: { asked: 2 },
       }),
     ).toBeNull();
+  });
+});
+
+describe("who the estimate asks", () => {
+  it("is the uncosted source rows minus locked ones, as the API's estimate_targets", () => {
+    const rows = [
+      { id: "a", annual_cost_usd: null, locked: false, parent_item_id: null },
+      { id: "b", annual_cost_usd: null, locked: true, parent_item_id: null },
+      { id: "c", annual_cost_usd: 100, locked: false, parent_item_id: null },
+      { id: "d", annual_cost_usd: null, locked: false, parent_item_id: "a" },
+      { id: "e", annual_cost_usd: 0, locked: false, parent_item_id: null },
+    ];
+    expect(estimateTargets(rows).map((r) => r.id)).toEqual(["a"]);
   });
 });

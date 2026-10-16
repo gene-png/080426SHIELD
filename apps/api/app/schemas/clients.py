@@ -610,6 +610,9 @@ class TechDebtItem(BaseModel):
     # name, stripped; "" when that name is blank (still a part, so the screen
     # says "Included in its bundle"); None for a row that is not a part.
     bundle: str | None
+    # TD-5 (for #1060): the cost is an AI estimate (`cost_estimate.is_ai_estimate`),
+    # labelled "AI estimate" wherever it appears (copy E5).
+    ai_estimate: bool
 
 
 class TechDebtCategorySpend(BaseModel):

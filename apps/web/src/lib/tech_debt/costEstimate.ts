@@ -7,7 +7,7 @@
  */
 
 import type { CapabilityItem } from "./types";
-import { sourceItems } from "./components";
+import { noCostItems, sourceItems } from "./components";
 
 /** The run's `purpose`, as `routes/tech_debt.py` starts it. */
 export const COST_ESTIMATE_PURPOSE = "tech_debt.cost_estimate";
@@ -49,6 +49,20 @@ export function aiEstimateItems<
   );
 }
 
+/**
+ * The rows "Let AI estimate" asks about: the web statement of the API's
+ * `cost_estimate.estimate_targets`, TD-10's uncosted source rows minus locked
+ * ones. E1 counts these, so its number is the one the run will ask about.
+ */
+export function estimateTargets<
+  T extends Pick<
+    CapabilityItem,
+    "parent_item_id" | "annual_cost_usd" | "locked"
+  >,
+>(items: readonly T[]): T[] {
+  return noCostItems(items).filter((it) => it.locked !== true);
+}
+
 /** E6 beside a total: "{k} costs are AI estimates", or null at 0. */
 export function aiEstimateSentence(k: number): string | null {
   if (!Number.isInteger(k) || k <= 0) return null;
@@ -79,7 +93,8 @@ export function costEstimateResult(run: {
     typeof r.refused !== "object" ||
     r.refused === null
   ) {
-    // A result this page cannot read is said, never shown as "0 estimated".
+    // A result this page cannot read shows no E4 line at all, never
+    // "0 estimated"; the warning is the only record of it.
     console.warn("[tech-debt] cost-estimate run result unreadable", run.result);
     return null;
   }

@@ -82,6 +82,15 @@ def test_null_is_declined_not_refused() -> None:
     assert out.estimates == {} and out.refused == {}
 
 
+def test_an_answer_with_no_cost_key_is_refused_not_declined() -> None:
+    """A misnamed key is not the model saying "I cannot estimate": the prompt
+    asks for `annual_cost_usd`, and an entry without it is refused, so key
+    drift shows as a refusal rather than as a decline."""
+    out = parse_estimates([{"ref": "T1", "cost": 12000}], ["T1"])
+    assert out.declined == []
+    assert out.refused == {"invalid_cost": ["T1"]}
+
+
 @pytest.mark.parametrize(
     "value",
     [True, 1.5, -5, 10**12, "1,200", "$1200", "about 1200", "nan", "inf", [1200], {"v": 1}],

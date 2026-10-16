@@ -190,7 +190,13 @@ def parse_estimates(entries: Sequence[Any], asked: Iterable[str]) -> EstimateOut
             out.stray_entries += 1
             continue
         seen.add(ref)
-        raw = entry.get("annual_cost_usd")
+        if "annual_cost_usd" not in entry:
+            # A misnamed key is not the model declining: the prompt asks for
+            # `annual_cost_usd`, so an answer without it is refused, and key
+            # drift shows as a refusal rather than as "could not estimate".
+            out.refuse(ref, INVALID_COST)
+            continue
+        raw = entry["annual_cost_usd"]
         if raw is None:
             out.declined.append(ref)
             continue

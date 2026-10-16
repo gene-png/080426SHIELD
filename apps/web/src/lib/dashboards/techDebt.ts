@@ -1,4 +1,5 @@
 import type { AiSource } from "@/lib/aiSource/types";
+import { AI_ESTIMATE_LABEL } from "@/lib/tech_debt/costEstimate";
 
 /**
  * Client Tech Debt (software portfolio) dashboard — types + pure transforms
@@ -20,6 +21,8 @@ export interface TechDebtItem {
    * null for a row that is not a part.
    */
   bundle: string | null;
+  /** TD-5 (for #1060): the cost is an AI estimate, labelled (copy E5). */
+  ai_estimate: boolean;
 }
 
 export interface CategorySpend {
@@ -114,7 +117,9 @@ export function itemCost(it: TechDebtItem): string {
       ? "Included in its bundle"
       : `Included in ${it.bundle}`;
   }
-  return usdCompact(it.annual_cost_usd);
+  const cost = usdCompact(it.annual_cost_usd);
+  // TD-5 (for #1060), copy E5: an estimate is labelled wherever it appears.
+  return it.ai_estimate === true ? `${cost} (${AI_ESTIMATE_LABEL})` : cost;
 }
 
 /** Full USD (e.g. $708,000). */

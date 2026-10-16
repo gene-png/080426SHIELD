@@ -48,6 +48,7 @@ import {
   aiEstimateSentence,
   costEstimateResult,
   estimateResultLine,
+  estimateTargets,
 } from "@/lib/tech_debt/costEstimate";
 import type { TechDebtCategories, TechDebtRun } from "@/lib/tech_debt/client";
 import type {
@@ -678,6 +679,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
 
   const noCostRows = list ? noCostItems(list.items) : [];
   const noCost = noCostSentence(noCostRows.length);
+  // TD-5: the rows "Let AI estimate" asks about (locked rows are never asked),
+  // so E1's count, the "Enter costs" view and the run's E4 agree.
+  const estimateRows = list ? estimateTargets(list.items) : [];
+  // Once the last of those rows has a cost, the view ends: never "Showing 0
+  // of n rows" over an empty table, and a row that later loses its cost
+  // cannot switch it back on. Adjusted while rendering (React's pattern for
+  // state that follows the data), not in an effect, so no render shows it.
+  if (uncostedOnly && estimateRows.length === 0) setUncostedOnly(false);
   // TD-5 (for #1060), copy E6: the total INCLUDES these, and says so.
   const aiEstimates = aiEstimateSentence(
     list ? aiEstimateItems(list.items).length : 0,
@@ -688,7 +697,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
     aiRun.latest?.status === "completed"
       ? costEstimateResult(aiRun.latest)
       : null;
-  const tableItems = list && uncostedOnly ? noCostRows : (list?.items ?? []);
+  const tableItems = list && uncostedOnly ? estimateRows : (list?.items ?? []);
   const lowConfidence =
     list?.items.filter(
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
@@ -1073,7 +1082,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
             />
             <DispositionHelp />
             <CostEstimatePrompt
-              noCostCount={noCostRows.length}
+              noCostCount={estimateRows.length}
               editable={list.status === "draft" || list.status === "approved"}
               busy={estimating || extracting || aiRun.running !== null}
               onEnterCosts={() => setUncostedOnly(true)}

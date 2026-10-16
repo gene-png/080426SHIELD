@@ -38,6 +38,10 @@ survive its label, so this clears the estimated costs too:
     UPDATE capability_items SET cost_source = NULL, cost_estimate_basis = NULL
 
 then `alembic downgrade 0072`.
+
+That first statement matches every list's rows, RELEASED ones included, so a
+released deliverable's re-export would then show those tools with no cost.
+The downgrade itself clears nothing; a person runs these.
 """
 
 from __future__ import annotations

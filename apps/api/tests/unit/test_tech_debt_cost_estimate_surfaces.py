@@ -154,3 +154,18 @@ def test_an_estimate_makes_the_dashboard_partial_and_is_counted(app_client) -> N
     # The estimate is INCLUDED in spend, and nothing is uncosted.
     assert after["annual_spend_usd"] == before["annual_spend_usd"]
     assert after["no_cost_count"] == 0
+
+
+def test_the_dashboard_marks_each_estimated_row(app_client) -> None:  # noqa: F811
+    """E3: each estimate is labelled wherever it appears, the client's
+    inventory and redundancy rows included."""
+    c, provider = app_client
+    admin = _register(c, "admin@example.com")
+    client = _register(c, "client@example.com")
+    svc_id = _seed_release(c, provider, admin["tokens"]["access_token"], release=True)
+    _mark_estimated("Splunk ES")
+    body = _dashboard(c, client, svc_id)
+    flags = {i["name"]: i["ai_estimate"] for i in body["items"]}
+    assert flags["Splunk ES"] is True
+    # POSITIVE CONTROL: a supplied cost is not marked.
+    assert flags["CrowdStrike Falcon"] is False

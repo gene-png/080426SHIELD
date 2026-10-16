@@ -1705,6 +1705,7 @@ def _td_item(it: CapabilityItem, names: dict[uuid.UUID, str]) -> TechDebtItem:
         disposition=(it.disposition.value if it.disposition is not None else None),
         notes=it.notes,
         bundle=bundle_name(it, names),
+        ai_estimate=is_ai_estimate(it),
     )
 
 

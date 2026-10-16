@@ -61,4 +61,18 @@ describe("spendSub, AI-estimated costs (TD-5)", () => {
       "Floor - 1 tool has no cost; total excludes it",
     );
   });
+  it("states the estimates on a list that was never reconciled too", () => {
+    // The "unknown" note used to return before the estimates were read.
+    expect(
+      spendSub(
+        partial({
+          spend_completeness: "unknown",
+          source_rows_total: null,
+          ai_estimate_count: 2,
+        }),
+      ),
+    ).toBe(
+      "May not be complete - upload not reconciled · 2 costs are AI estimates",
+    );
+  });
 });

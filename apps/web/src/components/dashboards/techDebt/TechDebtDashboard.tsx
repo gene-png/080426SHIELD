@@ -72,7 +72,10 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  */
 export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
-    return "May not be complete - upload not reconciled";
+    // TD-5: estimates the total includes are stated here too (copy E6).
+    const estimates = aiEstimateSentence(data.ai_estimate_count);
+    const note = "May not be complete - upload not reconciled";
+    return estimates === null ? note : `${note} · ${estimates}`;
   }
   if (data.spend_completeness === "partial") {
     // TD-10 (for #1048): the count of tools the total leaves out follows any
