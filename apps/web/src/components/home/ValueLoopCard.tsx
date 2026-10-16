@@ -120,7 +120,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
   const estimates =
     savings === null
       ? null
-      : aiEstimateSentence(summary.tech_debt_savings_ai_estimate_count ?? 0);
+      : aiEstimateSentence(summary.tech_debt_savings_ai_estimate_count);
   const withEstimates = (hint: string) =>
     estimates === null ? hint : `${hint} · ${estimates}`;
   return [

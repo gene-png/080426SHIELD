@@ -200,8 +200,8 @@ function th(align: "left" | "right" = "left"): React.CSSProperties {
 
 /** #1299 (TD-5): the approved E6 sentence after a savings line, when the
  * figure includes an AI-estimated cost; the line unchanged otherwise. */
-function withEstimates(text: string, k: number | undefined): string {
-  const estimates = aiEstimateSentence(k ?? 0);
+function withEstimates(text: string, k: number): string {
+  const estimates = aiEstimateSentence(k);
   return estimates === null ? text : `${text} · ${estimates}`;
 }
 

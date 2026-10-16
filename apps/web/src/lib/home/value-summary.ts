@@ -34,12 +34,9 @@ export interface ValueSummary {
   tech_debt_savings_usd: number | null;
   tech_debt_savings_cost_known: boolean;
   tech_debt_savings_unresolved: boolean;
-  /**
-   * #1299 (TD-5): AI-estimated costs the savings include. Optional for the
-   * same reason `noCostSentence` takes an absent count: an API older than the
-   * field says nothing rather than a number it never sent.
-   */
-  tech_debt_savings_ai_estimate_count?: number;
+  /** #1299 (TD-5): AI-estimated costs the savings include. Required, as on
+   * the API: a missing count must never read as "no estimate". */
+  tech_debt_savings_ai_estimate_count: number;
   zt_gap_count: number | null;
   zt_gap_unresolved: boolean;
   zt_services: number;
