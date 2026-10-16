@@ -242,6 +242,13 @@ NOT_LOCKED_BY_EXTRACTION = {
     ("POST", "/tech-debt/capability-lists/{list_id}/savings-preview"),
     ("POST", "/tech-debt/capability-lists/{list_id}/approve"),
     ("POST", "/tech-debt/capability-lists/{list_id}/discard"),
+    # TD-5 (for #1060): starts the cost-estimate run. That run DOES write an
+    # existing list's rows, unlike an extraction, but each write is one
+    # conditional UPDATE (cost still null, row unlocked, not a part), so an edit
+    # landing at any moment wins and is counted `changed_meanwhile`; there is
+    # nothing an edit lock would add. Proven by
+    # test_tech_debt_cost_estimate_routes.py::test_a_row_costed_during_the_run_is_not_overwritten.
+    ("POST", "/tech-debt/capability-lists/{list_id}/cost-estimate"),
     ("POST", "/tech-debt/services/{service_id}/deliverables/finalize"),
     ("POST", "/tech-debt/deliverables/{deliverable_id}/release"),
 }
