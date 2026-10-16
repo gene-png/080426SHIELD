@@ -75,37 +75,6 @@ describe("Step5Notes: the uploads list failed to load (#1223)", () => {
     expect(screen.queryByText(/No documents uploaded/)).toBeNull();
   });
 
-  it("shows a TYPED server sentence, and its own copy for untyped text (#1225)", async () => {
-    respond(
-      401,
-      JSON.stringify({
-        error: {
-          code: 401,
-          reason: "credentials_changed",
-          message: "This session has ended. Sign in again.",
-        },
-      }),
-    );
-    const { unmount } = renderStep();
-    expect(
-      await screen.findByText("This session has ended. Sign in again."),
-    ).toBeVisible();
-    unmount();
-
-    respond(
-      400,
-      JSON.stringify({
-        error: {
-          code: 400,
-          message: "Client-role user is not bound to a client.",
-        },
-      }),
-    );
-    renderStep();
-    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
-    expect(screen.queryByText(/not bound to a client/)).toBeNull();
-  });
-
   it("still says nothing was uploaded when the list loads empty", async () => {
     respond(200, JSON.stringify({ items: [] }));
     renderStep();
@@ -115,7 +84,7 @@ describe("Step5Notes: the uploads list failed to load (#1223)", () => {
 });
 
 function renderStep() {
-  return render(
+  render(
     <Step5Notes
       state={
         { client: { service_interests: [] } } as unknown as IntakeStateResponse

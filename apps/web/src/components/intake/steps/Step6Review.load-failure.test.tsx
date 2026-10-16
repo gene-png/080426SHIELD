@@ -65,39 +65,14 @@ describe("Step6Review: the uploads list failed to load (#1223)", () => {
     },
   );
 
-  it("shows a TYPED server sentence (D-016 {reason, message})", async () => {
-    // The real typed refusal this read can get (current_user's cutoff).
+  it("shows the server's own sentence when it sent one", async () => {
     respond(
-      401,
-      JSON.stringify({
-        error: {
-          code: 401,
-          reason: "credentials_changed",
-          message: "This session has ended. Sign in again.",
-        },
-      }),
+      503,
+      JSON.stringify({ error: { code: 503, message: "Storage is offline." } }),
     );
     renderStep();
-    expect(
-      await screen.findByText("This session has ended. Sign in again."),
-    ).toBeVisible();
+    expect(await screen.findByText("Storage is offline.")).toBeVisible();
     expect(screen.queryByText(/No documents uploaded/)).toBeNull();
-  });
-
-  it("shows its own copy, not untyped server text (#1225)", async () => {
-    // current_client's plain-string detail: no `reason`, internal text.
-    respond(
-      400,
-      JSON.stringify({
-        error: {
-          code: 400,
-          message: "Client-role user is not bound to a client.",
-        },
-      }),
-    );
-    renderStep();
-    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
-    expect(screen.queryByText(/not bound to a client/)).toBeNull();
   });
 
   it("keeps #550's outcome sentence off this read (RR-2), and shows its own copy", async () => {

@@ -12,7 +12,7 @@ import {
 } from "@shield/design-system";
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
-import { typedReadFailure } from "@/components/intake/readFailureCopy";
+import { readFailureReason, serverReasonCode } from "@/lib/describe-save-error";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -89,7 +89,9 @@ export function IntakeDocumentsPanel({
           // plain-string api detail ("X-Client-Id header is required for
           // this role."), which arrives with no `reason` and is internal
           // text. Only a TYPED sentence (D-016 {reason, message}) is copy.
-          setError(typedReadFailure(err) ?? "Couldn't load documents.");
+          const typed =
+            serverReasonCode(err) !== null ? readFailureReason(err) : null;
+          setError(typed ?? "Couldn't load documents.");
         }
       });
     return () => {
