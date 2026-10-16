@@ -1892,15 +1892,28 @@ def _cost_estimate_run_work(
         if lost:
             refused[BATCH_FAILED] = lost
         for ref, estimate in estimates.items():
-            item = db.get(CapabilityItem, refs[ref])
-            # Re-checked at the write: the consultant may have costed or locked
-            # the row during the provider call.
-            if not _still_a_target(item):
+            # ONE conditional UPDATE per row, so the check and the write are
+            # atomic: Tech Debt's edit routes are not locked by a run, and a
+            # consultant who costs, locks or splits the row at any moment before
+            # this statement wins. The WHERE is `estimate_targets`' rule in SQL.
+            written = db.execute(
+                update(CapabilityItem)
+                .where(
+                    CapabilityItem.id == refs[ref],
+                    CapabilityItem.annual_cost_usd.is_(None),
+                    CapabilityItem.locked.is_(False),
+                    CapabilityItem.parent_item_id.is_(None),
+                )
+                .values(
+                    annual_cost_usd=estimate.cost,
+                    cost_source=COST_SOURCE_AI_ESTIMATE,
+                    cost_estimate_basis=estimate.basis,
+                )
+                .execution_options(synchronize_session=False)
+            ).rowcount
+            if written != 1:
                 refused[CHANGED_MEANWHILE] = refused.get(CHANGED_MEANWHILE, 0) + 1
                 continue
-            item.annual_cost_usd = estimate.cost
-            item.cost_source = COST_SOURCE_AI_ESTIMATE
-            item.cost_estimate_basis = estimate.basis
             estimated += 1
     counts = {
         # The list this run wrote: how the #646 stamp (`mode_stamp`) ties an

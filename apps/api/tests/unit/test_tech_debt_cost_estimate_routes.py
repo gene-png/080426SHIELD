@@ -188,19 +188,29 @@ def test_strays_and_omissions_are_counted_and_never_applied(app_client) -> None:
     assert _row(w, w.other_id)["annual_cost_usd"] is None
 
 
-def test_a_row_costed_during_the_call_is_not_overwritten(app_client) -> None:  # noqa: F811
-    holder: dict = {}
+def test_a_row_costed_during_the_run_is_not_overwritten(
+    app_client, monkeypatch  # noqa: F811
+) -> None:
+    """A consultant's edit that lands after the provider answered and before
+    the run writes: the run's conditional UPDATE finds the row costed and
+    counts it `changed_meanwhile`. The edit is made where the run reads the
+    answers (`parse_estimates`), the last moment before the write, in its own
+    session, as a concurrent PATCH would be."""
+    import app.routes.tech_debt as td
 
-    def cost_it_meanwhile(payload: dict) -> LLMResponse:
-        # A consultant's edit landing while the model answers.
+    holder: dict = {}
+    real_parse = td.parse_estimates
+
+    def parse_then_cost_the_row(entries, asked):
         w = holder["w"]
         with w.sessions() as s:
             row = s.get(CapabilityItem, uuid.UUID(w.other_id))
             row.annual_cost_usd = 777
             s.commit()
-        return _fixture_tech_debt_cost_estimate(payload)
+        return real_parse(entries, asked)
 
-    w = _world_with_estimate_fixture(app_client, cost_it_meanwhile)
+    monkeypatch.setattr(td, "parse_estimates", parse_then_cost_the_row)
+    w = _world_with_estimate_fixture(app_client)
     holder["w"] = w
     _uncost(w, w.other_id)
     run = _estimate(w)
