@@ -8,13 +8,15 @@ import { describe, expect, it } from "vitest";
 import { ProgressStages, type Stage } from "./ProgressStages";
 
 /**
- * #1356: every stage label must read at WCAG AA (4.5:1) on the sunken surface
- * the bar sits on. The pending label was `text-slate-400` (#90a1b9 on #eef2f7,
+ * #1356: every stage label must read at WCAG AA (4.5:1) on the sunken surface,
+ * the darkest surface the bar renders on (admin layout; IntakeQueue's is a white
+ * card, which is lighter). The pending label was `text-slate-400` (#90a1b9 on #eef2f7,
  * 2.33:1), which s16's axe scan caught whenever the bar had rendered.
  *
  * Colours are resolved from the design tokens file, not copied, so a token
  * change is judged by its real value. Tailwind's own palette is not in that
- * file, so its classes are pinned to their Tailwind v4 values here: slate-700
+ * file, so its classes are pinned to their Tailwind values here (tailwindcss
+ * 4.3.3, apps/web/package.json; re-check them on a Tailwind bump): slate-700
  * (complete), and slate-400, the pending colour #1356 replaced, kept so that
  * reverting the fix fails on its measured ratio (2.33) rather than on a lookup.
  */
