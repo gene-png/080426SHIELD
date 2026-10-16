@@ -236,7 +236,7 @@ def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
     # out HERE, not read back from the module: four xdist workers and a junit
     # report select nothing. A `-k` or `--deselect` in either half is refused.
     assert gate.CI_RUN_OPTIONS == ("-n", "4", '--junitxml="$RUNNER_TEMP/pytest-unit.xml"')
-    assert gate.CI_RUN == f"pytest {' '.join(gate.CI_SELECTOR + gate.CI_RUN_OPTIONS)}"
+    assert f"pytest {' '.join(gate.CI_SELECTOR + gate.CI_RUN_OPTIONS)}" == gate.CI_RUN
     assert runs == [gate.CI_RUN], runs
 
 
