@@ -101,20 +101,21 @@ describe("ZtGapList Z4: names, the gap in words, the priority with its working",
     expect(t).not.toContain("1 stages");
   });
 
-  it("rounds down a priority whose float sits just under its decimal", () => {
-    // 2 × 1.15 = 2.3, stored as 2.3; 2.3 * 10 is 22.999… in floating point.
+  it("rounds DOWN where rounding to nearest would round up", () => {
+    // 3 × 1.15 = 3.45 as stored: rounded down it is 3.4; `toFixed(1)` and
+    // round-half-up both give 3.5, so this case tells the rules apart.
     const { container } = render1(
       gap({
-        current_stage: 2,
-        gap_size: 2,
+        current_stage: 1,
+        gap_size: 3,
         pillar_code: "DT",
         pillar_name: "Data",
-        priority_score: 2.3,
+        priority_score: 3.45,
         pillar_weight: 1.15,
       }),
     );
     expect(text(container)).toContain(
-      "Priority 2.3: 2 stages below target × 1.15 (Data weighting)",
+      "Priority 3.4: 3 stages below target × 1.15 (Data weighting)",
     );
   });
 });

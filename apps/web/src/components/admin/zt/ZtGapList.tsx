@@ -43,12 +43,13 @@ function stagesBelowTarget(n: number): string {
 }
 
 /**
- * One decimal, rounded DOWN. The engine stores the priority to two decimals
- * (`round(gap * weight, 2)`), so it is read as hundredths first: 2.3 * 10 is
- * 22.999... in floating point and a bare floor would show 2.2.
+ * One decimal, rounded DOWN, as approved: 3.45 shows as 3.4, where
+ * `toFixed(1)` would round it up to 3.5. The engine stores two decimals
+ * (`round(gap * weight, 2)`); for every such value from 0 to 10, `x * 10`
+ * floors to the right tenth (checked with node, 2026-10-16).
  */
 function priorityOneDecimal(score: number): string {
-  return (Math.floor(Math.round(score * 100) / 10) / 10).toFixed(1);
+  return (Math.floor(score * 10) / 10).toFixed(1);
 }
 
 function priorityWorking(g: GapItem): string {
