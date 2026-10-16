@@ -106,7 +106,10 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
   await expect(page.getByText("Blind spots", { exact: true })).toBeVisible();
 
   // Sections + the uncovered technique cards (3 gaps seeded).
-  await expect(page.getByText(/blind to today/i)).toBeVisible();
+  // #1324: exact, since the chart's note quotes this title too.
+  await expect(
+    page.getByText("What you're blind to today", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Per-technique coverage matrix")).toBeVisible();
   await expect(page.getByPlaceholder(/Search technique/i)).toBeVisible();
 
