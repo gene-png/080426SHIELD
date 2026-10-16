@@ -29,18 +29,18 @@ describe("AdminShell and the client frame", () => {
   it("links to Clients from both primary navs", () => {
     at("/admin/queue");
     for (const el of screen.getAllByRole("navigation", { name: "Primary" }))
-      expect(
-        within(el).getByRole("link", { name: "Clients" }),
-      ).toHaveAttribute("href", "/admin/clients");
+      expect(within(el).getByRole("link", { name: "Clients" })).toHaveAttribute(
+        "href",
+        "/admin/clients",
+      );
   });
 
   it("marks Clients current anywhere under /admin/clients", () => {
     at("/admin/clients/c-1/services/csf/review");
     const [desktop] = screen.getAllByRole("navigation", { name: "Primary" });
-    expect(within(desktop).getByRole("link", { name: "Clients" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(
+      within(desktop).getByRole("link", { name: "Clients" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it.each([

@@ -46,7 +46,12 @@ function RailLinks({
       {open.map((s) => (
         <li key={s.service_id}>
           <Link
-            href={sectionHref(clientId, s.service_type, "overview", s.service_id)}
+            href={sectionHref(
+              clientId,
+              s.service_type,
+              "overview",
+              s.service_id,
+            )}
             aria-current={current === s.service_id ? "page" : undefined}
             className={current === s.service_id ? CURRENT : LINK}
           >
@@ -114,7 +119,11 @@ export function ClientRail({
       <nav aria-label={SHELL_COPY.railNavName}>
         <Suspense
           fallback={
-            <RailLinks clientId={client.id} services={services} current={null} />
+            <RailLinks
+              clientId={client.id}
+              services={services}
+              current={null}
+            />
           }
         >
           <CurrentRailLinks clientId={client.id} services={services} />

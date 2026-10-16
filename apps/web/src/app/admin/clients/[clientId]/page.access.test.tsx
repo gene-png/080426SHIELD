@@ -15,7 +15,10 @@ import {
 } from "../fake-api.testkit";
 
 const session = vi.hoisted(() => ({
-  value: { role: "admin", accessToken: "tok" } as Record<string, unknown> | null,
+  value: { role: "admin", accessToken: "tok" } as Record<
+    string,
+    unknown
+  > | null,
 }));
 vi.mock("@/lib/auth/options", () => ({ auth: async () => session.value }));
 vi.mock("next/headers", () => ({
@@ -77,7 +80,9 @@ describe("client overview page", () => {
       screen.getByRole("link", { name: "Risk Register" }).getAttribute("href"),
     ).toBe(`/admin/clients/${A}/services/risk-register`);
     // Client B's service is not shown.
-    expect(screen.getAllByRole("link", { name: "Technical Debt Review" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Technical Debt Review" }),
+    ).toHaveLength(1);
   });
 
   it("lists archived services apart, still reachable", async () => {

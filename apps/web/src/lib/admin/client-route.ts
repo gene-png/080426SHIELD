@@ -103,16 +103,18 @@ export async function loadClientFrame(clientId: string): Promise<ClientFrame> {
     clientId,
     `${services.length} services`,
   );
-  return { bearer, client: { id: clientId, label: clientLabel(row) }, services };
+  return {
+    bearer,
+    client: { id: clientId, label: clientLabel(row) },
+    services,
+  };
 }
 
 /**
  * The old `/admin/services/{id}/{segment}` URL's new home, from the
  * admin-only, cross-tenant service read. Not found for an unknown id.
  */
-export async function newUrlForOldService(
-  serviceId: string,
-): Promise<string> {
+export async function newUrlForOldService(serviceId: string): Promise<string> {
   const bearer = await requireAdminBearer();
   let svc: { kind: string; client_id: string };
   try {
@@ -129,5 +131,10 @@ export async function newUrlForOldService(
   }
   if (!KIND_ORDER.includes(svc.kind as FrameKind))
     throw new Error(`client_frame: service ${serviceId} has kind ${svc.kind}`);
-  return sectionHref(svc.client_id, svc.kind as FrameKind, "overview", serviceId);
+  return sectionHref(
+    svc.client_id,
+    svc.kind as FrameKind,
+    "overview",
+    serviceId,
+  );
 }

@@ -18,7 +18,10 @@ import {
 } from "../../../../fake-api.testkit";
 
 const session = vi.hoisted(() => ({
-  value: { role: "admin", accessToken: "tok" } as Record<string, unknown> | null,
+  value: { role: "admin", accessToken: "tok" } as Record<
+    string,
+    unknown
+  > | null,
 }));
 vi.mock("@/lib/auth/options", () => ({ auth: async () => session.value }));
 // The active-client cookie names client B in every test: the page must never
@@ -84,9 +87,7 @@ function call(
   });
 }
 
-async function renderSection(
-  ...args: Parameters<typeof call>
-): Promise<void> {
+async function renderSection(...args: Parameters<typeof call>): Promise<void> {
   render(await call(...args));
 }
 
@@ -98,9 +99,7 @@ beforeEach(() => {
 describe("section page: renders the right workspace", () => {
   it("mounts client A's Tech Debt workspace under the section bar", async () => {
     await renderSection(A, "tech-debt", "review", { service: "td-a" });
-    expect(screen.getByTestId("workspace")).toHaveTextContent(
-      "tech_debt td-a",
-    );
+    expect(screen.getByTestId("workspace")).toHaveTextContent("tech_debt td-a");
     const bar = screen.getByRole("navigation", { name: "Service sections" });
     expect(within(bar).getByRole("link", { name: "Review" })).toHaveAttribute(
       "aria-current",
@@ -238,7 +237,9 @@ describe("section page: a URL without ?service", () => {
     ).toBeInTheDocument();
     expect(
       screen
-        .getByRole("link", { name: "Technical Debt Review, started 2026-10-01" })
+        .getByRole("link", {
+          name: "Technical Debt Review, started 2026-10-01",
+        })
         .getAttribute("href"),
     ).toBe(`/admin/clients/${A}/services/tech-debt/review?service=td-a2`);
     expect(screen.queryByTestId("workspace")).toBeNull();

@@ -155,7 +155,11 @@ async function header(
       stage: currentStage(body, kind),
     };
   } catch (err) {
-    console.error("[client_frame] service header read failed", svc.service_id, err);
+    console.error(
+      "[client_frame] service header read failed",
+      svc.service_id,
+      err,
+    );
     return (
       <div className="border-b border-border-subtle bg-surface-card px-6 py-3">
         <Link

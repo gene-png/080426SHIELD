@@ -16,7 +16,10 @@ import {
 } from "../../../clients/fake-api.testkit";
 
 const session = vi.hoisted(() => ({
-  value: { role: "admin", accessToken: "tok" } as Record<string, unknown> | null,
+  value: { role: "admin", accessToken: "tok" } as Record<
+    string,
+    unknown
+  > | null,
 }));
 vi.mock("@/lib/auth/options", () => ({ auth: async () => session.value }));
 vi.mock("next/headers", () => ({

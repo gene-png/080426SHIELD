@@ -28,7 +28,10 @@ function svc(
 
 function rail(services: RailService[]): HTMLElement {
   render(
-    <ClientRail client={{ id: "c-1", label: "Alpha Corp" }} services={services} />,
+    <ClientRail
+      client={{ id: "c-1", label: "Alpha Corp" }}
+      services={services}
+    />,
   );
   return screen.getByRole("navigation", { name: "Client services" });
 }
@@ -73,7 +76,9 @@ describe("ClientRail", () => {
         .getAttribute("href"),
     ).toBe("/admin/clients/c-1/services/csf/overview?service=csf-1");
     expect(
-      within(el).getByRole("link", { name: "Risk Register" }).getAttribute("href"),
+      within(el)
+        .getByRole("link", { name: "Risk Register" })
+        .getAttribute("href"),
     ).toBe("/admin/clients/c-1/services/risk-register");
   });
 
@@ -105,7 +110,9 @@ describe("ClientRail", () => {
     expect(
       within(el).getByRole("link", { name: "Open the intake queue" }),
     ).toHaveAttribute("href", "/admin/queue/c-1");
-    expect(within(el).getByRole("link", { name: "Risk Register" })).toBeTruthy();
+    expect(
+      within(el).getByRole("link", { name: "Risk Register" }),
+    ).toBeTruthy();
   });
 
   it("marks the service on screen as current, by id not by kind", () => {

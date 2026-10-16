@@ -4,10 +4,7 @@ import { useRouter } from "next/navigation";
 
 import { AdminClientPicker } from "@/components/admin/AdminClientPicker";
 import { CLIENT_LINES } from "@/components/admin/ClientScopedPage";
-import {
-  resolveClientChoice,
-  type ReadState,
-} from "@/lib/admin/client-choice";
+import { resolveClientChoice, type ReadState } from "@/lib/admin/client-choice";
 import { readClientList } from "@/lib/admin/client-reads";
 
 import { clientHref } from "./frameRoutes";
@@ -55,7 +52,9 @@ export function ClientNavPicker({
     value: currentId ?? "",
   });
   if (choice.kind === "list_failed")
-    return <p className="text-xs text-status-danger-fg">{CLIENT_LINES.listFailed}</p>;
+    return (
+      <p className="text-xs text-status-danger-fg">{CLIENT_LINES.listFailed}</p>
+    );
   if (choice.kind === "none")
     return <p className="text-xs text-ink-tertiary">{SHELL_COPY.pickerNone}</p>;
 
