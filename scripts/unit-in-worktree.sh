@@ -40,8 +40,14 @@
 # Installed packages come from when `shield-v2-api` was BUILT, not from this
 # worktree's `apps/api/pyproject.toml`. The container checks every requirement
 # in `[project] dependencies` and the `dev` extra against what is installed;
-# any requirement missing or outside its specifier is exit 2 (could not fully
-# look), whatever pytest said. Rebuilding the image is a human decision -- it
+# any requirement missing or outside its specifier, including the packages an
+# extra such as `psycopg[binary]` pulls in, is exit 2 (could not fully look),
+# whatever pytest said.
+#
+# ## Residual: a green here is not a CI green
+#
+# The image has no `git`, so tests that skip without it (`shutil.which("git")`)
+# skip here and run in CI. Read pytest's skip lines, not only the exit code. Rebuilding the image is a human decision -- it
 # is the shared stack's image too.
 #
 # ## Exit codes (D-090)
@@ -94,7 +100,27 @@ command -v docker > /dev/null 2>&1 || {
   exit 2
 }
 
-WORKTREE="$(git rev-parse --show-toplevel)"
+# THE TREE IS THE ONE THIS SCRIPT CAME FROM, and the shell must be standing in
+# it. Read from the current directory alone, `bash ../wt-x/scripts/unit-in-worktree.sh`
+# run from the primary tree tested the primary tree -- and its self-test planted
+# probes there and passed, "proving" the wrong tree (review of 313678ad).
+SCRIPT_TREE="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "unit-in-worktree: COULD NOT LOOK -- $(dirname "$0") is not inside a git work tree." >&2
+  exit 2
+}
+CWD_TREE="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "unit-in-worktree: COULD NOT LOOK -- the current directory is not inside a git work tree." >&2
+  echo "  cd into the worktree this script belongs to ($SCRIPT_TREE) and run it there." >&2
+  exit 2
+}
+if [ "$SCRIPT_TREE" != "$CWD_TREE" ]; then
+  echo "unit-in-worktree: COULD NOT LOOK -- this script is from $SCRIPT_TREE, but the shell" >&2
+  echo "  is in $CWD_TREE. Run it from the tree it belongs to, so the tree it tests is unambiguous." >&2
+  exit 2
+fi
+WORKTREE="$SCRIPT_TREE"
+PROBE_DIR_REL="apps/api/tests/unit"
+PROBE_GLOB="test_zz_unit_in_worktree_selftest_"
 IMAGE="${SHIELD_UNIT_IMAGE:-shield-v2-api:latest}"
 MEMORY="${SHIELD_UNIT_MEMORY:-3g}"
 
@@ -104,7 +130,16 @@ MEMORY="${SHIELD_UNIT_MEMORY:-3g}"
 # defect this script exists to prevent.
 MOUNT_SOURCE="$WORKTREE"
 if [ -n "${SHIELD_UNIT_MOUNT_SOURCE:-}" ]; then
-  if [ "${1:-}" != "--self-test" ] && [ "${_UNIT_IN_WORKTREE_SELF_TEST:-}" != "1" ]; then
+  # The inner runs a self-test makes are allowed it only while that self-test's
+  # own probe is on disk: `_UNIT_IN_WORKTREE_SELF_TEST` carries the probe's
+  # random tag. A bare `=1` someone exports by hand names no probe, so a normal
+  # run cannot borrow the hook (review of 313678ad).
+  st_tag="${_UNIT_IN_WORKTREE_SELF_TEST:-}"
+  st_live=0
+  if [[ "$st_tag" =~ ^[0-9a-f]{12}$ ]] && compgen -G "$WORKTREE/$PROBE_DIR_REL/$PROBE_GLOB${st_tag}_*.py" > /dev/null; then
+    st_live=1
+  fi
+  if [ "${1:-}" != "--self-test" ] && [ "$st_live" -ne 1 ]; then
     echo "FAIL: SHIELD_UNIT_MOUNT_SOURCE is a self-test hook; refusing to mount" >&2
     echo "      '$SHIELD_UNIT_MOUNT_SOURCE' in place of $WORKTREE." >&2
     exit 2
@@ -157,6 +192,25 @@ for line in reqs:
     if req.specifier and not req.specifier.contains(have, prereleases=True):
         print(f"unit-in-worktree: DEP-SKEW {req.name}: required {req.specifier}, installed {have}")
         skew += 1
+        continue
+    # An EXTRA is a requirement too: `psycopg[binary]` without psycopg-binary
+    # installed is skew, though `psycopg` itself satisfies its specifier.
+    for extra in sorted(req.extras):
+        for dep in metadata.requires(req.name) or []:
+            sub = Requirement(dep)
+            if sub.marker is None or sub.marker.evaluate({"extra": ""}):
+                continue
+            if not sub.marker.evaluate({"extra": extra}):
+                continue
+            try:
+                got = metadata.version(sub.name)
+            except metadata.PackageNotFoundError:
+                print(f"unit-in-worktree: DEP-SKEW {req.name}[{extra}] needs {sub.name}{sub.specifier}: NOT INSTALLED")
+                skew += 1
+                continue
+            if sub.specifier and not sub.specifier.contains(got, prereleases=True):
+                print(f"unit-in-worktree: DEP-SKEW {req.name}[{extra}] needs {sub.name}{sub.specifier}, installed {got}")
+                skew += 1
 print(f"unit-in-worktree: deps -- checked {len(reqs)} requirement(s) from apps/api/pyproject.toml, {skew} skewed")
 '
 
@@ -258,9 +312,6 @@ judge() {
 # which. A wrong mount (SHIELD_UNIT_MOUNT_SOURCE pointed elsewhere) cannot see
 # the probes, so the red half fails -- that is the self-test's own red state.
 # ---------------------------------------------------------------------------
-PROBE_DIR_REL="apps/api/tests/unit"
-PROBE_GLOB="test_zz_unit_in_worktree_selftest_"
-
 remove_probes() {
   rm -f "$WORKTREE/$PROBE_DIR_REL/$PROBE_GLOB"*.py
 }
@@ -280,7 +331,7 @@ self_test() {
   trap remove_probes EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  export _UNIT_IN_WORKTREE_SELF_TEST=1
+  export _UNIT_IN_WORKTREE_SELF_TEST="$tag"
 
   printf 'import pytest\n\n\n@pytest.mark.unit\ndef test_probe():\n    print("probe-token-%s")\n    assert False, "unit-in-worktree self-test probe-token-%s"\n' \
     "$token" "$token" > "$WORKTREE/$PROBE_DIR_REL/$red"
