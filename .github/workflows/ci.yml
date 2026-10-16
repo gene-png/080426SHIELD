@@ -537,9 +537,9 @@ jobs:
       # pytest runs IMMEDIATELY after it in the same job, with the same env,
       # working-directory and shell (#544, pinned by test_ci_selection_gate.py),
       # so nothing can narrow one and not the other. Its run is exactly
-      # CI_SELECTOR plus CI_RUN_OPTIONS, neither of which selects: `-n 4` spreads
-      # the selection over four workers on this one runner (pytest-xdist), and
-      # `--junitxml` records one outcome per test.
+      # CI_SELECTOR, which is the selection, plus CI_RUN_OPTIONS, which select
+      # nothing: `-n 4` spreads the selection over four workers on this one
+      # runner (pytest-xdist), and `--junitxml` records one outcome per test.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
         run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
