@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1171, the CSF self-assessment steps through its functions and waits for an answer in each.** Status: the 2026-10-16 #1171 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1093 item 1, an emptied intake field is cleared.** Emptying a Step 2 field now clears it: the wizard sends null, and the api stores NULL for an empty or whitespace-only string instead of refusing a blank website or storing blanks. Status: the 2026-10-16 #1093 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
