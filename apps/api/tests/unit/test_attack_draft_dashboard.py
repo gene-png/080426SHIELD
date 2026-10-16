@@ -225,3 +225,37 @@ def test_a_stored_result_this_build_cannot_read_is_a_typed_refusal(
     r = _draft(c, h, svc_id)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "attack_draft_unreadable"
+
+
+def test_a_client_user_of_the_same_tenant_cannot_read_the_draft(app_client) -> None:  # noqa: F811
+    """The real exposure: a user of the client whose service this is. The
+    tenant check passes for them, so only the role check stops them."""
+    c, provider, h, svc_id, rows = _setup(app_client)
+    _answer_only(provider, {rows[0]["technique_code"]: "gap"})
+    _run(c, h, svc_id)
+    cid = h["X-Client-Id"]
+    admin_only = {"Authorization": h["Authorization"]}
+    r = c.post(f"/admin/clients/{cid}/domains", headers=admin_only, json={"domain": "acme.example"})
+    assert r.status_code in (200, 201), r.text
+    user = c.post(
+        "/auth/register",
+        json={
+            "email": "user@acme.example",
+            "password": "correct horse battery staple!",
+            "display_name": "U",
+        },
+    )
+    assert user.status_code == 201, user.text
+    body = user.json()
+    assert (body["user"]["role"], body["user"]["client_id"]) == (
+        "client",
+        cid,
+    ), "setup: the user must be a client of the SAME tenant"
+    ch = {"Authorization": f"Bearer {body['tokens']['access_token']}", "X-Client-Id": cid}
+    # The positive control: this user passes the tenant check. The client
+    # dashboard answers "not released" (its tenant gate says "Client not found").
+    dash = c.get(f"/clients/{cid}/attack/{svc_id}/dashboard", headers=ch)
+    assert dash.status_code == 404, dash.text
+    assert dash.json()["error"]["reason"] == "dashboard_not_released", dash.text
+    r = c.get(f"/attack/services/{svc_id}/draft-dashboard", headers=ch)
+    assert r.status_code == 403, r.text
