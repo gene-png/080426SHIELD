@@ -1,4 +1,4 @@
-import { proxyJsonFromRequest } from "../../../../_proxy";
+import { proxyJsonFromRequest } from "../../../_proxy";
 
 // TD-5 (for #1060): starts a Run-AI, so it forwards the body (`serves`).
 export async function POST(

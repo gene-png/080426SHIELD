@@ -43,10 +43,10 @@ describe("CostEstimatePrompt (TD-5)", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Enter costs", exact: true }),
+      screen.getByRole("button", { name: /^Enter costs$/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Let AI estimate", exact: true }),
+      screen.getByRole("button", { name: /^Let AI estimate$/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(E3)).toBeInTheDocument();
   });
