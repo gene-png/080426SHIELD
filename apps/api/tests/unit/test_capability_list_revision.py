@@ -275,6 +275,24 @@ NOT_EDITS = {
     ("POST", "/tech-debt/capability-lists/{list_id}/savings-preview"),
 }
 
+# Edit routes whose edit lands in a BACKGROUND RUN (#645), so they cannot use a
+# driver above: a driver must return 200/201 and move the revision by exactly
+# one before it returns, while a Run-AI answers 202 and the edit happens inside
+# the job (and moves the revision only when the job wrote something). Each one
+# names the test that proves its revision rule through the route; that test
+# lives with the route, beside its fixture.
+RUN_EDITS = {
+    # TD-5 (for #1060): an estimate that writes a cost bumps the revision; one
+    # that writes none does not.
+    ("POST", "/tech-debt/capability-lists/{list_id}/cost-estimate"): (
+        "tests.unit.test_tech_debt_cost_estimate_routes",
+        (
+            "test_an_estimate_after_approval_makes_the_approval_stale",
+            "test_a_run_that_estimates_nothing_leaves_the_approval_current",
+        ),
+    ),
+}
+
 
 def _mutating_list_routes() -> set[tuple[str, str]]:
     # The Tech Debt router's own table: `create_app().routes` holds included
@@ -297,10 +315,24 @@ def test_every_mutating_list_route_is_either_driven_or_named_as_not_an_edit() ->
     revision, so it fails this test until it gets one."""
     found = _mutating_list_routes()
     assert found, "no routes found: the prefix filter is broken, not the routes clean"
-    assert found == set(EDIT_DRIVERS) | NOT_EDITS, {
-        "undriven": sorted(found - set(EDIT_DRIVERS) - NOT_EDITS),
-        "stale": sorted((set(EDIT_DRIVERS) | NOT_EDITS) - found),
+    accounted = set(EDIT_DRIVERS) | NOT_EDITS | set(RUN_EDITS)
+    assert found == accounted, {
+        "undriven": sorted(found - accounted),
+        "stale": sorted(accounted - found),
     }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("route", sorted(RUN_EDITS), ids=lambda r: f"{r[0]} {r[1]}")
+def test_each_run_edit_names_a_proof_that_exists(route) -> None:
+    """A RUN_EDITS entry is only as good as the proof it names: a renamed or
+    deleted proof must turn this red, not leave a name pointing at nothing."""
+    import importlib
+
+    module_name, proofs = RUN_EDITS[route]
+    module = importlib.import_module(module_name)
+    missing = [name for name in proofs if not callable(getattr(module, name, None))]
+    assert proofs and not missing, f"{route}: proofs not found in {module_name}: {missing}"
 
 
 @pytest.mark.unit
