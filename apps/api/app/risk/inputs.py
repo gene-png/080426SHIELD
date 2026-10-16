@@ -32,14 +32,18 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityList
 from app.models.csf_assessment import CsfAssessment
-from app.models.csf_profile import CsfDimensionScore, CsfEvidenceStatus
+from app.models.csf_profile import (
+    EVIDENCE_STATUS_GROUP,
+    CsfDimensionScore,
+    CsfEvidenceStatus,
+)
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
 from app.risk.selection import Selection, SelectionRead, selection_roles
@@ -129,9 +133,9 @@ def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
     record's rows in place would make the other changes reachable again."""
     rows = csf_catalog_rows(
         db.execute(
-            select(CsfDimensionScore).where(
-                CsfDimensionScore.assessment_id == uuid.UUID(assessment_id)
-            )
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == uuid.UUID(assessment_id))
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
         )
         .scalars()
         .all()

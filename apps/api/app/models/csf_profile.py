@@ -29,6 +29,9 @@ from app.models._common import TimestampMixin, UUIDPKMixin
 #: The deferred group holding `CsfDimensionScore.evidence_basis` (migration
 #: 0068); a query that renders it undefers it.
 EVIDENCE_BASIS_GROUP = "evidence_basis"
+#: The deferred group holding `CsfDimensionScore.evidence_status` (migration
+#: 0074); a query that reads it for many rows undefers it.
+EVIDENCE_STATUS_GROUP = "evidence_status"
 
 
 class CsfEvidenceBasis(enum.StrEnum):
@@ -90,16 +93,28 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )
-    evidence_status: Mapped[CsfEvidenceStatus] = mapped_column(
+    # Migration 0074. NOT NULL in the database, server default `neither`.
+    #
+    # DEFERRED (group `EVIDENCE_STATUS_GROUP`) and `evaluates_none()` with NO
+    # ORM default, for `evidence_basis`'s reason below: a select or an ORM
+    # insert against a pre-0074 schema (the migration tests that pin an older
+    # revision) must not name it. An unset attribute is left out of the INSERT
+    # and the server default writes `neither`. The model does NOT declare
+    # that default: declared, SQLAlchemy would read it back with `RETURNING
+    # evidence_status`, naming the column again. The roll-up and the Playbook
+    # reads undefer it in their own query (`undefer_group`), so there is no
+    # per-row load there.
+    evidence_status: Mapped[CsfEvidenceStatus | None] = mapped_column(
         SAEnum(
             CsfEvidenceStatus,
             name="csf_evidence_status",
             native_enum=False,
             length=32,
             values_callable=lambda e: [m.value for m in e],
-        ),
-        default=CsfEvidenceStatus.NEITHER,
+        ).evaluates_none(),
         nullable=False,
+        deferred=True,
+        deferred_group=EVIDENCE_STATUS_GROUP,
     )
     target_level: Mapped[int | None] = mapped_column(SmallInteger)
 

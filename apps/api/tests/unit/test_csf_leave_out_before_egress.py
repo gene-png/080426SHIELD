@@ -51,7 +51,7 @@ def _score(c, h: dict, svc: str, code: str) -> None:
 def _world(c) -> tuple[dict, str]:
     """High seeded; one code with notes, one with a rating only, one with no
     notes but a consultant's score on its tier."""
-    h, svc = _bootstrap(c)
+    h, svc = _bootstrap(c, notes=False)
     _answer(c, h, svc, NOTED, {"maturity_tier": 2, "notes": NOTE})
     _answer(c, h, svc, RATED_ONLY, {"maturity_tier": 3})
     _score(c, h, svc, SCORED_BLANK)
@@ -115,7 +115,7 @@ def test_the_literal_q1a_predicate_still_sends_a_scored_blank_subcategory(
 
 def test_nothing_to_send_makes_no_call(app_client) -> None:  # noqa: F811
     c, provider = app_client
-    h, svc = _bootstrap(c)
+    h, svc = _bootstrap(c, notes=False)
     _answer(c, h, svc, RATED_ONLY, {"maturity_tier": 3})
     sent = _capture(provider)
     body = csf_run_ai(c, svc, h)

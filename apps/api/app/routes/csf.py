@@ -29,7 +29,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.ai.batching import Batched, run_batches
 from app.ai.catalog_fields import register_catalog_field
@@ -104,7 +104,7 @@ from app.models.csf_assessment import (
     CsfAssessment,
     CsfAssessmentStatus,
 )
-from app.models.csf_profile import CsfDimensionScore, CsfGapAction
+from app.models.csf_profile import EVIDENCE_STATUS_GROUP, CsfDimensionScore, CsfGapAction
 from app.models.deliverable import FROZEN_TARGET_AT_FINALIZE, Deliverable
 from app.models.evidence_link import EvidenceTargetKind
 from app.models.llm_call import LLMCallMode
@@ -1329,6 +1329,7 @@ def get_profile(
                 CsfDimensionScore.assessment_id == a.id,
                 CsfDimensionScore.tier == tier,
             )
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
             .order_by(CsfDimensionScore.subcategory_code)
         )
         .scalars()
@@ -1445,7 +1446,11 @@ def enterprise_profile(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
     out, tiers_in_use = _enterprise_subcategories(db, a)
     stored = (
-        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        db.execute(
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == a.id)
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
+        )
         .scalars()
         .all()
     )
@@ -2225,7 +2230,11 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
     rows = {
         f"{r.tier}|{r.subcategory_code}": r
         for r in catalog_rows(
-            db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+            db.execute(
+                select(CsfDimensionScore)
+                .where(CsfDimensionScore.assessment_id == a.id)
+                .options(undefer_group(EVIDENCE_STATUS_GROUP))
+            )
             .scalars()
             .all()
         )
@@ -2819,7 +2828,11 @@ def export_playbook(
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No assessment yet.")
     stored_rows = (
-        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        db.execute(
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == a.id)
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
+        )
         .scalars()
         .all()
     )

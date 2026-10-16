@@ -16,7 +16,7 @@ counts over the same rows.
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.csf.catalog import (
     is_core,
@@ -36,7 +36,11 @@ from app.csf.retired import catalog_rows, has_recorded_value_besides_target
 from app.csf.rules import evidence_cap_applies, scored_tiers_only, unscored_has_no_level
 from app.logging import get_logger
 from app.models.csf_assessment import CsfAnswer, CsfAssessment
-from app.models.csf_profile import CsfDimensionScore, CsfEvidenceStatus
+from app.models.csf_profile import (
+    EVIDENCE_STATUS_GROUP,
+    CsfDimensionScore,
+    CsfEvidenceStatus,
+)
 from app.schemas.csf import CsfCoverage, EnterpriseSubcategory
 
 _log = get_logger(__name__)
@@ -138,7 +142,11 @@ def enterprise_subcategories(
     in `subcategory_by_code` below, a 500 on the enterprise profile, the gap
     actions and the playbook export alike. `enterprise_profile` discloses it."""
     rows = catalog_rows(
-        db.execute(select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == a.id))
+        db.execute(
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == a.id)
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
+        )
         .scalars()
         .all()
     )
