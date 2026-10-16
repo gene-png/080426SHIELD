@@ -211,11 +211,10 @@ export function ZtQuestionnaire({
                         // failed save left the REFUSED text on screen while the
                         // alert said it had been restored.
                         //
-                        // This component is rendered by the CLIENT
-                        // self-assessment as well as the admin workspace, which
-                        // is why a client-facing fix reaches an admin file. The
-                        // admin path gets the same correction, incidentally and
-                        // correctly -- it reverts by re-fetch too.
+                        // Only the admin workspace (ZtWorkspace) renders this
+                        // component; the client self-assessment has its own.
+                        // The admin path reverts by re-fetch, so the key gives
+                        // it the same correction.
                         key={`${ans.id}:${ans.notes ?? ""}`}
                         defaultValue={ans.notes ?? ""}
                         disabled={readOnly}
