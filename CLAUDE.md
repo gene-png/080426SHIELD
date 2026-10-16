@@ -134,35 +134,50 @@ and could not read WHICH PATHS trip it. Keep it here; D-079 records how that
 happened.
 
 **Since 2026-10-16 UTC (Gene, D-113): a PR whose checks pass is merged by an
-agent, unless it is EXTRA CARE; extra-care PRs go to the advisor, which
-reviews, approves and merges them.** Extra care is conditions 4, 5 and 6
-below. An agent merges, once every check on the head has FINISHED, when
-conditions 1 to 6 hold:
+agent; an EXTRA-CARE PR (condition 4, 5 or 6) needs the advisor's merge
+approval first.** Who the advisor and coordinator are is the `## Current
+roles` table at the top of the description of #736 (`gh api
+repos/gene-png/080426SHIELD/issues/736 --jq .body`). That table wins over any
+other copy. No session id is written here, because ids change at every
+handover.
 
-    gh pr merge <n> --squash --match-head-commit <reviewed head sha>
+**An agent merges a plain PR when conditions 1 to 6 hold**, and an
+extra-care PR when conditions 1 to 3 hold AND the advisor has approved it.
+Every merge is:
 
-**No `--auto`.** Auto-merge waits only for REQUIRED checks, so a red
-non-required gate (merge-rule text, compose content, migration declared) would
-not stop it, and it can merge a later push nobody reviewed. Never `--admin`,
-never bypass branch protection, never edit the required checks. A PR that
-cannot merge (a red check, a conflict, BLOCKED) is reported on #736 with its
-reason, never forced.
+    gh pr merge <n> --squash --match-head-commit <head sha>
 
-1. **EVERY check on the PR's head finished and green, required or not.** The
+- **No `--auto`.** Auto-merge waits only for REQUIRED checks, so a red
+  non-required gate would not stop it, and it can merge a later push that
+  nobody reviewed.
+- **Never** `--admin`, never bypass branch protection, never edit the
+  required checks.
+- A PR that cannot merge (a red check, a conflict, BLOCKED) is reported on
+  #736 with its reason, never forced.
+- The advisor audits every merge afterwards.
+
+1. **Every check on the PR's head has finished green, required or not.** The
    required set alone is not enough: the merge-rule-text, compose and
-   migration gates are deliberately not required. A green certificate is about
-   the head it ran on (see "READY is two claims"). **These gates are
-   red by design:** "Merge rule text" and "compose content changed". Their red is
-   the extra-care trigger, not a defect. It always blocks an AGENT merge, and
-   the advisor clears it with an approval naming the head SHA; the advisor is
-   the reader those job names call "a human".
+   migration gates are deliberately not required. A green certificate is
+   about the head it ran on (see "READY is two claims").
+   - **The exception: these gates are red by design** when they report a
+     CHANGE (exit 1): "Merge rule text" and "compose content changed". That
+     red is the extra-care trigger. It blocks a plain merge, and only an
+     advisor approval naming the head SHA clears it. The advisor is the
+     reader those job names call "a human".
+   - **A red that means the gate could not look (exit 2) is a defect** like
+     any other. Nobody clears it.
 2. **The adversarial reviewer ran against the FINAL state of the branch**, and
    whatever it found is fixed or filed, recorded with `Findings:` /
    `Disposition:` / `Scope:`. "Clean" means clean on the LAST run, not the
    first. The gate checks only that `Findings:` and `Disposition:` exist; it
    does not read `Scope:` and cannot tell whether the reviewer ran at all.
-3. **`DELIVERY_PLAN.md`, `CONTEXT.md` and `context/<name>.md` updated in the
-   landing commit**, with any counts read live rather than carried forward.
+   **Every edit to an existing test, every user-facing string and every
+   prompt in the PR carries an advisor approval** naming its hash or its
+   text.
+3. **The status documents** (`DELIVERY_PLAN.md`, `CONTEXT.md`,
+   `context/<name>.md`) **are updated in a batched docs-only PR, not in every
+   PR** (#736 6202079854). A PR may still update them.
 4. **No migration.**
 5. **None of the paths listed below**, which are the ones where a green suite
    proves least. One exception: a `docker-compose*.yml` diff whose parsed YAML is
@@ -171,26 +186,25 @@ reason, never forced.
 6. **Nothing that changes deliverable content, exporter output, or client
    dashboard numbers.**
 
-**Any red is reported, never merged by an agent. A PR failing condition 2 or 3 is fixed
-and re-checked. Any PR tripping 4, 5 or 6 is EXTRA CARE and goes to the
-advisor, which reviews it, approves it and merges it.**
+**Conditions 4, 5 and 6 no longer mean "comes back to the human". They mean
+"needs a recorded advisor merge approval before merge":**
 
-- **Who the advisor is:** the one Claude session Gene designates. Its id is
-  kept in Gene's project doc `claude/roles-and-handoff.md`, which is NOT in
-  git, and every advisor post on #736 is headed `Advisor (session_<id>)`.
-  When in doubt, ask on #736 or ask Gene. Never infer it.
-- **What counts as approval:** an advisor ruling on #736 that names the PR
-  and its head SHA. The agent that built a PR never approves its own
-  extra-care PR.
-- **Limit, stated plainly:** sessions can share a GitHub account, so the
-  header is a convention, not proof of identity. Gene may approve and merge
-  anything directly.
+- **The approval:** an advisor comment on #736 that names the PR and its exact
+  head SHA, posted after the advisor's own review of that head.
+- **Who merges:** the coordinator, at exactly that head, with
+  `--match-head-commit`, then it posts the merge SHA.
+- **If the head moves after approval,** the approval lapses and a new one is
+  needed.
+- **No self-approval:** the agent that built a PR never approves it.
+- **Limit, stated plainly:** sessions can share a GitHub account, so a header
+  is a convention, not proof of identity. Gene may approve and merge anything
+  directly.
 
-**Conditions 1 and 4 are mechanical; 5 is mostly a path match, but its
-live-prompt and merge-rule-text clauses need a diff read. Conditions 2, 3 and
-6 are self-attested by the agent that wants to merge.** Condition 6 is a judgement call an agent can
-talk itself out of; when it is arguable, it has been tripped, and the PR is
-extra care.
+**Conditions 4 and 5 are mostly mechanical; 5's live-prompt and merge-rule
+clauses need a diff read. Condition 1 needs one judgement: which kind of red
+it is. Conditions 2, 3 and 6 are self-attested by the agent that wants to
+merge.** Condition 6 is a judgement call an agent can talk itself out of. When
+it is arguable, it has been tripped, and the PR is extra care.
 
 ### Condition 5: the paths
 
@@ -261,8 +275,8 @@ wrong, and the command is the one that will go on reporting clean.
 
 ### Re-derive the measurement whenever condition 5 changes
 
-("Came back" below meant "back to the human"; since D-113 it means "extra care,
-to the advisor". The measurements are unchanged by that.)
+("Came back" below meant "back to the human"; since D-113 it means "needs an
+advisor merge approval". The measurements are unchanged by that.)
 
 What the rule actually clears is documentation PRs. Code comes back, and so does
 anything adding or changing a test — and this repo does not ship code without

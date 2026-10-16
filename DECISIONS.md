@@ -6636,28 +6636,26 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 
 **What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
 
-## D-113 — A PR whose checks all pass is merged by an agent; extra-care PRs go to the advisor
+## D-113 — An agent merges a PR whose checks all pass; an extra-care PR needs the advisor's merge approval first
 
-**2026-10-16 UTC · governance, the merge rule** (Decision: Gene, directly in the coordinator session (session_018WJDoAssaiYfyTcfEjEHbq): "change the rule itself so PRs can be merged if they pass the checks", then "update the rule so that extra care files go to the advisor to review and approve and merge".)
+**2026-10-16 UTC · governance, the merge rule** (Decision: Gene, directly in the coordinator session: "change the rule itself so PRs can be merged if they pass the checks", then "update the rule so that extra care files go to the advisor to review and approve and merge". Shaped by the advisor's rulings on #736: 6207034866, 6207058275 and 6207123538.)
 
 **The decision.**
 
-- An agent merges a PR with `gh pr merge --squash --match-head-commit <reviewed head>` once EVERY check on that head has finished green, required or not, and conditions 2 and 3 hold.
-- That holds unless the PR is EXTRA CARE: a migration (condition 4), a condition-5 path, or a change to deliverable content, exporter output or client dashboard numbers (condition 6).
-- Extra-care PRs go to the advisor, which reviews them, approves them and merges them.
-- Branch protection and the required checks are never bypassed or edited.
+- **Plain PRs.** An agent merges a PR with `gh pr merge --squash --match-head-commit <head>` once:
+  - every check on that head has finished green, required or not;
+  - the adversarial reviewer has run on that head;
+  - every existing-test edit, user-facing string and prompt in it carries an advisor approval naming its hash or its text.
+- **Extra-care PRs.** A PR tripping condition 4 (migration), 5 (the path list) or 6 (client content) also needs an advisor merge approval: a #736 comment naming the PR and its exact head SHA, posted after the advisor's own review of that head.
+  - The coordinator then merges at exactly that head and posts the merge SHA.
+  - If the head moves, the approval lapses.
+  - The agent that built a PR never approves it.
+- **The red-by-design gates.** "Merge rule text" and "compose content changed" go red when they report a CHANGE (exit 1). That red is the extra-care trigger, cleared only by the advisor approval. A red that means the gate could not look (exit 2) is a defect, and nobody clears it.
+- **Condition 3.** Status documents are updated in a batched docs-only PR, not in every PR (6202079854).
+- **Roles.** Who the advisor and coordinator are is the `## Current roles` table at the top of #736's description. CLAUDE.md names no session id, because ids change at every handover. Sessions can share a GitHub account, so a header is a convention, not proof of identity.
+- **Self-protection.** The merge-rule section, the reviewer-exception bullet in Rules of the road, the D-records that change either, and `.claude/agents/**` are condition-5 paths. A PR cannot clear itself under a rule it rewrites (#572).
+- **Oversight.** The advisor audits every merge afterwards. Branch protection and the required checks are never bypassed or edited.
 
-**Why no `--auto`** (from the adversarial review of the first draft, at 54045f07):
+**Why no `--auto`** (from the adversarial review of the first draft, at 54045f07): auto-merge waits only for REQUIRED checks, so a red non-required gate would not stop it. It may also merge a later push that nobody reviewed.
 
-- Auto-merge waits only for REQUIRED checks, so a red non-required gate (merge-rule text, compose content, migration declared) would not stop it.
-- It may also merge a later push nobody reviewed.
-
-**Also from that review:**
-
-- The merge-rule section, the D-records that change it, and `.claude/agents/**` are now condition-5 paths, so a PR can never clear itself under a rule it rewrites (#572).
-- A dependency bump is merged by an agent only if it trips none of conditions 4–6. A GitHub Actions bump edits workflows, so it is extra care.
-- The first draft's retirement of condition 3 was withdrawn, because Gene did not ask for it.
-
-**Who the advisor is.** The one session Gene designates. Its id is kept in Gene's project doc `claude/roles-and-handoff.md`, which is not in git, and its #736 posts are headed `Advisor (session_<id>)`. Sessions can share a GitHub account, so that header is a convention, not proof of identity.
-
-**What would reopen this:** an extra-care PR merged without an advisor approval naming its head, or a PR merged by an agent that should have been extra care.
+**What would reopen this:** an extra-care PR merged without an advisor approval naming its head, or a plain merge that should have been extra care.
