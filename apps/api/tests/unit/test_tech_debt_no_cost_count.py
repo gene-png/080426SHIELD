@@ -187,7 +187,12 @@ def test_the_pdf_prints_a_tool_name_with_markup_characters_as_written() -> None:
     assert "Tool with no cost: R&D <b>Lab</b>." in text
 
 
-def test_the_xlsx_stores_a_formula_like_tool_name_as_text() -> None:
+def test_the_xlsx_names_line_holds_the_name_verbatim_and_cannot_start_a_formula() -> None:
+    """What makes the names cell safe is the approved wording, not the formula
+    guard: the cell always begins "Tool with no cost:", so it can never begin
+    with a formula trigger, whatever the tool is called. Pinned here, with the
+    name stored verbatim as text. (`safe_text_row`'s guard never fires on this
+    cell, so this test does not claim to exercise it.)"""
     from openpyxl import load_workbook
 
     items = [
@@ -203,6 +208,7 @@ def test_the_xlsx_stores_a_formula_like_tool_name_as_text() -> None:
     ]
     assert [c.value for c in notes] == ["Tool with no cost: =SUM(1,2)."]
     assert notes[0].data_type == "s"
+    assert not notes[0].value.startswith(("=", "+", "-", "@", "\t", "\r"))
 
 
 @RENDERERS

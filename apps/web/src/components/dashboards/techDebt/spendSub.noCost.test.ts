@@ -67,6 +67,18 @@ describe("spendSub, tools with no cost (TD-10)", () => {
     );
   });
 
+  // The RATCHET (TechDebtDashboard.tsx): unreachable from the current API,
+  // kept on purpose. Pinned so it cannot be "simplified" into
+  // `Floor - ${noCost}`, which would print "Floor - null" to a client.
+  it.each([
+    ["a zero count", 0],
+    ["a missing count (an older API)", undefined],
+  ])("keeps the count-free floor sentence for %s", (_label, count) => {
+    expect(
+      spendSub(partial({ no_cost_count: count as unknown as number })),
+    ).toBe("Floor - some tools lacked a cost");
+  });
+
   it("says nothing about cost when every tool has one", () => {
     const out = spendSub(
       partial({ included_count: 27, excluded_count: 3, no_cost_count: 0 }),
