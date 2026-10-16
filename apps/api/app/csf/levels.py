@@ -1,10 +1,15 @@
 """CSF Playbook maturity levels by name (W4, #736 6205956728: every level by
 name, 6202644525 item 1). The bands are `csf/playbook.py::maturity_level`'s.
 
-One map, read by the Playbook files (`csf/playbook_export.py`) and the Risk
-Register's CSF finding label (`routes/risk.py::_gather_findings`), so the two
-cannot name a level differently. Added identically by CSF PR (a) and PR (b),
-so whichever lands second merges it without a conflict.
+Read by the Playbook files (`csf/playbook_export.py`, from CSF PR (a),
+#1203) and by the Risk Register's CSF finding label
+(`routes/risk.py::_gather_findings`, from CSF PR (b), #1242). Both PRs add
+this file identically, so whichever lands second merges it without a
+conflict, and until both land only one of those readers exists.
+
+Not the only copy: the bands are also hand-typed in `playbook_export.py`'s
+cover and METHODOLOGY text and, on the web, in `lib/csf/optionsCopy.ts` and
+`lib/csf/editorHelp.ts`. A rename starts here and sweeps those (see #1248).
 """
 
 from __future__ import annotations
