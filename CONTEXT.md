@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1207 item 1, intake auto-save lets a typed value go only on a 422.** A 400 or 409 on an intake save no longer drops what the client typed: on that route neither judges the value. Status: the 2026-10-16 #1207 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1115, intake auto-save keeps a value the server did not judge.** A failed intake save drops what the client typed only on a 400, 409 or 422; a 401, 403 or 429 keeps it and says so, and a bare 5xx from in front of the api says the outcome is unknown. Status: the 2026-10-16 #1115 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1093 item 1, an emptied intake field is cleared.** Emptying a Step 2 field now clears it: the wizard sends null, and the api stores NULL for an empty or whitespace-only string instead of refusing a blank website or storing blanks. Status: the 2026-10-16 #1093 entry in `DELIVERY_PLAN.md`'s MVP completion path.

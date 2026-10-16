@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T5): #1207 item 1, a follow-up to #1115._ An intake save refused with a 400 or 409 now keeps what the client typed, because on that route neither status judges the value; only a 422 lets it go. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
 
 _2026-10-16 (track T5): #1093 item 1, emptied intake fields are cleared._ A client who deletes the text of an intake field (Step 2) now clears it. Before, the old value came back on reload, and a blanked website was refused as "not accepted". The second half of #1093 waits on the ruling for #1115, which touches the same file. It comes back to you: condition 5.
