@@ -60,6 +60,12 @@ function names(): string[] {
     .map((i) => (i as HTMLInputElement).value);
 }
 
+/** The column header, by its own name: each cell announces "Category",
+ * not the sort button's "Sort by category". */
+function header(): HTMLElement {
+  return screen.getByRole("columnheader", { name: "Category" });
+}
+
 function filterTo(...values: string[]): void {
   const sel = screen.getByRole("listbox", {
     name: "Filter by category",
@@ -78,13 +84,13 @@ describe("sort by category (#1175)", () => {
     fireEvent.click(sort);
     // EDR/XDR, Productivity/Content (with its part), SIEM/SOAR, Uncategorized.
     expect(names()).toEqual(["alpha", "beta", "suite", "part", "zeta", "none"]);
-    expect(
-      screen.getByRole("columnheader", { name: /category/i }),
-    ).toHaveAttribute("aria-sort", "ascending");
+    expect(header()).toHaveAttribute("aria-sort", "ascending");
     fireEvent.click(sort);
     expect(names()).toEqual(["none", "zeta", "suite", "part", "alpha", "beta"]);
+    expect(header()).toHaveAttribute("aria-sort", "descending");
     fireEvent.click(sort);
     expect(names()).toEqual(["zeta", "alpha", "suite", "part", "none", "beta"]);
+    expect(header()).not.toHaveAttribute("aria-sort");
   });
 });
 
@@ -148,5 +154,45 @@ describe("filter by category (#1175)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply to 3 rows" }));
     await waitFor(() => expect(onBulk).toHaveBeenCalledTimes(1));
     expect(onBulk).toHaveBeenCalledWith(["alpha", "part", "beta"], "keep");
+  });
+
+  it("keeps a ticked row out of a bulk action once a filter hides it", async () => {
+    const onBulk = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EditableCapabilityTable
+        items={ITEMS}
+        onItemUpdate={() => {}}
+        onBulkDisposition={onBulk}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select zeta" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select alpha" }));
+    filterTo("EDR/XDR"); // zeta (SIEM/SOAR) is now hidden
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Disposition for selected rows" }),
+      { target: { value: "cut" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply to 1 row" }));
+    await waitFor(() => expect(onBulk).toHaveBeenCalledTimes(1));
+    expect(onBulk).toHaveBeenCalledWith(["alpha"], "cut");
+  });
+
+  it("drops a chosen category no row has any more, rather than hiding every row", () => {
+    const { rerender } = render(
+      <EditableCapabilityTable items={ITEMS} onItemUpdate={() => {}} />,
+    );
+    filterTo("SIEM/SOAR");
+    expect(names()).toEqual(["zeta"]);
+    // zeta, the only SIEM/SOAR row, is edited into another category.
+    rerender(
+      <EditableCapabilityTable
+        items={ITEMS.map((i) =>
+          i.id === "zeta" ? { ...i, category: "EDR/XDR" } : i,
+        )}
+        onItemUpdate={() => {}}
+      />,
+    );
+    expect(names()).toHaveLength(6);
+    expect(screen.queryByText(/^Showing \d+ of \d+ rows$/)).toBeNull();
   });
 });

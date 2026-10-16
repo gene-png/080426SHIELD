@@ -147,10 +147,24 @@ export function EditableCapabilityTable({
   //
   // #1175: sort and filter by category. A sort moves whole groups by the
   // bundle's category, so a part never leaves its bundle; a filter matches each
-  // row on its own category (a part shown alone still says, in its cost cell,
-  // which bundle it belongs to). "Uncategorized" is a null category.
+  // row on its own category (a part shown alone keeps its "in bundle" marker).
+  // "Uncategorized" is a null category.
   const [sortDir, setSortDir] = React.useState<"asc" | "desc" | null>(null);
   const [filterCats, setFilterCats] = React.useState<string[]>([]);
+  const presentCategories = React.useMemo(
+    () =>
+      Array.from(new Set(items.map(categoryOf))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [items],
+  );
+  // DERIVED, not stored: a chosen category no row has any more (an edit moved
+  // its last row) drops out of the filter, so a stale choice can never hide
+  // every row behind a filter that shows nothing selected.
+  const activeFilter = React.useMemo(
+    () => filterCats.filter((c) => presentCategories.includes(c)),
+    [filterCats, presentCategories],
+  );
   const ordered = React.useMemo(() => {
     const children = new Map<string, CapabilityItem[]>();
     for (const it of items) {
@@ -172,17 +186,10 @@ export function EditableCapabilityTable({
       parent,
       ...(children.get(parent.id) ?? []),
     ]);
-    return filterCats.length === 0
+    return activeFilter.length === 0
       ? grouped
-      : grouped.filter((it) => filterCats.includes(categoryOf(it)));
-  }, [items, sortDir, filterCats]);
-  const presentCategories = React.useMemo(
-    () =>
-      Array.from(new Set(items.map(categoryOf))).sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [items],
-  );
+      : grouped.filter((it) => activeFilter.includes(categoryOf(it)));
+  }, [items, sortDir, activeFilter]);
   // The selection is over the rows SHOWN, so a bulk action never reaches a
   // row a filter hides (`useRowSelection` derives from the current ids).
   const orderedIds = React.useMemo(() => ordered.map((i) => i.id), [ordered]);
@@ -307,6 +314,9 @@ export function EditableCapabilityTable({
                     col.numeric ? "text-right" : "text-left",
                   )}
                   style={{ width: `${col.rem}rem` }}
+                  // The header's own name, so each cell announces "Category"
+                  // rather than the sort button's "Sort by category".
+                  aria-label={col.label === "Category" ? "Category" : undefined}
                   aria-sort={
                     col.label === "Category" && sortDir !== null
                       ? sortDir === "asc"
@@ -607,7 +617,7 @@ export function EditableCapabilityTable({
           <span>Filter by category</span>
           <select
             multiple
-            value={filterCats}
+            value={activeFilter}
             onChange={(e) =>
               setFilterCats(
                 Array.from(e.target.selectedOptions, (o) => o.value),
@@ -623,7 +633,7 @@ export function EditableCapabilityTable({
             ))}
           </select>
         </label>
-        {filterCats.length > 0 ? (
+        {activeFilter.length > 0 ? (
           <>
             <span role="status">{`Showing ${ordered.length} of ${items.length} rows`}</span>
             <button
