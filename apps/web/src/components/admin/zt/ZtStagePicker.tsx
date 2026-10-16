@@ -11,6 +11,12 @@ export interface ZtStagePickerProps {
   disabled?: boolean;
   ariaLabel?: string;
   stages: CatalogStage[];
+  /**
+   * #922: the capability's own maximum (the catalog's `max_stage`, which the
+   * API refuses above). A stage above it is shown but unavailable. Omitted:
+   * every stage on the ladder is offered.
+   */
+  maxStage?: number;
 }
 
 export function ZtStagePicker({
@@ -19,6 +25,7 @@ export function ZtStagePicker({
   disabled = false,
   ariaLabel,
   stages,
+  maxStage,
 }: ZtStagePickerProps): JSX.Element {
   const radioRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
   const count = stages.length;
@@ -68,6 +75,11 @@ export function ZtStagePicker({
     >
       {stages.map(({ stage, label }, index) => {
         const active = value === stage;
+        // #922: unavailable, but kept in place (aria-disabled, still
+        // focusable) so the button count and arrow-key order do not change.
+        // A stage already stored above the maximum can still be cleared.
+        const unreachable =
+          maxStage !== undefined && stage > maxStage && !active;
         return (
           <button
             key={stage}
@@ -79,14 +91,18 @@ export function ZtStagePicker({
             aria-checked={active}
             tabIndex={index === focusIndex ? 0 : -1}
             disabled={disabled}
-            onClick={() => onChange(active ? null : stage)}
+            aria-disabled={unreachable ? true : undefined}
+            onClick={() => {
+              if (unreachable) return;
+              onChange(active ? null : stage);
+            }}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={[
               "rounded-md px-2.5 py-1 text-xs font-semibold border transition",
               active
                 ? "border-brand-500 bg-brand-500 text-ink-on-accent"
                 : "border-border bg-surface-card text-ink-secondary hover:bg-surface-sunken",
-              disabled ? "cursor-not-allowed opacity-50" : "",
+              disabled || unreachable ? "cursor-not-allowed opacity-50" : "",
             ].join(" ")}
             title={label}
           >

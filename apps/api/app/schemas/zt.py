@@ -28,6 +28,9 @@ class CatalogCapability(BaseModel):
     #: "function", or "cross_cutting" for a CISA pillar's Visibility and
     #: Analytics, Automation and Orchestration and Governance rows (#838).
     kind: str = "function"
+    #: #922: the highest stage this capability may be stored at, the value
+    #: every write path refuses above (`target_caps.max_stage_for`, #839).
+    max_stage: int
 
 
 class CatalogPillar(BaseModel):

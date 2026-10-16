@@ -14,6 +14,8 @@ export interface CatalogCapability {
   outcome: string;
   /** #838: a CISA pillar's cross-cutting rows. Absent reads as "function". */
   kind?: "function" | "cross_cutting";
+  /** #922: the highest stage this capability may be stored at (the API's own). */
+  max_stage?: number;
 }
 
 export interface CatalogPillar {
