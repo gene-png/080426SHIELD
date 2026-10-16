@@ -2,6 +2,8 @@
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
 
+_2026-10-16 (track T5): #1230 item 1, a follow-up to #1116._ A website built to hide a number-address in its path ("8080/0.0.31.144") is now refused too. Normal addresses are unaffected. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1116, a website typed as "https:8080" is refused._ It used to be saved with "https" as the site's host, and a bare number such as "8080" was saved as a meaningless internet address. The client now sees "This value was not accepted, so it was not saved." A normal address with a port, like "example.com:8080", still works. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1170, the suite-listing banner moved to Notes and artifacts._ The "List each product separately, not as a suite" banner now shows at the top of Step 5 (Notes and artifacts), above the upload box, and no longer on Step 4 (Systems). Same rule and your approved wording. The Step 5 reminder line planned after IN-2 would now repeat it on the same step, so it waits for your call on whether it is still wanted. It comes back to you: condition 5.
