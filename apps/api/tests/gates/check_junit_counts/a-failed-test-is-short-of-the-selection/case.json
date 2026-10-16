@@ -1,0 +1,12 @@
+{
+ "incident": "Lead's #680 rework, item 3: the job fails if passed + skipped + xfailed is below the certified selection. A failed test is reported but did not pass, so the run is one short and this says so beside pytest's own red.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "passed + skipped + xfailed is 2, short of the 3 selected (1 failed or errored)"
+}

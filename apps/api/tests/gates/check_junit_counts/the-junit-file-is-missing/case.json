@@ -1,0 +1,12 @@
+{
+ "incident": "D-090: pytest never wrote its report (it crashed, or an earlier step failed under `if: always()`). That is could-not-look, never a clean count of nothing.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "--junit",
+  "{dir}/junit.xml",
+  "--selected",
+  "{dir}/selected.txt"
+ ],
+ "stdout_contains": "cannot read the junit XML"
+}
