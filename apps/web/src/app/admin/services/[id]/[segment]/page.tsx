@@ -14,7 +14,10 @@ export default async function OldServicePage(props: {
   params: Promise<{ id: string; segment: string }>;
 }): Promise<never> {
   const { id, segment } = await props.params;
-  if (!kindForSlug(segment)) notFound();
+  if (!kindForSlug(segment)) {
+    console.warn("[client_frame] old URL refused: no such segment", segment);
+    notFound();
+  }
   const to = await newUrlForOldService(id);
   console.info("[client_frame] old URL", id, segment, "->", to);
   redirect(to);

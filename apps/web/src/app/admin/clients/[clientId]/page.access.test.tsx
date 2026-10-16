@@ -142,7 +142,14 @@ describe("client overview page", () => {
 
   it("refuses when the API says the bearer is not an admin (403)", async () => {
     session.value = { role: "admin", accessToken: NON_ADMIN_TOKEN };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(overview(A)).rejects.toBeInstanceOf(NotFoundSignal);
+    // The log names the refusal the API gave, not a guessed "not found".
+    expect(warn).toHaveBeenCalledWith(
+      "[client_frame] refused: the client read answered",
+      403,
+      A,
+    );
   });
 
   it("refuses a client id that is not a UUID (the API's 422)", async () => {

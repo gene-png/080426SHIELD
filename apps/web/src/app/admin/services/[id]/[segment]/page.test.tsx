@@ -107,8 +107,15 @@ describe("old /admin/services/{id}/{segment} URLs", () => {
   });
 
   it("finds a service id that is not a UUID not found (the API's 422)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(call("nope", "tech-debt")).rejects.toBeInstanceOf(
       NotFoundSignal,
+    );
+    // The log names the refusal the API gave, not a guessed "not found".
+    expect(warn).toHaveBeenCalledWith(
+      "[client_frame] old URL refused: the service read answered",
+      422,
+      "nope",
     );
   });
 
