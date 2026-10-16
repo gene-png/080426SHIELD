@@ -1214,7 +1214,7 @@ def zt_downstream(framework: Any, *, engagement_stage: int, data: Mapping[str, A
     }
 
 
-def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> dict:
+def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool], cap: bool) -> dict:
     """Each row's maturity level, by `csf.playbook.score_tier` -- the number a
     client sees per (tier, subcategory) -- keyed "tier|subcategory_code" as the
     route keys its rows.
@@ -1226,8 +1226,9 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
     read them as 2, 1 and 1. `unscoreable_keys` names the assessment's rows the
     run ANSWERED and left unscoreable, so a pair can count them
     (`csf_level_agreement`); `not_scoreable` also counts entries naming no row
-    of the assessment. `has_evidence` is the stored row's flag, as the route
-    passes it."""
+    of the assessment. `has_evidence` is the stored row's evidence-on-file
+    flag and `cap` the assessment's rule (`csf/rules.py::evidence_cap_applies`),
+    as the route passes them."""
     from app.csf.playbook import DimensionScores, score_tier
     from app.routes.csf import _DIM_FIELDS, _validated_dimension
 
@@ -1248,12 +1249,15 @@ def csf_levels(data: Mapping[str, Any], *, has_evidence: Mapping[str, bool]) -> 
         result = score_tier(
             DimensionScores(**dict(zip(_DIM_FIELDS, dims, strict=True))),
             has_evidence=has_evidence[key],
+            cap=cap,
         )
         levels[key] = result.level
         evidence_capped += int(result.evidence_capped)
     # `evidence_capped` counts the rows whose level the engine CAPPED for want of
     # evidence (CSF_Flow_Spec section 8: at most Level 2). Without it, a run that
     # scored every row L4 and one that scored every row L2 read as agreeing.
+    # Since Option 3 only a frozen assessment is capped, so on the drafts a run
+    # scores it is 0.
     return {
         "levels": levels,
         # A key answered twice, once scoreable, is in both: the pair rule below
@@ -1323,8 +1327,9 @@ def csf_level_agreement(
         "equal": sum(scored_a[k] == scored_b[k] for k in judged),
         "one_unscoreable": len(lost_a ^ lost_b),
         "both_unscoreable": len(lost_a & lost_b),
-        # Rows with no evidence can never score above Level 2, so their
-        # level agreement is agreement within a capped range.
+        # Rows with no evidence on file. Under the frozen cap they can never
+        # score above Level 2, so their agreement is within a capped range;
+        # `evidence_capped` in `csf_levels` says whether any was capped.
         "no_evidence_rows": sum(1 for k in both if not has_evidence[k]),
     }
 
@@ -2149,7 +2154,12 @@ def measure_csf(
         price=price,
     )
     data_by_run = dict(_ok_runs(records))
-    levels = {n: csf_levels(data, has_evidence=has_evidence) for n, data in data_by_run.items()}
+    from app.csf.rules import evidence_cap_applies
+
+    cap = evidence_cap_applies(a)
+    levels = {
+        n: csf_levels(data, has_evidence=has_evidence, cap=cap) for n, data in data_by_run.items()
+    }
     for pair in report["pairs"]:
         pair["level"] = csf_level_agreement(
             levels[pair["pair"][0]], levels[pair["pair"][1]], has_evidence
@@ -3084,7 +3094,7 @@ def _print_table(report: dict) -> None:
             lv = p["level"]
             print(
                 f"pair {p['pair']} maturity level: equal {lv['equal']}/{lv['compared']} "
-                f"({lv['no_evidence_rows']} of those rows have no evidence: capped at Level 2)"
+                f"({lv['no_evidence_rows']} of those rows have no evidence on file)"
             )
     stray = _zt_stray_keys_by_run(report)
     for d in report.get("downstream", []):

@@ -39,7 +39,7 @@ from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityList
 from app.models.csf_assessment import CsfAssessment
-from app.models.csf_profile import CsfDimensionScore
+from app.models.csf_profile import CsfDimensionScore, CsfEvidenceStatus
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
 from app.risk.selection import Selection, SelectionRead, selection_roles
@@ -137,18 +137,27 @@ def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
         .all()
     )
     content = sorted(
-        (
-            [
-                str(getattr(r, f)) if f == "evidence_artifact_id" else getattr(r, f)
-                for f in _PLAYBOOK_FIELDS
-            ]
-            for r in rows
-            if r.in_scope
-        ),
+        ([_fingerprint_value(r, f) for f in _PLAYBOOK_FIELDS] for r in rows if r.in_scope),
         key=lambda v: (v[1], v[0]),
     )
     blob = json.dumps(content, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_value(row: CsfDimensionScore, field: str) -> object:
+    """One field as the fingerprint hashes it. `has_evidence` became the
+    three-valued `evidence_status` (migration 0074): its two old values hash
+    as the boolean did, so a fingerprint recorded before 0074 still matches an
+    unchanged Playbook, and the new middle value hashes as itself, so a move
+    to or from it reads as changed."""
+    if field == "evidence_artifact_id":
+        return str(row.evidence_artifact_id)
+    if field == "has_evidence":
+        status = row.evidence_status
+        if status == CsfEvidenceStatus.CONFIRMED_IN_DISCUSSION:
+            return status.value
+        return status == CsfEvidenceStatus.ON_FILE
+    return getattr(row, field)
 
 
 def _status(value: object) -> str:

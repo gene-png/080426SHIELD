@@ -22,6 +22,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from app.csf.catalog import all_codes
+from app.models.csf_profile import CsfEvidenceStatus
 
 _SOURCE = "NIST CSF 2.0"
 
@@ -78,7 +79,9 @@ def has_recorded_value_besides_target(row: Any) -> bool:
         or not _blank(row.rationale)
         or not _blank(row.what_we_found)
         or row.evidence_artifact_id is not None
-        or bool(row.has_evidence)
+        # Migration 0074: any recorded evidence value, `confirmed_in_discussion`
+        # included, is something a consultant wrote.
+        or row.evidence_status != CsfEvidenceStatus.NEITHER
         or not row.in_scope
     )
 

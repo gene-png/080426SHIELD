@@ -150,8 +150,11 @@ export function CsfGapActionEditor({
                   </div>
                   <span className="text-xs text-ink-tertiary">
                     {/* #1077 review, F2: a kept entry with nothing rolled up
-                        (out of scope) shows no level, never "L0". */}
-                    {a.enterprise_level > 0 ? `L${a.enterprise_level}` : ""}
+                        (out of scope, or no scored tier: Option 1, #1073)
+                        shows no level, never "L0" or "Lnull". */}
+                    {a.enterprise_level !== null && a.enterprise_level > 0
+                      ? `L${a.enterprise_level}`
+                      : ""}
                     {/* F1: "Not measured", approved (#736 6127667643). */}
                     {a.target_not_measured === true
                       ? " → target Not measured"
