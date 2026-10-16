@@ -1,16 +1,18 @@
 """#1242 review, F1: the priority's precision through the finalize route,
-across a release (advisor, #736 6216024281 item 3c: one decimal, rounded
-down, on unreleased deliverables only; released files keep their numbers).
+across a release (advisor, #736 6220638526 item 3, option (A): every new
+render floors to one decimal; a released file is stored bytes and is never
+re-rendered, so it keeps its numbers without a check).
 
 Two sequences, each through the real routes:
 
 (a) finalize v1, release it, re-finalize v2. A client then holds v1 and, once
     it is released, v2 for the same assessment version: the two should state
     the same priority for the same row.
-(b) the same, with the assessment set back to APPROVED after the release: the
-    state a pre-0041 release left behind ("keeps a parent that still reads
-    APPROVED", migration 0041), so the released deliverable's parent does not
-    read RELEASED.
+(b) the same, with the assessment set back to APPROVED after the release by
+    direct SQL, so the render reads an APPROVED parent beside a released
+    deliverable. No route produces exactly this state: a real pre-0041
+    release also has `parent_version` NULL. What the render reads (the
+    assessment's status) is the part that matters, and it is ordinary.
 
 One Protect subcategory at tier 1 against the client's target 4, every other
 at 4: exactly one gap, 3 tiers x 1.15 = 3.45, which floors to 3.4.
