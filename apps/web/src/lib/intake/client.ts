@@ -117,7 +117,9 @@ export async function createAssessment(
  * unknown: it is thrown carrying the #550 envelope, so a caller that renders
  * through `clientFacingError` shows the approved sentence, never its own
  * failure copy and never success. A READ changed nothing, so it is thrown with
- * its status and the raw body, for the caller to report as a failed load.
+ * its status and the raw body. Not every caller reports that as a failed load
+ * yet: Step 6's upload list shows a failed read as an empty one, which #1223
+ * fixes.
  */
 export function unreadableWrite(status: number): { error: object } {
   return {
