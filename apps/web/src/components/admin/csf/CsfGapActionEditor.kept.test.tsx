@@ -85,7 +85,8 @@ describe("CsfGapActionEditor, review of #1077 (F1, F2)", () => {
     });
     render(<CsfGapActionEditor serviceId="svc-1" />);
     const kept = await screen.findByTestId("gap-action-GV.OC-03");
-    expect(kept).toHaveTextContent("L3 → target Not measured");
+    // W2 (#736 6205956728): level names.
+    expect(kept).toHaveTextContent("Defined → target Not measured");
   });
 
   it("shows no level for a kept entry with nothing rolled up (never L0)", async () => {

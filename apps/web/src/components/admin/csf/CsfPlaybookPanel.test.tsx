@@ -154,9 +154,7 @@ describe("CsfPlaybookPanel run-AI accounting (W1, issue #44)", () => {
       result: res,
     } as unknown as Awaited<ReturnType<typeof csfClient.fetchCsfRun>>);
     render(<CsfPlaybookPanel serviceId="svc-run" />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Run AI (csf_score)" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Run AI" }));
     await act(async () => {
       await Promise.resolve();
     });

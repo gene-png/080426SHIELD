@@ -83,7 +83,12 @@ def app_client(tmp_path) -> Iterator[tuple[TestClient, dict]]:
 
 def _one_gap(c: TestClient, h: dict, code: str | None = None) -> tuple[str, str]:
     """A CSF service whose only gap is `code`, SUBCATEGORIES[0] by default
-    (target L4 on every tier, nothing scored). Returns (service_id, gap code)."""
+    (target L4 on every tier, scored Governance 1, so level 1). Returns
+    (service_id, gap code).
+
+    Scored, because since CSF Option 1 (D-114) a subcategory with no scored
+    tier has no level and so no gap; before, its seed rows read level 1,
+    which is the level this setup still gives it."""
     svc = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()["id"]
     c.post(f"/csf/services/{svc}/assessments", headers=h)
     c.post(
@@ -93,7 +98,9 @@ def _one_gap(c: TestClient, h: dict, code: str | None = None) -> tuple[str, str]
     for tier in ("high", "moderate", "low"):
         rows = c.get(f"/csf/services/{svc}/profile/{tier}", headers=h).json()["rows"]
         sid = next(r["id"] for r in rows if r["subcategory_code"] == code)
-        res = c.patch(f"/csf/dimension-scores/{sid}", headers=h, json={"target_level": 4})
+        res = c.patch(
+            f"/csf/dimension-scores/{sid}", headers=h, json={"target_level": 4, "governance": 1}
+        )
         assert res.status_code == 200, res.text
     gaps = [
         s["subcategory_code"]

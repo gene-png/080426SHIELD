@@ -14,8 +14,8 @@ import { Bar, Doughnut } from "react-chartjs-2";
 
 import {
   spendBar,
+  spendTooltip,
   sprawlDonut,
-  usdFull,
   type CategorySpend,
 } from "@/lib/dashboards/techDebt";
 
@@ -56,7 +56,10 @@ export function SpendByCategory({
     indexAxis: "y",
     plugins: {
       legend: { display: false },
-      tooltip: { callbacks: { label: (c) => usdFull(c.raw as number) } },
+      // #1214: a category with an uncosted tool reads as a floor.
+      tooltip: {
+        callbacks: { label: (c) => spendTooltip(bar.rows[c.dataIndex]) },
+      },
     },
     scales: {
       x: {

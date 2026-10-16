@@ -101,6 +101,14 @@ GATES = [
     # D-095's compose exception. Added WITH its entry here. `sys.argv` because
     # `main(argv)` takes the argument list.
     ("compose_unchanged", "sys.argv"),
+    # The CI shard partition check. The required "E2E ..." aggregate is red or
+    # green on its exit, so it carries the handler.
+    # Added WITH its entry here. `sys.argv` because `main(argv)` takes the list.
+    ("shard_partition", "sys.argv"),
+    # The unit run's per-test count (#680). The required "Python ..." check is
+    # red or green on its exit, so it carries the handler. Added WITH its entry
+    # here. `sys.argv` because `main(argv)` takes the list.
+    ("check_junit_counts", "sys.argv"),
 ]
 
 MARKER = 'if __name__ == "__main__":'
