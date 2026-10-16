@@ -135,7 +135,8 @@ export interface CapabilityList {
 export interface CapabilityItemPatch {
   name?: string;
   vendor?: string;
-  category?: string;
+  // #1176: null is "Uncategorized", which the dropdown sends.
+  category?: string | null;
   function?: string;
   annual_cost_usd?: number | null;
   license_count?: number | null;
