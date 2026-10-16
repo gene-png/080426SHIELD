@@ -57,6 +57,30 @@ def test_title_and_phone_are_cleared(app_client, field, cleared) -> None:  # noq
 
 
 @pytest.mark.parametrize("field", ["title", "phone"])
+@pytest.mark.parametrize("cleared", [None, "", "   "])
+def test_submit_clears_title_and_phone_too(app_client, field, cleared) -> None:  # noqa: F811
+    """The submit twin (review of a2b50ccc): `POST /intake/submit` applies the
+    same profile fields through `_apply_profile_fields`, and validates them
+    through `IntakeSubmitRequest`, whose blank normaliser is its own."""
+    client, TestSession = app_client
+    bearer = _register_and_bearer(client)
+    assert _patch(client, bearer, {field: "x1198"}).status_code == 200
+    user_id = _user_id(TestSession, field, "x1198")
+
+    r = client.post(
+        "/intake/submit",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={
+            "client": {"legal_name": "Atlas Defense Solutions"},
+            "service_requests": [{"service_type": "consultation"}],
+            field: cleared,
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert _stored(TestSession, user_id, field) is None
+
+
+@pytest.mark.parametrize("field", ["title", "phone"])
 def test_an_unsent_title_or_phone_is_left_alone(app_client, field) -> None:  # noqa: F811
     client, TestSession = app_client
     bearer = _register_and_bearer(client)
