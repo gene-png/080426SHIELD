@@ -1,0 +1,40 @@
+"""#1123 item 2, Tech Debt (RED, pending the advisor's ruling at #736
+6212272655). Tech Debt passes a `ParentGuard`, but its refusal fires only
+while the list is still APPROVED; a status change before the flip commits the
+release. Same hook and same proposal as `test_release_status_change_race.py`.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+
+from tests.unit.test_capability_list_revision import app_client  # noqa: F401  (fixture)
+from tests.unit.test_release_status_change_race import _released, _status_moves_before_the_flip
+
+pytestmark = pytest.mark.unit
+
+
+def test_tech_debt_release_is_refused_when_the_list_moved_before_the_flip(
+    app_client,  # noqa: F811
+) -> None:
+    from app.models.capability import CapabilityList, CapabilityListStatus
+    from tests.unit.test_capability_list_revision import _approve, _decide_all, _finalize
+    from tests.unit.test_capability_list_revision import _world as _td_world
+
+    w = _td_world(app_client)
+    _decide_all(w)
+    assert _approve(w).status_code == 200
+    fin = _finalize(w)
+    assert fin.status_code in (200, 201), fin.text
+    deliv_id = fin.json()["id"]
+
+    with _status_moves_before_the_flip(
+        CapabilityList, uuid.UUID(w.list_id), CapabilityListStatus.DRAFT
+    ) as fired:
+        r = w.c.post(f"/tech-debt/deliverables/{deliv_id}/release", headers=w.h)
+
+    assert fired, "the hook never ran -- the race was not driven"
+    assert r.status_code == 409, r.text
+    assert not _released(deliv_id), "a release committed over a list that moved"
