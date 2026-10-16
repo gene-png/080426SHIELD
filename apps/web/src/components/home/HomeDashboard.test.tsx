@@ -484,6 +484,7 @@ describe("HomeDashboard — a failed panel is not an empty one (#236)", () => {
           tech_debt_savings_usd: null,
           tech_debt_savings_cost_known: true,
           tech_debt_savings_unresolved: false,
+          tech_debt_savings_ai_estimate_count: 0,
           zt_gap_count: null,
           zt_gap_unresolved: false,
           zt_services: 0,
