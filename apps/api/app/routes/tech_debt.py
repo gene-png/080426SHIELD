@@ -68,6 +68,8 @@ from app.models._common import utcnow
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.audit_entry import AuditEntry
 from app.models.capability import (
+    COST_SOURCE_AI_ESTIMATE,
+    COST_SOURCE_CONSULTANT,
     CapabilityDisposition,
     CapabilityItem,
     CapabilityList,
@@ -1602,6 +1604,11 @@ def patch_capability_item(
     locked_val = data.pop("locked", None)
     for field, value in data.items():
         setattr(item, field, value)
+    if "annual_cost_usd" in data:
+        # TD-5 (for #1060): editing the cost is the override of an AI estimate.
+        # A cost the consultant typed is theirs; a cleared cost has no source.
+        item.cost_source = COST_SOURCE_CONSULTANT if data["annual_cost_usd"] is not None else None
+        item.cost_estimate_basis = None
     if data:
         # A content edit -> no longer an AI guess.
         item.confidence_pct = None
