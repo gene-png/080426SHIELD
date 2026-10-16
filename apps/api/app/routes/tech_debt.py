@@ -1541,6 +1541,13 @@ def bulk_set_disposition(
         # are atomic -- a decision committed after the rows were read above is
         # still seen. All or nothing, like the refusal above: a short count
         # rolls back every row, so "Set {n} rows to Keep." is never partial.
+        #
+        # `_record_edit` FIRST: it takes the list row's lock, and every other
+        # edit path takes that lock before its item rows (sessions do not
+        # autoflush, so their item UPDATEs reach the database at commit). Taking
+        # the items first here would invert the order and can deadlock two
+        # consultants on Postgres. A refusal below rolls the bump back.
+        _record_edit(db, cap_list.id)
         written = db.execute(
             update(CapabilityItem)
             .where(
@@ -1571,8 +1578,8 @@ def bulk_set_disposition(
         for item in items:
             item.disposition = body.disposition
             item.confidence_pct = None
+        _record_edit(db, cap_list.id)
     item_ids = sorted(str(i.id) for i in items)
-    _record_edit(db, cap_list.id)
     audit(
         db,
         action="capability_items.disposition_set",

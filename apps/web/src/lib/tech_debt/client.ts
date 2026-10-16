@@ -189,11 +189,10 @@ export async function bulkSetDisposition(
     `/api/proxy/tech-debt/capability-lists/${listId}/items/disposition`,
     {
       method: "POST",
-      body: {
-        item_ids: itemIds,
-        disposition,
-        only_if_undecided: onlyIfUndecided,
-      },
+      // The key is sent only when set, so #641's request body is unchanged.
+      body: onlyIfUndecided
+        ? { item_ids: itemIds, disposition, only_if_undecided: true }
+        : { item_ids: itemIds, disposition },
     },
   );
 }
