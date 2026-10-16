@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn, StatusPill } from "@shield/design-system";
 
 import { patchCapabilityItem, proxyMessage } from "@/lib/tech_debt/client";
+import type { TechDebtCategories } from "@/lib/tech_debt/client";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
@@ -20,6 +21,12 @@ import type { JSX } from "react";
 export interface EditableCapabilityTableProps {
   items: CapabilityItem[];
   onItemUpdate: (next: CapabilityItem) => void;
+  /**
+   * #1176: the category dropdown's options (`GET /tech-debt/categories`).
+   * Absent or null while loading or after a failed load: the category control
+   * is then disabled and shows only the stored value.
+   */
+  categories?: TechDebtCategories | null;
   /**
    * Name the capabilities inside a bundled licence (UX finding 5). Omitted on
    * read-only lists.
@@ -117,6 +124,68 @@ function parseInt32(raw: string): number | null {
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
+/**
+ * #1176: the category cell, a dropdown of the API's closed list plus
+ * "Uncategorized" (stored as null). A stored value outside the list is shown
+ * as "{value} (not on the list)" and kept until the consultant picks another,
+ * never remapped. Without a list (still loading, or it failed and the table
+ * says so) the control is disabled and shows only the current value, rather
+ * than falling back to free text.
+ */
+function CategorySelect({
+  value,
+  categories,
+  readOnly,
+  className,
+  onChange,
+}: {
+  value: string | null;
+  categories: TechDebtCategories | null | undefined;
+  readOnly: boolean;
+  className: string;
+  onChange: (next: string | null) => void;
+}): JSX.Element {
+  const uncategorized = categories?.uncategorized_label ?? "Uncategorized";
+  if (!categories) {
+    return (
+      <select
+        disabled
+        value={value ?? ""}
+        onChange={() => undefined}
+        className={className}
+        aria-label="Category"
+        title={value ?? uncategorized}
+      >
+        <option value={value ?? ""}>{value ?? uncategorized}</option>
+      </select>
+    );
+  }
+  const offList = value !== null && !categories.categories.includes(value);
+  return (
+    <select
+      value={value ?? ""}
+      disabled={readOnly}
+      onChange={(e) => {
+        const next = e.target.value === "" ? null : e.target.value;
+        if (next !== value) onChange(next);
+      }}
+      className={className}
+      aria-label="Category"
+      title={value ?? uncategorized}
+    >
+      <option value="">{uncategorized}</option>
+      {offList ? (
+        <option value={value}>{`${value} (not on the list)`}</option>
+      ) : null}
+      {categories.categories.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** AI Prompt §6.2: AI output renders as a real editable table, NOT as raw JSON. */
 export function EditableCapabilityTable({
   items,
@@ -124,6 +193,7 @@ export function EditableCapabilityTable({
   onSplitBundle,
   readOnly = false,
   onBulkDisposition,
+  categories,
 }: EditableCapabilityTableProps): JSX.Element {
   const [saveState, setSaveState] = React.useState<SaveStateById>({});
   /** #879: the API's reason for the last refused save, per row. */
@@ -423,19 +493,12 @@ export function EditableCapabilityTable({
                     />
                   </td>
                   <td className="border-b border-border-subtle px-3 py-2 align-top">
-                    <input
-                      type="text"
-                      defaultValue={item.category ?? ""}
-                      title={item.category ?? ""}
+                    <CategorySelect
+                      value={item.category}
+                      categories={categories}
                       readOnly={readOnly}
-                      onBlur={(e) => {
-                        const v = e.target.value || undefined;
-                        if (v !== item.category) {
-                          void save(item, { category: v }, e.currentTarget);
-                        }
-                      }}
                       className={cellInputClasses}
-                      aria-label="Category"
+                      onChange={(next) => void save(item, { category: next })}
                     />
                   </td>
                   <td className="border-b border-border-subtle px-3 py-2 align-top">

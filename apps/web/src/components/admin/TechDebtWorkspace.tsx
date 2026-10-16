@@ -33,11 +33,12 @@ import {
   fetchConsolidationPlan,
   fetchLatestDeliverable,
   fetchLatestList,
+  fetchCategories,
   fetchOverlapAnalysis,
   proxyMessage,
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
-import type { TechDebtRun } from "@/lib/tech_debt/client";
+import type { TechDebtCategories, TechDebtRun } from "@/lib/tech_debt/client";
 import type {
   CapabilityDisposition,
   CapabilityItem,
@@ -144,6 +145,33 @@ export function TechDebtWorkspace({
     useRefreshFailures();
   const { settled: aiSettled } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
+  // #1176: the category dropdown's options, read once. "error" is shown, never
+  // replaced by free text.
+  const [categories, setCategories] = React.useState<
+    TechDebtCategories | "error" | null
+  >(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    try {
+      fetchCategories().then(
+        (c) => {
+          if (!cancelled) setCategories(c);
+        },
+        (err: unknown) => {
+          console.warn(
+            `[TechDebtWorkspace] category list not loaded: ${proxyMessage(err, "no message")}`,
+          );
+          if (!cancelled) setCategories("error");
+        },
+      );
+    } catch (err) {
+      console.warn("[TechDebtWorkspace] category list not loaded", err);
+      setCategories("error");
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   // #550: set once an extraction's outcome is unknown and never cleared; a
@@ -972,7 +1000,14 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
             />
             <DispositionHelp />
+            {categories === "error" ? (
+              // PLACEHOLDER copy (#1176), pending approval on #736.
+              <p className="text-sm text-status-danger-fg" role="alert">
+                Categories could not be loaded.
+              </p>
+            ) : null}
             <EditableCapabilityTable
+              categories={categories === "error" ? null : categories}
               items={list.items}
               onItemUpdate={onItemUpdate}
               onBulkDisposition={readOnly ? undefined : onBulkDisposition}

@@ -190,6 +190,16 @@ export async function bulkSetDisposition(
   );
 }
 
+/** #1176: the category dropdown's options, from the API (never copied). */
+export interface TechDebtCategories {
+  categories: string[];
+  uncategorized_label: string;
+}
+
+export async function fetchCategories(): Promise<TechDebtCategories> {
+  return jsonRequest<TechDebtCategories>("/api/proxy/tech-debt/categories");
+}
+
 /** #804: the savings what-if. Rows not in `dispositions` keep their stored
  *  disposition; `null` proposes Undecided. Writes nothing. */
 export async function previewSavings(
