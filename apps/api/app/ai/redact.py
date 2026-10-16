@@ -648,31 +648,31 @@ def _next_nonblank(lines: list[str], idx: int) -> list[tuple[int, str]]:
 def _block_end(lines: list[str], idx: int) -> int:
     """The last line of the sign-off block that starts at `idx` (`block` scope).
 
-    Walks forward over at most `_SIGNATURE_LOOKAHEAD_LINES` non-blank lines and
-    STOPS at the first of: a sentence; another sign-off (a new block starts
-    there); or a blank line once a line has been taken -- a signature block is
-    contiguous, and "Regards," / blank / name is the one blank it may contain.
-    Every other line is taken, a name or title or contact line or an
-    unrecognised label alike: erring toward removing rather than leaking, as
-    the rest of this rule does. The inline sign-off line counts as taken.
+    THE LOOKAHEAD WINDOW, as ruled (#736 6128447366 item 2: "bound the signature
+    cut for documents to its lookahead window"): every line up to and including
+    the `_SIGNATURE_LOOKAHEAD_LINES`-th non-blank line after the opener, blank
+    lines and sentences inside it included. It stops early only at another
+    sign-off, which starts a block of its own.
+
+    It does NOT stop at a blank line or at a sentence, and both were tried: a
+    blank line between the name and the title, and a title ending in an
+    abbreviation ("... Solutions Inc.", which `_looks_like_prose` calls a
+    sentence), each left the title, org and contact lines in the text (review
+    of 3c82777d). Inside the window this errs toward removing, as the rest of
+    this rule does; past it, a document's text is kept.
     """
     end = idx
-    taken = _split_inline_signoff(lines[idx])
     seen = 0
     for j in range(idx + 1, len(lines)):
         stripped = lines[j].strip()
         if not stripped:
-            if taken:
-                break
             continue
+        if stripped.lower().rstrip(",.!") in _SIGNATURE_OPENERS or _split_inline_signoff(lines[j]):
+            break
         seen += 1
-        if seen > _SIGNATURE_LOOKAHEAD_LINES:
-            break
-        opener = stripped.lower().rstrip(",.!") in _SIGNATURE_OPENERS
-        if _looks_like_prose(stripped) or opener or _split_inline_signoff(lines[j]):
-            break
         end = j
-        taken = True
+        if seen == _SIGNATURE_LOOKAHEAD_LINES:
+            break
     return end
 
 
@@ -683,9 +683,11 @@ def _redact_signature_blocks(text: str, scope: SignatureScope = "to_end") -> tup
     `to_end` is every chat-sized field's rule and is unchanged: there the
     sign-off IS the end. `block` is for a DOCUMENT (#736 6128447366 item 2),
     where one "Sincerely," near the top deleted everything after it: each block
-    is replaced on its own -- the opener (or inline sign-off) line through the
-    last line before the first sentence in its lookahead window -- and the scan
-    continues after it, so a second letter's sign-off is cut too.
+    is replaced on its own -- the opener (or inline sign-off) line through its
+    lookahead window, see `_block_end` -- and the scan continues after it, so a
+    second letter's sign-off is cut too. Text past a window is KEPT; a
+    signature longer than the window keeps its tail, which the other rules
+    (email, phone, address, names) still see.
 
     Returns ``(cleaned, count, removed_chars)``. The third value exists because
     this rule DELETES text: `signature_block: 1` said only "it fired", which is
@@ -1490,7 +1492,9 @@ def redact_for_ai(
 
     `signature_scope` is "to_end" (the default: a sign-off ends a chat-sized
     field, so everything from it is cut) or "block" (a DOCUMENT: each sign-off
-    block is cut on its own and the text after it kept, #1108). An unknown value
+    block is cut on its own, from the sign-off through its five-line lookahead
+    window, and the text after the window kept, #1108). `counts` says how many
+    blocks were cut (`signature_block`), not how much went. An unknown value
     raises ValueError, in every mode.
     """
     if signature_scope not in ("to_end", "block"):
