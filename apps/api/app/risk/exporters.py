@@ -453,7 +453,7 @@ def render_xlsx(ctx: RiskExportContext) -> bytes:
                     ctx.disclosure.scope_labels.get(service) or scope_label(service),
                     scored,
                     total,
-                    total - scored,
+                    _not_citable(scored, total, pending),
                     _pending_cell(service, pending),
                 ],
             )
@@ -600,6 +600,24 @@ def _pending_review_lines(ctx: RiskExportContext) -> list[str]:
         f"{n} scored ATT&CK techniques are pending review and are not linked: their "
         "status rests on evidence not yet confirmed."
     ]
+
+
+def _not_citable(scored: int, total: int, pending: int | None) -> int:
+    """#1264 item 1: the "Not citable" column is every row that cannot be
+    linked: the unscored ones, and the scored ATT&CK techniques pending review
+    (`link_scope.LinkScope.citable` is the scored codes less those pending).
+    Before, it was `total - scored`, so a pending technique was counted as
+    citable here while the "Pending review" cell beside it said otherwise.
+
+    Reachable only for a register drawn from an ATT&CK assessment approved
+    before R3: under R3 nothing is pending, and the cell is unchanged. A count
+    that was not recorded (None, a register from before #415) adds nothing,
+    and that is exact, not an understatement: the code that withholds pending
+    techniques from the allow-list (`routes/risk.py`, `attack_scope.citable`)
+    is the code that records the count (both landed in #974, f01d2665), so a
+    register with no count withheld nothing and its pending techniques were
+    citable. The "Pending review" cell says "not recorded" beside it."""
+    return total - scored + (pending or 0)
 
 
 def _pending_cell(service: str, pending: int | None) -> int | str:
