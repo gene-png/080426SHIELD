@@ -3,6 +3,8 @@ import * as React from "react";
 
 import type { JSX } from "react";
 
+import { WorkspaceClientProvider } from "./workspaceClient";
+
 /**
  * Aligns the active-client cookie to a workspace's owning tenant before its
  * children render. Admin workspace data is tenant-scoped via
@@ -19,7 +21,16 @@ export function EnsureActiveClient({
   serviceId: string;
   children: React.ReactNode;
 }): JSX.Element {
-  const [ready, setReady] = React.useState(false);
+  // The client resolved FOR a service (#1262). Derived per service rather
+  // than reset on change: when `serviceId` changes, the stored one no longer
+  // matches and the children wait, so an upload can never be filed under the
+  // previous service's client while the next one resolves.
+  const [resolved, setResolved] = React.useState<{
+    serviceId: string;
+    clientId: string;
+  } | null>(null);
+  const clientId =
+    resolved && resolved.serviceId === serviceId ? resolved.clientId : null;
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -43,7 +54,7 @@ export function EnsureActiveClient({
         // The original claim was that the POST "throws into the catch at the
         // bottom and surfaces to the user". `fetch` rejects only on network
         // failure: a 403 or a 500 resolves, so the cookie stayed unset,
-        // `setReady(true)` rendered the children, and every tenant-scoped
+        // the children rendered anyway, and every tenant-scoped
         // call underneath 400'd or 404'd under a misleading per-workspace
         // error. The exemption rested on a check that did not exist, and the
         // sentence is what would have stopped the next reader adding it.
@@ -79,7 +90,7 @@ export function EnsureActiveClient({
             );
           }
         }
-        if (!cancelled) setReady(true);
+        if (!cancelled) setResolved({ serviceId, clientId: svc.client_id });
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -100,12 +111,16 @@ export function EnsureActiveClient({
       </p>
     );
   }
-  if (!ready) {
+  if (clientId === null) {
     return (
       <p className="text-sm text-ink-tertiary" aria-live="polite">
         Opening workspace…
       </p>
     );
   }
-  return <>{children}</>;
+  return (
+    <WorkspaceClientProvider clientId={clientId}>
+      {children}
+    </WorkspaceClientProvider>
+  );
 }

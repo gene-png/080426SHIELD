@@ -35,7 +35,7 @@ vi.mock("./RedactionDisclosure", () => ({ RedactionDisclosure: () => null }));
 
 const KEPT =
   "This value was not saved. It is still in the form, so you can save it again.";
-const RETYPE = "This value was not saved. Enter it again to save it.";
+const RETYPE = "This value was not saved. Set it again to save it.";
 
 function serverState(): IntakeStateResponse {
   return {

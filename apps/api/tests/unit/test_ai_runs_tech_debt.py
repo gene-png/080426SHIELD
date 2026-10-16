@@ -235,6 +235,9 @@ NOT_LOCKED_BY_EXTRACTION = {
     ("POST", "/tech-debt/capability-items/{item_id}/components"),
     ("PATCH", "/tech-debt/capability-items/{item_id}"),
     ("POST", "/tech-debt/capability-lists/{list_id}/items/disposition"),
+    # #1174: the bulk security confirm edits existing rows, as the single one
+    # above does; an extraction never touches those rows.
+    ("POST", "/tech-debt/capability-lists/{list_id}/items/security-classification/confirm"),
     # #804: a what-if; writes nothing, so there is nothing for a run to race.
     ("POST", "/tech-debt/capability-lists/{list_id}/savings-preview"),
     ("POST", "/tech-debt/capability-lists/{list_id}/approve"),
