@@ -34,6 +34,10 @@ const SERVER_NOT_SAVED =
  *  judge the value (a 401, 403, 429...), so the typed value is kept. */
 const NOT_SAVED_KEPT =
   "This value was not saved. It is still in the form, so you can save it again.";
+/** S-1115-2, a PLACEHOLDER until approved: the same answer, for a field the
+ *  caller does NOT keep, where "still in the form" would be false (review of
+ *  8b4f28a1: Step 3 re-reads its fields from the server when it reopens). */
+const NOT_SAVED_RETYPE = "This value was not saved. Enter it again to save it.";
 
 /** The fields a patch writes, keyed so a client field and a top-level
  *  profile field of the same name cannot collide. */
@@ -70,8 +74,9 @@ function hasApiEnvelope(err: unknown): boolean {
   return typeof inner === "object" && inner !== null;
 }
 
-/** The sentence when the error carries no usable server message. */
-function fallbackFor(err: unknown): string {
+/** The sentence when the error carries no usable server message. `kept`
+ *  says whether the caller holds the typed value for this save. */
+function fallbackFor(err: unknown, kept: boolean): string {
   const status = statusOf(err);
   if (status === null) return "Network error.";
   if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
@@ -80,7 +85,7 @@ function fallbackFor(err: unknown): string {
       ? SERVER_NOT_SAVED
       : UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
   }
-  return NOT_SAVED_KEPT;
+  return kept ? NOT_SAVED_KEPT : NOT_SAVED_RETYPE;
 }
 
 /** Wraps `patchIntake` with save-status state + lightweight error handling.
@@ -93,10 +98,16 @@ function fallbackFor(err: unknown): string {
  * 400, 409 or 422, #1115), so a caller holding the typed value can let it go:
  * the server does not hold it and never will (review of #757, finding 2).
  * Any other answer keeps it.
+ *
+ * `keeps(patch)` says whether the caller holds every value in `patch` on
+ * screen after a failed save, which decides whether the client may be told it
+ * is "still in the form". Its default, true, suits a caller with no fields of
+ * its own (the hook's tests); the wizard passes its real answer.
  */
 export function useIntakeAutoSave(
   onUpdate?: (next: IntakeStateResponse) => void,
   onRefused?: (patch: IntakePatchRequest) => void,
+  keeps: (patch: IntakePatchRequest) => boolean = () => true,
 ): AutoSaveHandle {
   const [saveState, setSaveState] = React.useState<SaveState>({ kind: "idle" });
   const [savesInFlight, setSavesInFlight] = React.useState(0);
@@ -142,7 +153,7 @@ export function useIntakeAutoSave(
         // IN-1 (#1049): "Network error." only when no answer came back. An
         // answer with no usable server message gets copy for its class, by
         // the table #1115 approved (6207611148): see `fallbackFor`.
-        const message = clientFacingError(err, fallbackFor(err));
+        const message = clientFacingError(err, fallbackFor(err, keeps(patch)));
         for (const f of own()) {
           // Re-inserted, so the newest error is the one shown.
           errors.current.delete(f);
@@ -156,7 +167,7 @@ export function useIntakeAutoSave(
         publish();
       }
     },
-    [onUpdate, onRefused, publish],
+    [onUpdate, onRefused, keeps, publish],
   );
 
   return { saveState, savesInFlight, save, setSaveState };
