@@ -1,5 +1,8 @@
 "use client";
 
+// One rule for an unreadable 2xx across the intake client (#1213).
+import { unreadableWrite } from "./client";
+
 export interface ArtifactSummary {
   id: string;
   title: string;
@@ -37,18 +40,23 @@ export async function uploadArtifact(
     method: "POST",
     body: form,
   });
+  const payload = await safeJson(res);
   if (!res.ok) {
-    throw new ArtifactUploadError(res.status, await safeJson(res));
+    throw new ArtifactUploadError(res.status, payload);
   }
-  return (await res.json()) as ArtifactSummary;
+  if (typeof payload === "string") {
+    throw new ArtifactUploadError(res.status, unreadableWrite(res.status));
+  }
+  return payload as ArtifactSummary;
 }
 
 export async function listArtifacts(): Promise<ArtifactListResponse> {
   const res = await fetch("/api/proxy/artifacts", { cache: "no-store" });
-  if (!res.ok) {
-    throw new ArtifactUploadError(res.status, await safeJson(res));
+  const payload = await safeJson(res);
+  if (!res.ok || typeof payload === "string") {
+    throw new ArtifactUploadError(res.status, payload);
   }
-  return (await res.json()) as ArtifactListResponse;
+  return payload as ArtifactListResponse;
 }
 
 async function safeJson(res: Response): Promise<unknown> {
