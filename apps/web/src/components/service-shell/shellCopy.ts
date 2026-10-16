@@ -1,11 +1,9 @@
 /**
- * T6 (navigation frame) shell copy, in ONE module so the advisor's verbatim
- * approval lands as a single commit.
+ * T6 (navigation frame) shell copy, in ONE module.
  *
- * PLACEHOLDERS: none of these strings is approved yet. They are the drafts
- * posted for the advisor on #736 (issuecomment-6204457912, shell copy items
- * 1-11). Items 12 and 13 below were added while building and go to the advisor
- * the same way.
+ * APPROVED verbatim on #736 (issuecomment-6206422365 item 4): items 1-11 as
+ * posted in issuecomment-6204457912, items 12-13 as posted in
+ * issuecomment-6205501155. A wording change here goes back for approval.
  */
 import type { ServiceType } from "@/lib/intake/types";
 
