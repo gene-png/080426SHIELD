@@ -5,7 +5,7 @@ Read by the Playbook files (`csf/playbook_export.py`, from CSF PR (a),
 #1203) and by the Risk Register's CSF finding label
 (`routes/risk.py::_gather_findings`, from CSF PR (b), #1242). Both PRs add
 this file identically, so whichever lands second merges it without a
-conflict, and until both land only one of those readers exists.
+conflict.
 
 Not the only copy: the bands are also hand-typed in `playbook_export.py`'s
 cover and METHODOLOGY text and, on the web, in `lib/csf/optionsCopy.ts` and

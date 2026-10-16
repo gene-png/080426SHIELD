@@ -25,8 +25,17 @@ pytestmark = pytest.mark.unit
 
 
 def _draft_row(w) -> str:
-    """A new DRAFT version of the service, and one of its rows to edit."""
-    r = w.c.post(f"/attack/services/{w.svc_id}/assessments", headers=w.h)
+    """A new DRAFT version of the service, and one of its rows to edit.
+
+    #1123 item 1: a plain create over released work is refused, so the draft
+    is opened as a revision of the released version."""
+    latest = w.c.get(f"/attack/services/{w.svc_id}/assessments/latest", headers=w.h)
+    assert latest.status_code == 200, latest.text
+    r = w.c.post(
+        f"/attack/services/{w.svc_id}/assessments/{latest.json()['id']}/revisions",
+        headers=w.h,
+        json={"reason": "re-assessment"},
+    )
     assert r.status_code == 201, r.text
     return next(c["id"] for c in r.json()["coverage"] if c["technique_code"] == w.b)
 

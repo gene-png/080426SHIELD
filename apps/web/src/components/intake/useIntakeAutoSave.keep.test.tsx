@@ -5,7 +5,8 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
 
 /**
  * #1115, the table approved on #736 (6207611148 items 6-8): the typed value
- * is let go (`onRefused`) only when the answer JUDGED it, a 400, 409 or 422.
+ * is let go (`onRefused`) only when the answer JUDGED it: a 422 (#1207 item 1,
+ * option (A), 6216024281; it was a 400, 409 or 422).
  * A 401, 403 or 429, typed or not, said nothing about the value, so it is
  * kept, as is every 5xx and a network error. Driven through the real
  * `patchIntake` with `fetch` stubbed.
@@ -47,7 +48,7 @@ describe("useIntakeAutoSave: which answers let the typed value go (#1115)", () =
     vi.unstubAllGlobals();
   });
 
-  it.each([400, 409, 422])(
+  it.each([422])(
     "lets it go on a %i, which judged the value",
     async (status) => {
       respondRaw(status, null);
@@ -58,7 +59,7 @@ describe("useIntakeAutoSave: which answers let the typed value go (#1115)", () =
     },
   );
 
-  it.each([401, 403, 429, 404])(
+  it.each([400, 409, 401, 403, 429, 404])(
     "keeps it on an untyped %i, which did not judge the value",
     async (status) => {
       respondRaw(status, null);

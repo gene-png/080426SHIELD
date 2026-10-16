@@ -1038,7 +1038,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
             {categories === "error" ? (
-              // PLACEHOLDER copy (#1176), pending approval on #736. An alert:
+              // #1176 copy, approved on #736 (6216024281). An alert:
               // the category column cannot be edited until a reload.
               <p className="text-sm text-status-danger-fg" role="alert">
                 Categories could not be loaded.

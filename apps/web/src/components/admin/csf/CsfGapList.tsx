@@ -10,6 +10,7 @@ import {
   StatusPill,
 } from "@shield/design-system";
 
+import { priorityWorking, ratingGap } from "@/lib/csf/ratingCopy";
 import type { GapAnalysis } from "@/lib/csf/types";
 
 import type { JSX } from "react";
@@ -119,11 +120,13 @@ export function CsfGapList({
                     <StatusPill tone={severityTone(g.gap_size)}>
                       gap {g.gap_size}
                     </StatusPill>
+                    {/* W5 and W6 (#736 6205956728): tiers by name, and the
+                        priority with its working. */}
                     <span className="text-xs text-ink-tertiary">
-                      T{g.current_tier} → T{g.target_tier}
+                      {ratingGap(g.current_tier, g.target_tier)}
                     </span>
                     <span className="text-xs text-ink-tertiary">
-                      priority {g.priority_score.toFixed(2)}
+                      {priorityWorking(g.gap_size, g.weight, g.function_name)}
                     </span>
                   </div>
                 </div>
