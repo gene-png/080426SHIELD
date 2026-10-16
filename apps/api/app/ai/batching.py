@@ -132,8 +132,9 @@ def run_batches(
         # #1219: mark the run BEFORE the stop check. Marked after it, a worker
         # could pass the check, the collector could end the run (deadline,
         # failure) and record "not charged" from an unset mark, and the worker
-        # would then call. Marked here, a batch turned away below costs only a
-        # conservative "not known".
+        # could still reach the provider if it entered `invoke` before the run
+        # released its redaction place. Marked here, a batch turned away below
+        # costs only a conservative "not known".
         note_invoke_entered()
         if stop.is_set():
             raise _NotSent()
