@@ -36,11 +36,12 @@ describe("ClientNavPicker", () => {
   it("navigates to the chosen client's frame and never touches the cookie", async () => {
     serve(200, LIST);
     render(<ClientNavPicker currentId="c-1" />);
-    const select = await screen.findByRole("combobox", {
-      name: "Client for this page",
-    });
-    await waitFor(() => expect(select).toHaveValue("c-1"));
-    fireEvent.change(select, { target: { value: "c-2" } });
+    // Re-queried, not held: the picker remounts (a new `key`) once the list
+    // arrives, so a select found while loading is a detached element.
+    const picker = () =>
+      screen.getByRole("combobox", { name: "Client for this page" });
+    await waitFor(() => expect(picker()).toHaveValue("c-1"));
+    fireEvent.change(picker(), { target: { value: "c-2" } });
     fireEvent.click(screen.getByRole("button", { name: "Show this client" }));
     expect(push).toHaveBeenCalledWith("/admin/clients/c-2");
     expect(urls).toEqual(["/api/proxy/admin/clients"]);
@@ -52,13 +53,12 @@ describe("ClientNavPicker", () => {
   it("starts at the placeholder when no client is chosen", async () => {
     serve(200, LIST);
     render(<ClientNavPicker currentId={null} />);
-    const select = await screen.findByRole("combobox", {
-      name: "Client for this page",
-    });
     await waitFor(() =>
       expect(screen.getByRole("option", { name: "Alpha Corp" })).toBeTruthy(),
     );
-    expect(select).toHaveValue("");
+    expect(
+      screen.getByRole("combobox", { name: "Client for this page" }),
+    ).toHaveValue("");
   });
 
   it("says so when the list cannot be loaded", async () => {
