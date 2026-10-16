@@ -22,7 +22,16 @@ export function EnsureActiveClient({
   children: React.ReactNode;
 }): JSX.Element {
   // The client this workspace resolved; null until it has (#1129).
-  const [clientId, setClientId] = React.useState<string | null>(null);
+  // The client resolved FOR a service (#1262). Derived per service rather
+  // than reset on change: when `serviceId` changes, the stored one no longer
+  // matches and the children wait, so an upload can never be filed under the
+  // previous service's client while the next one resolves.
+  const [resolved, setResolved] = React.useState<{
+    serviceId: string;
+    clientId: string;
+  } | null>(null);
+  const clientId =
+    resolved && resolved.serviceId === serviceId ? resolved.clientId : null;
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -82,7 +91,7 @@ export function EnsureActiveClient({
             );
           }
         }
-        if (!cancelled) setClientId(svc.client_id);
+        if (!cancelled) setResolved({ serviceId, clientId: svc.client_id });
       } catch (err) {
         if (!cancelled) {
           setError(
