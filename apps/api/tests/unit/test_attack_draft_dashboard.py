@@ -227,10 +227,9 @@ def test_a_stored_result_this_build_cannot_read_is_a_typed_refusal(
     r = _draft(c, h, svc_id)
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "attack_draft_unreadable"
-    # D-4, approved verbatim (#736 6216024281).
+    # D-4, option (a) verbatim (#736 6216730972 item 2).
     assert r.json()["error"]["message"] == (
-        "The last AI run was stored in an older format, so its draft cannot be shown. "
-        "Run the AI again to see a draft."
+        "The last AI run was stored in an older format, so its draft cannot be shown."
     )
 
 
@@ -301,8 +300,15 @@ def test_reading_the_draft_writes_nothing(app_client) -> None:  # noqa: F811
     a = rows[0]["technique_code"]
     _answer_only(provider, {a: "gap"})
     _run(c, h, svc_id)
-    c.patch(f"/attack/coverage/{rows[0]['id']}", headers=h, json={"rationale": "Edited after."})
+    edit = c.patch(
+        f"/attack/coverage/{rows[0]['id']}", headers=h, json={"rationale": "Edited after."}
+    )
+    assert edit.status_code == 200, edit.text
     before = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
+    # The edit is what lets this fail: a draft that wrote the run's rows back
+    # would turn "Edited after." into "From the run.".
+    (now,) = [t for t in before["coverage"] if t["technique_code"] == a]
+    assert now["rationale"] == "Edited after.", "setup: the edit must have landed"
     assert _draft(c, h, svc_id).status_code == 200
     after = c.get(f"/attack/services/{svc_id}/assessments/latest", headers=h).json()
     assert after["coverage"] == before["coverage"]
@@ -316,25 +322,30 @@ def test_a_draft_from_a_partial_run_carries_the_runs_own_disclosures(
     omitted and re-asked counts, as the run reported them."""
     c, provider, h, svc_id, rows = _setup(app_client)
     lost, answered = rows[0]["technique_code"], rows[1]["technique_code"]
+    # The first code asked a SECOND time (so in a re-ask) is answered then, so
+    # the re-ask recovers one technique and the re-asked and omitted counts
+    # differ: a route that swapped the two would fail.
+    seen: set[str] = set()
+    recovered: list[str] = []
+
+    def _entry(code: str) -> dict:
+        return {
+            "technique_code": code,
+            "status": "gap",
+            "detection_tools": [],
+            "prevention_tools": [],
+            "response_tools": [],
+            "rationale": "From the run.",
+        }
 
     def _answer(payload: dict) -> LLMResponse:
         asked = payload.get("technique_codes") or []
         if lost in asked:
             raise RuntimeError("provider closed the connection")
-        entries = (
-            [
-                {
-                    "technique_code": answered,
-                    "status": "gap",
-                    "detection_tools": [],
-                    "prevention_tools": [],
-                    "response_tools": [],
-                    "rationale": "From the run.",
-                }
-            ]
-            if answered in asked
-            else []
-        )
+        if not recovered:
+            recovered.extend([code for code in asked if code in seen][:1])
+        seen.update(asked)
+        entries = [_entry(code) for code in asked if code == answered or code in recovered]
         return LLMResponse(json.dumps({"techniques": entries}))
 
     provider.register("mitre_map", _answer)
@@ -343,6 +354,8 @@ def test_a_draft_from_a_partial_run_carries_the_runs_own_disclosures(
     assert reported["batches_failed"] >= 1, "setup: a batch failed"
     assert reported["omitted_count"] > 0, "setup: a successful batch left techniques out"
     assert reported["reasked_count"] > 0, "setup: the run asked again"
+    assert recovered, "setup: the re-ask recovered a technique"
+    assert reported["reasked_count"] > reported["omitted_count"], "setup: the counts must differ"
 
     body = _draft(c, h, svc_id).json()
     assert (body["batches_failed"], body["omitted_count"], body["reasked_count"]) == (

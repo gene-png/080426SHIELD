@@ -741,9 +741,10 @@ def latest_assessment(
 
 #: #1178, D-1 and D-4, approved verbatim (advisor, #736 6216024281, 3b).
 _NO_DRAFT_MESSAGE = "No completed AI run yet, so there is no draft to show."
+#: D-4 is option (a), with no remedy sentence (advisor, #736 6216730972 item 2):
+#: Run AI refuses an approved assessment, which is where the draft is read.
 _UNREADABLE_DRAFT_MESSAGE = (
-    "The last AI run was stored in an older format, so its draft cannot be shown. "
-    "Run the AI again to see a draft."
+    "The last AI run was stored in an older format, so its draft cannot be shown."
 )
 
 
