@@ -112,9 +112,13 @@ echo "$P base     $BASE = $BASE_SHA"
 echo "$P unit     $UNIT"
 
 # A path docker.exe can mount: Git Bash's mktemp gives an MSYS path it cannot.
+# ONE spelling, the mixed form (C:/...), for every tool: with MSYS_NO_PATHCONV
+# set, an MSYS /tmp path handed to git.exe or python.exe names a DIFFERENT
+# directory (C:\tmp), and the clone landed somewhere the next line never looked.
 T="$(mktemp -d)"
+if command -v cygpath > /dev/null 2>&1; then T="$(cygpath -m "$T")"; fi
+TM="$T"
 trap 'rm -rf "$T"' EXIT
-if command -v cygpath > /dev/null 2>&1; then TM="$(cygpath -m "$T")"; else TM="$T"; fi
 mkdir -p "$T/in" "$T/bin"
 cp "$TITLE" "$T/in/title"
 cp "$BODY" "$T/in/body"
