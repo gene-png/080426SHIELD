@@ -29,8 +29,8 @@ export class ArtifactUploadError extends Error {
 /**
  * `clientId`, when given, files the upload under that tenant explicitly
  * (#1262): an admin workspace passes its own client, so a document is not
- * stored under whichever client the shared cookie names. The client wizard
- * passes none.
+ * stored under whichever client the shared cookie names, and the intake
+ * wizard passes the client it loaded (the `/intake` residual).
  */
 export async function uploadArtifact(
   file: File,

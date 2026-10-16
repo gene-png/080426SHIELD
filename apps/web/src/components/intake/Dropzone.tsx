@@ -40,7 +40,8 @@ export function Dropzone({
 }: DropzoneProps): JSX.Element {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   // #1262: inside an admin workspace, file uploads under ITS client, never
-  // the shared cookie; null in the client wizard, which names none.
+  // the shared cookie; null elsewhere, where the `clientId` prop (the client
+  // the intake wizard loaded) is used.
   const workspaceClientId = useWorkspaceClientId();
   const [dragging, setDragging] = React.useState(false);
   const [items, setItems] = React.useState<UploadingItem[]>([]);
