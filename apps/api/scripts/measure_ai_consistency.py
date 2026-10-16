@@ -1134,10 +1134,11 @@ ZT_DOWNSTREAM_TARGET_BASIS = (
 
 def zt_no_result_count(inputs: Mapping[str, Any], data: Mapping[str, Any]) -> int:
     """Capabilities the run asked about that no entry named (#806, C3). Under
-    the approved prompt a blank or placeholder note, and a DoD capability that
-    is Not Assessed, get no result by design, so this is a count to read, not a
-    fault. Locks are not modelled: this is what the model answered, not what a
-    run would write."""
+    the approved prompt a placeholder note ("N/A", "TBD"), and a DoD capability
+    that is Not Assessed, get no result by design, so this is a count to read,
+    not a fault. A capability with blank notes is never asked about (#1084), so
+    it is not in `capabilities` and never counted here. Locks are not modelled:
+    this is what the model answered, not what a run would write."""
     asked = {c for c in inputs.get("capabilities") or [] if isinstance(c, str)}
     named = {
         row["code"]
