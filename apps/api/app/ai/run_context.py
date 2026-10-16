@@ -22,12 +22,13 @@ ai_run_id_var: ContextVar[uuid.UUID | None] = ContextVar("ai_run_id", default=No
 class InvokeMark:
     """Whether a Run-AI's job has entered `LLMClient.invoke` (#1219).
 
-    Every provider call goes through `invoke`, so a job that never entered it
-    sent nothing. One object per run, set by the run framework; the batch pools
-    run in COPIES of the job's context, which share this same object, so a
-    batch that calls sets the run's mark. A thread started WITHOUT copying the
-    context would lose it -- and `ai_run_id_var` with it, which is why every
-    pool here copies.
+    Every provider call a Run-AI job makes goes through `invoke`, so a job
+    that never entered it sent nothing. (The key check in `keystore.py` calls
+    its provider directly, outside any run.) One object per run, set by the run
+    framework; the batch pools run in COPIES of the job's context, which share
+    this same object, so a batch that calls sets the run's mark. A thread
+    started WITHOUT copying the context would lose it -- and `ai_run_id_var`
+    with it, which is why every pool here copies.
     """
 
     def __init__(self) -> None:
