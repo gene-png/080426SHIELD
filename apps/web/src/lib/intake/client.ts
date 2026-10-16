@@ -44,9 +44,10 @@ export async function patchIntake(
   if (!res.ok) {
     throw new ProxyError(res.status, payload);
   }
-  // #1093 item 2: a 2xx whose body is not JSON still LANDED. Thrown with its
-  // status, so the caller can tell it from no answer at all; a bare parse
-  // error carried none and read as "Network error.".
+  // #1093 item 2: a 2xx whose body is not JSON. Thrown with its status, so
+  // the caller can tell it from no answer at all; a bare parse error carried
+  // none and read as "Network error.". The proxy never sends one, so the hook
+  // calls its outcome unknown.
   if (typeof payload === "string") {
     throw new ProxyError(res.status, payload);
   }

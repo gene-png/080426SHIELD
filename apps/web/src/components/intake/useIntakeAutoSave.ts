@@ -54,13 +54,6 @@ function statusOf(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-/** A 2xx carried on an error: the save landed and only its answer could not
- *  be read (#1093 item 2). */
-function isLandedAnswer(err: unknown): boolean {
-  const status = statusOf(err);
-  return status !== null && status >= 200 && status < 300;
-}
-
 /** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
  *  409 (the intake will never take it) or a 422. Only these let the typed
  *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
@@ -86,6 +79,12 @@ function hasApiEnvelope(err: unknown): boolean {
 function fallbackFor(err: unknown, kept: boolean): string {
   const status = statusOf(err);
   if (status === null) return "Network error.";
+  // #1093 item 2, review of e85890b3: a 2xx we could not read. Our proxy
+  // answers every 2xx with JSON, and an unreadable api 2xx already arrives as
+  // the typed 504, so this came from something in front of the app and the
+  // PATCH may never have arrived. Unknown, never "Saved" and never "Network
+  // error.".
+  if (status >= 200 && status < 300) return UPSTREAM_OUTCOME_UNKNOWN_MESSAGE;
   if (isValueRefusal(err)) return REFUSED_NOT_SAVED;
   if (status >= 500 && status < 600) {
     return hasApiEnvelope(err)
@@ -156,17 +155,6 @@ export function useIntakeAutoSave(
         next = await patchIntake(patch);
         for (const f of own()) errors.current.delete(f);
       } catch (err) {
-        if (isLandedAnswer(err)) {
-          // #1093 item 2: the write happened; only its answer was unreadable.
-          // A success for the header, with no state to hand `onUpdate`. The
-          // typed overlay stays, and the next GET /intake (any reload of the
-          // wizard) is what brings the server's copy back in line with it.
-          for (const f of own()) errors.current.delete(f);
-          console.warn(
-            `[intake] save landed; its answer could not be read (status ${statusOf(err)})`,
-          );
-          return null;
-        }
         // IN-1 (#1049): "Network error." only when no answer came back. An
         // answer with no usable server message gets copy for its class, by
         // the table #1115 approved (6207611148): see `fallbackFor`.
@@ -185,7 +173,10 @@ export function useIntakeAutoSave(
       }
       // OUTSIDE the try (#1093 item 2): a throw here is the caller's bug, not
       // a failed save, so it is logged and re-thrown as itself rather than
-      // reported to the client as "Network error.".
+      // reported to the client as "Network error.". The wizard calls
+      // `void autoSave.save(...)`, so the re-throw surfaces as an unhandled
+      // rejection in the console: loud, on purpose. Its `onUpdate` is a
+      // `setState`, which does not throw today.
       try {
         onUpdate?.(next);
       } catch (err) {
