@@ -70,6 +70,29 @@ def test_a_transaction_that_wrote_is_refused_and_left_as_it_was(
     assert name == "Acme"
 
 
+def test_a_mark_ends_with_its_transaction_and_a_later_read_on_the_same_session_is_clean(
+    app_client,  # noqa: F811
+) -> None:
+    """A long-lived session (a measure script runs several extractions on one)
+    that once wrote, or once took FOR UPDATE, must not carry that mark into
+    its next transaction: the marks clear when the outermost one ends."""
+    from app.ai.session_marks import holds_for_update
+
+    TestSession, _provider, _llm, _uid, cid, Client = _invoke_world(app_client)
+    with TestSession() as db:
+        client = db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        client.legal_name = "Committed"
+        db.commit()
+        db.execute(select(Client).where(Client.id == cid).with_for_update()).scalar_one()
+        assert holds_for_update(db), "setup: the lock is marked"
+        db.rollback()
+        db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        assert db.in_transaction(), "setup: a new read is open"
+        assert not holds_for_update(db)
+        end_read_transaction(db, where="test")
+        assert not db.in_transaction()
+
+
 def test_a_provider_call_inside_a_for_update_lock_is_refused_before_anything(
     app_client,  # noqa: F811
 ) -> None:

@@ -840,10 +840,12 @@ class LLMClient:
         # transaction (and so no connection), the row is committed from a short
         # session of its own instead: durable before egress, and nothing held
         # during the call. When the caller is already in a transaction, its
-        # connection is held across the call either way (#1025 holder 2, held
-        # for the advisor), so the row joins that transaction as before: a
-        # second connection beside it would double this call's peak, and could
-        # deadlock the pool under load or block on the caller's pending write.
+        # connection is held across the call either way (#1025 holder 2: every
+        # AI caller now ends its read transaction first, `session_marks.
+        # end_read_transaction`, so this is a caller that did not), so the row
+        # joins that transaction as before: a second connection beside it would
+        # double this call's peak, and could deadlock the pool under load or
+        # block on the caller's pending write.
         # The caller's transaction is never ended or committed here.
         own_ledger = not db.in_transaction()
         if own_ledger:

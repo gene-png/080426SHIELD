@@ -722,9 +722,10 @@ def _attempt_call_id(db: Session, *, service_id: uuid.UUID, user_id: uuid.UUID) 
     """The id of the `llm_calls` row this attempt wrote, or None.
 
     QUERIED by purpose, service, requester and the request's correlation id.
-    The query sees this attempt's row (`invoke` adds and flushes it before the
-    provider is called, and marks it FAILED on an error) and also any earlier
-    COMMITTED row under the same id: a parse makes at most one attempt, but a
+    The query sees this attempt's row (`invoke` writes it before the provider
+    is called -- committed from its own session, since this route ends its
+    read transaction first (#1025) -- and marks it FAILED on an error) and
+    also any earlier COMMITTED row under the same id: a parse makes at most one attempt, but a
     client may send an `X-Request-ID` again. More than one match is therefore
     possible, and is reported as unknown rather than guessed. Not read from the
     session's identity map, which holds a clean row only weakly; on a failure it
