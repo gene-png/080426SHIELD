@@ -13,6 +13,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 ## Current state
 
+**2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-14: #935 and #929, PR #1044.** The Tech Debt workspace counts source items, not bundle parts, a part's cost cell names the bundle that carries it ("Included in {bundle}"), and a part's pre-#927 stored cost no longer counts as a saving. Status: the 2026-10-14 #935 and #929 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-14: IN-2 (#1054), PR #1067.** The admin org page lists the client's own uploads, consultant uploads and generated reports in separate sections, and "Supporting documents uploaded" counts only files a client-role user uploaded. Status: the 2026-10-14 IN-2 entry in `DELIVERY_PLAN.md`'s MVP completion path.
