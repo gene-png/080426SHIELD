@@ -29,7 +29,10 @@ pytestmark = pytest.mark.unit
 
 #: A tenant user, named in notes by display name and by email local part.
 NAME = "Dana Whitfield"
-LOCAL = "dwhitfield"
+# The local part has a separator: a bare lowercase word (`dwhitfield`) is not
+# a hint by design (`_looks_like_an_account_name`, B13), a documented residual
+# that is not this fix's subject.
+LOCAL = "d.whitfield"
 NOTE = f"MFA exceptions are approved by {NAME}; escalations go to {LOCAL}."
 
 
@@ -54,7 +57,7 @@ def _world(c):
 
 
 def _no_person_in(text: str) -> None:
-    for part in ("Dana", "Whitfield", LOCAL):
+    for part in ("Dana", "Whitfield", "whitfield"):
         assert part not in text, text
 
 
