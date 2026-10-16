@@ -188,7 +188,7 @@ def _profile(engine, assessment_id) -> dict[tuple[str, str], tuple]:
 
     with Session(engine) as db:
         # `has_evidence` is read as a raw column beside the row: since migration
-        # 0074 the model maps `evidence_status` in its place, which this schema
+        # 0075 the model maps `evidence_status` in its place, which this schema
         # does not have.
         rows = db.execute(
             select(CsfDimensionScore, literal_column("has_evidence")).where(

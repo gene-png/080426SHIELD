@@ -89,7 +89,7 @@ CARRIED: dict[str, frozenset[str]] = {
             "answer_source",
             "client_id",
             "evidence_artifact_id",
-            # Migration 0074: `has_evidence` became the three-valued column.
+            # Migration 0075: `has_evidence` became the three-valued column.
             "evidence_status",
             "governance",
             "implementation",

@@ -337,7 +337,7 @@ def test_csf_evidence_is_the_playbook_per_tier(app_client) -> None:  # noqa: F81
         "enterprise_level": 2,
         "target_level": 3,
         "tier_levels": {"high": 2, "moderate": 2},
-        # v5: each tier's evidence value (migration 0074 read `has_evidence`
+        # v5: each tier's evidence value (migration 0075 read `has_evidence`
         # true as `on_file`, false as `neither`).
         "evidence": {"high": "on_file", "moderate": "neither"},
         # Ruling 2: per tier, true only where the cap lowered that tier.
