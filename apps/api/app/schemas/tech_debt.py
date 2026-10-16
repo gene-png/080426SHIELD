@@ -209,6 +209,15 @@ class CapabilityComponentsRequest(BaseModel):
     components: list[CapabilityComponentInput] = Field(min_length=1)
 
 
+class TechDebtCategoriesResponse(BaseModel):
+    """#1176: the category dropdown's options. `categories` is
+    `tech_debt/extract.py` `CATEGORIES`, served so the web never copies it;
+    "Uncategorized" is stored as null and only labelled here."""
+
+    categories: list[str]
+    uncategorized_label: str
+
+
 class CapabilityItemPatch(BaseModel):
     """Partial-update body for inline edits in the admin table.
 
@@ -241,6 +250,12 @@ class CapabilityDispositionBulkSet(BaseModel):
 
     item_ids: list[uuid.UUID] = Field(max_length=5000)
     disposition: CapabilityDisposition | None
+
+
+class SecurityClassificationBulkConfirm(BaseModel):
+    """#1174: sign off many negative security classifications at once."""
+
+    item_ids: list[uuid.UUID] = Field(max_length=5000)
 
 
 class ConsolidationPlanSummary(BaseModel):

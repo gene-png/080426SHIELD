@@ -104,7 +104,9 @@ async function runAi(page: Page): Promise<RunAiBody> {
     started.run_id,
   );
   expect(run.status, `run ${run.id}: ${run.error_message}`).toBe("completed");
-  const serviceId = /\/admin\/services\/([^/]+)\//.exec(page.url())?.[1];
+  // T6: the old workspace URL redirects into the client frame, which names
+  // the service in `?service=`.
+  const serviceId = new URL(page.url()).searchParams.get("service");
   expect(serviceId, "the workspace URL names the service").toBeTruthy();
   const latest = await page.request.get(
     `/api/proxy/attack/services/${serviceId}/assessments/latest`,

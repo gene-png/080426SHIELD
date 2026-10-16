@@ -240,6 +240,15 @@ def compute(framework: ZtFrameworkCode, answers: Mapping[str, int | None]) -> Sc
     )
 
 
+def pillar_weight(pillar_code: str) -> float:
+    """The gap-priority weight of a pillar, as `_row_for` multiplies by it.
+
+    Public so the gap response can state the working beside the priority (Z4):
+    the API sends the weight it used rather than the web reconstructing it.
+    A direct index, so an unknown pillar raises instead of weighing 1.0."""
+    return _PILLAR_WEIGHTS[pillar_code]
+
+
 def _row_for(
     cap: Capability,
     current: int,
@@ -248,7 +257,7 @@ def _row_for(
     pillar_name: str,
 ) -> Gap:
     gap_size = max(0, target - current)
-    weight = _PILLAR_WEIGHTS[cap.pillar_code]
+    weight = pillar_weight(cap.pillar_code)
     priority = round(gap_size * weight, 2)
     return Gap(
         code=cap.code,
@@ -784,5 +793,6 @@ __all__ = [
     "compute",
     "effective_target_stages",
     "engagement_target_capability_count",
+    "pillar_weight",
     "resolve_target_stage",
 ]
