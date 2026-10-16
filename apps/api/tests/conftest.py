@@ -13,6 +13,10 @@ os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("SHIELD_LLM_MODE", "fixture")
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/test")
 
+# Fresh SQLite databases at head are copied from one migrated template per
+# process, not migrated per test (`tests/_migrated_template.py`).
+from tests import _migrated_template  # noqa: E402,F401
+
 
 @pytest.fixture()
 def client():
