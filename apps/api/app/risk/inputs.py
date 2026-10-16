@@ -247,7 +247,9 @@ def publish_blockers(
 
     FIVE CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
-      * every current input is RELEASED (else `not_released`);
+      * every current input is RELEASED (else `not_released`), unless it is
+        a newer record than the one the register drew on, which is `changed`
+        first (#1156: a revision draft opened after generate);
       * every current input is the one the register was generated from, at the
         same version and already released then (else `changed`). A register
         generated from a draft is therefore never publishable, even after the
@@ -315,10 +317,18 @@ def publish_blockers(
         if r is None:
             blockers.append(Blocker(kind, "not_started", None))
             continue
+        was = then.get((kind, r.service_id))
+        # #1156: a newer record than the one this register drew on (a revision
+        # draft, #1120, or any newer version) is a CHANGED input, checked before
+        # `not_released`. Otherwise a register drawn from a released v1 was
+        # refused as "(draft)", naming a record it never read, and releasing
+        # that draft then met `changed` anyway. Regenerating is the remedy.
+        if was is not None and was.get("record_id") != r.record_id:
+            blockers.append(Blocker(kind, "changed", r.status))
+            continue
         if r.status != RELEASED:
             blockers.append(Blocker(kind, "not_released", r.status))
             continue
-        was = then.get((kind, r.service_id))
         if (
             was is None
             or was.get("record_id") != r.record_id

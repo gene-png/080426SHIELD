@@ -730,12 +730,20 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     attack_computed_status_unreviewed = None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
-    for label, present, finalized in (
-        ("the MITRE ATT&CK coverage mapping", has_attack, finalized_attack),
-        ("the CSF assessment", has_csf, finalized_csf),
-        ("the Zero Trust assessment", has_zt, finalized_zt),
+    # #1156: REPORTED from the records Generate READS (`sources`, i.e.
+    # `latest_record`), not from "any approved or released one exists". With a
+    # revision draft open (#1120), the released v1 still exists while Generate
+    # drafts from v2, and the old question listed nothing. The `finalized_*`
+    # booleans above keep feeding `synthesizable_missing`, unchanged: Generate
+    # does not refuse on it (#737), and the web gates only its banner on it.
+    for label, kind, present in (
+        ("the MITRE ATT&CK coverage mapping", "attack", has_attack),
+        ("the CSF assessment", "csf", has_csf),
+        ("the Zero Trust assessment", "zt", has_zt),
     ):
-        if present and not finalized:
+        reads_unfinished = any(src.kind == kind and src.status not in _FINALIZED for src in sources)
+        finalized = {"attack": finalized_attack, "csf": finalized_csf, "zt": finalized_zt}[kind]
+        if present and (reads_unfinished or not finalized):
             not_finalized.append(label)
 
     # The unlock rule restated over FINALIZED inputs. Same shape as `missing`
