@@ -52,8 +52,11 @@ def _spy_payloads(c, TestSession, provider) -> tuple[list[dict], int]:
 
     provider.register("mitre_map", _spy)
     result = attack_run_ai(c, svc_id, h)
-    assert len(sent) > 1, "one batch cannot show that each batch gets only its own slice"
-    return sent, result["batches_total"]
+    first_pass = result["batches_total"]
+    # Counted over the FIRST pass: `len(sent)` now includes the re-ask too.
+    assert first_pass > 1, "one batch cannot show that each batch gets only its own slice"
+    assert len(sent) == first_pass + result["reask_batches_total"], (len(sent), result)
+    return sent, first_pass
 
 
 def test_each_batch_carries_technique_details_for_its_own_codes_only(
