@@ -124,6 +124,47 @@ def test_a_decision_landing_just_before_the_write_is_not_overwritten(
     assert _revision(sessions, list_id) == revision_before
 
 
+def test_a_refused_click_on_an_approved_list_moves_nothing(app_client) -> None:  # noqa: F811
+    """The approved-list case, as it can actually arise. Approve refuses
+    undecided rows, so on an approved list the button is offered only after
+    rows were set back to undecided -- which already made the approval stale.
+    A refused click must not move the revision AGAIN, or the list's state, so
+    re-approving the reviewed rows stays a single step."""
+    from tests.unit.test_tech_debt_routes import _approve_list, _decide
+
+    c, sessions, bearer, svc_id, list_id, item_ids = _world(app_client)
+    _decide(c, bearer, item_ids)
+    _approve_list(c, bearer, svc_id)
+    back = _bulk(c, bearer, list_id, {"item_ids": item_ids[:2], "disposition": None})
+    assert back.status_code == 200, back.text
+    # Another consultant decides one of them after this page loaded.
+    assert (
+        _bulk(c, bearer, list_id, {"item_ids": item_ids[:1], "disposition": "cut"}).status_code
+        == 200
+    )
+    latest_before = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert latest_before["status"] == "approved"  # positive control: the state under test
+    revision_before = _revision(sessions, list_id)
+
+    r = _bulk(
+        c,
+        bearer,
+        list_id,
+        {"item_ids": item_ids[:2], "disposition": "keep", "only_if_undecided": True},
+    )
+    assert r.status_code == 409, r.text
+    assert _revision(sessions, list_id) == revision_before
+    latest_after = c.get(
+        f"/tech-debt/services/{svc_id}/capability-lists/latest",
+        headers={"Authorization": f"Bearer {bearer}"},
+    ).json()
+    assert latest_after["status"] == "approved"
+    assert latest_after["approval_current"] == latest_before["approval_current"]
+
+
 def test_without_the_flag_the_route_still_overwrites_as_before(app_client) -> None:  # noqa: F811
     """The flag is opt-in: #641's select-and-set keeps its meaning."""
     c, _s, bearer, svc_id, list_id, item_ids = _world(app_client)
