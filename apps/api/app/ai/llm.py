@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.catalog_fields import redact_ai_payload
 from app.ai.redact import RedactionMode
-from app.ai.run_context import ai_run_id_var
+from app.ai.run_context import ai_run_id_var, note_invoke_entered
 from app.config import Settings, get_settings
 from app.logging import correlation_id_var, get_logger
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
@@ -783,6 +783,9 @@ class LLMClient:
         name_hints: tuple[str, ...] = (),
     ) -> tuple[LLMResponse, LLMCall]:
         """Redact, write the llm_calls row, call the provider, finalize the row."""
+        # #1219: FIRST, before anything that can fail. A run that reached this
+        # line may have sent something; one that never did, sent nothing.
+        note_invoke_entered()
         mode = redaction_mode or self._settings.shield_redaction_mode  # type: ignore[assignment]
         # #984: registered catalog fields are sent as the catalog has them, and
         # guarded; everything else is redacted as before.

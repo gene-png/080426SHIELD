@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session
 from app.ai.failures import friendly_reason
 from app.ai.isolation import RedactionRefused, release_run
 from app.ai.llm import LLMClient
-from app.ai.run_context import ai_run_id_var
+from app.ai.run_context import InvokeMark, ai_run_id_var, invoke_mark_var
 from app.ai.run_limits import REAP_MARGIN, RUN_DEADLINE
 from app.logging import correlation_id_var, get_logger
 from app.models._common import utcnow
@@ -178,13 +178,17 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
 
 
 def _charged_likely_for(db: Session, ctx: RunContext) -> bool | None:
-    """`_charged_likely`, plus the one case the ledger cannot see: a job that
-    DECLARED it made no provider call (`RunContext.declare_no_call`, #1219)
-    sent nothing, so it is "not charged", False -- never None, which the
-    workspace prints on a failed run as "may have made a live AI call". A
-    committed live row still wins: a declaration never hides a real call."""
+    """`_charged_likely`, plus the cases the ledger cannot see (#1219): a job
+    that DECLARED it made no provider call (`RunContext.declare_no_call`), or
+    one that never entered `LLMClient.invoke` -- the only way to a provider --
+    sent nothing, so it is "not charged", False. Never None, which the
+    workspace prints on a failed run as "may have made a live AI call": a run
+    refused before its first call (an assessment discarded between the 202 and
+    the job) said so beside a message that it never started. A committed live
+    row still wins, and a job that entered `invoke` with no committed row stays
+    None: it may have reached the provider."""
     charged = _charged_likely(db, ctx.run_id, ctx.mode)
-    if charged is None and ctx.declared_no_call:
+    if charged is None and (ctx.declared_no_call or not ctx.invoke.entered):
         return False
     return charged
 
@@ -486,6 +490,9 @@ class RunContext:
     _no_call: _NoCallMark = field(
         default_factory=_NoCallMark, init=False, compare=False, repr=False
     )
+    # Set by `LLMClient.invoke` through `invoke_mark_var`, which `_execute`
+    # points at this object (#1219).
+    invoke: InvokeMark = field(default_factory=InvokeMark, init=False, compare=False, repr=False)
 
     def declare_no_call(self) -> None:
         """The job decided, before any provider call, to make none (#1219):
@@ -542,6 +549,7 @@ def _failure_of(exc: BaseException) -> tuple[str, str]:
 def _execute(bind: Engine | Connection, ctx: RunContext, work: Work) -> None:
     """The background job. Never raises: every outcome is written to the run."""
     ai_run_id_var.set(ctx.run_id)
+    invoke_mark_var.set(ctx.invoke)
     session = Session(bind=bind)
     try:
         outcome = work(session, ctx)
