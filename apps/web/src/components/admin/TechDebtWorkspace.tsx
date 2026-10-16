@@ -18,7 +18,11 @@ import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import { AiRunStatus } from "@/components/admin/AiRunStatus";
 import { splitLines } from "@/lib/text";
-import { sourceItems } from "@/lib/tech_debt/components";
+import {
+  noCostItems,
+  noCostSentence,
+  sourceItems,
+} from "@/lib/tech_debt/components";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   addCapabilityComponents,
@@ -599,6 +603,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
     (acc, i) => acc + (i.annual_cost_usd ?? 0),
     0,
   );
+  // TD-10 (for #1048): the total leaves these out, and says how many.
+  const noCost = noCostSentence(list ? noCostItems(list.items).length : 0);
   const lowConfidence =
     list?.items.filter(
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
@@ -803,7 +809,11 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 : undefined
             }
           />
-          <NumberCard label="Annual cost" value={costFmt} />
+          <NumberCard
+            label="Annual cost"
+            value={costFmt}
+            hint={noCost ?? undefined}
+          />
           <NumberCard label="Categories" value={categoryCount} />
           <NumberCard
             label="To cut"
@@ -843,6 +853,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 <StatusPill tone="neutral">
                   Total cost: ${totalCost.toLocaleString()}
                 </StatusPill>
+                {noCost ? (
+                  <StatusPill tone="warning">{noCost}</StatusPill>
+                ) : null}
                 <DiscardDraftButton
                   status={list.status}
                   destructionSummary={discardSummary}
