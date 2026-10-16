@@ -2060,7 +2060,9 @@ def _apply_suggestions(
             # #1000 (Gene's ruling 2): a LIVE run does not assess a row with no
             # notes. The prompt scores such a row 0, which over a hand-typed
             # score is a wrong number nobody asked for; the row keeps what it
-            # had and is disclosed. A by-design skip, like `locked`.
+            # had and is disclosed. A by-design skip, like `locked`. Since P1
+            # the leave-out sends no blank-notes row, so no current payload
+            # reaches this branch: it is a ratchet against a loosened leave-out.
             dropped.append(
                 CsfDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
             )
@@ -2447,7 +2449,9 @@ def _omitted_keys(
     - A locked row is left alone by design whether answered or not.
     - A row with no notes on a LIVE run (#1000) is not assessed whether
       answered or not, and no re-run can answer it, so it is counted as
-      `no_notes_count` rather than alerted here.
+      `no_notes_count` rather than alerted here. Since P1 no such row is
+      ever sent (the leave-out keeps every blank-notes code back), so this
+      subtraction is a ratchet no current payload reaches.
     - A row EDITED during the run is NOT subtracted: the model still sent
       nothing for it, so "got no answer from the AI" stays true (approved
       on #736, comment 6067815887).
@@ -2555,10 +2559,12 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
     # Option 1 the leave-out keeps a blank-notes code out of what is sent in
     # every mode, so this is the second guard (a stray row naming one is
     # dropped as a stray first). Offline, none: the fixture answers only what
-    # it was sent.
+    # it was sent. Since P1 (every blank-notes code is left out) no current
+    # payload reaches this guard: every sent code has notes. It is a ratchet
+    # against a loosened leave-out, reached in tests by switching it off.
     #
-    # ZT is not touched: its twin (`routes/zt.py`, beside `protected_keys`)
-    # waits on #981's prompt.
+    # ZT's twin is its own leave-out: since #1084 a capability with blank
+    # notes is never sent (`routes/zt.py::_notes_blank`).
     live = provider_serves(llm) == "live"
     covered = _covered_keys(batched.inputs, rows, locked_keys)
     sent_answers = req.preview.inputs["answers"]

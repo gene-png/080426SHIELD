@@ -1,5 +1,9 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T1): CSF Options 1 and 3, PR #1203, for #1073._ The two CSF scoring changes you approved. First, Run AI sends the AI only the subcategories that have interview notes; one with no notes is never sent and is counted as left out, including one a consultant scored (your P1 answer). Second, evidence no longer caps a score: each tier row records "Evidence on file", "Confirmed in discussion" or "Neither", which labels the level. A subcategory nobody scored has no level, target or gap, and is shown as not scored instead of level 1. Assessments approved before this keep their delivered numbers and their cap. Levels are shown by name everywhere, and averages to one decimal, rounded down. It adds migration 0075. It comes back to you: conditions 4, 5 and 6.
+
+_2026-10-16 (track T1): #1006 is done._ Zero Trust (#1235) and CSF (#1261) now hide the names of the client's own users from the AI when they appear in typed notes, as ATT&CK and Tech Debt already did. #1006 is closed.
+
 _2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
 
 _2026-10-16 (track T5): #1093 item 1, emptied intake fields are cleared._ A client who deletes the text of an intake field (Step 2) now clears it. Before, the old value came back on reload, and a blanked website was refused as "not accepted". The second half of #1093 waits on the ruling for #1115, which touches the same file. It comes back to you: condition 5.
@@ -140,7 +144,7 @@ and the what-if chat box already did. A tool an admin names after a colleague
 Two added tools that would both reach the AI as "[NAME] Scanner" are refused
 when the what-if is created. Zero Trust and CSF send typed notes without this
 dictionary too; those files belong to other open PRs, so they are reported to
-you, not changed. It comes back to you: conditions 5 and 6._
+you, not changed (since landed: ZT #1235, CSF #1261). It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character

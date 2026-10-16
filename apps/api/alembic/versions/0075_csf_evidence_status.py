@@ -5,7 +5,7 @@ Revises: 0072
 
 Numbered 0075, not 0074, by the advisor's ruling (#736 6206818759 item 5):
 Tech Debt's #1060 takes 0074. `down_revision` is the single head on main
-today (0072). It is re-derived, and this rebases onto 0074, whichever of
+as of 2026-10-16 (0072). It is re-derived, and this rebases onto 0074, whichever of
 the two lands second.
 
 Gene, #736 6201691989 item 2: the "Evidence on file" box becomes three

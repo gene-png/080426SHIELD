@@ -6644,7 +6644,7 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 
 **What it changes.**
 
-1. **Code decides what is scored.** SHIELD leaves a subcategory with blank notes out of the `csf_score` payload before egress. csf_score prompt v4 says the same as a backstop, and #1000's `no_notes` drop reason stays as a second guard.
+1. **Code decides what is scored.** SHIELD leaves a subcategory with blank notes out of the `csf_score` payload before egress. csf_score prompt v4 says the same as a backstop, and #1000's `no_notes` drop reason stays as a second guard. Since P1 (every blank-notes subcategory is left out) no current payload reaches that guard; it is a ratchet against a loosened leave-out, and its tests reach it by switching the leave-out off.
 2. **A subcategory with no scored in-scope tier has no level** (Q1 (a); the #1073 defect). It has no target and no gap, it is in no average, and it is shown with the client's self-rating as self-reported, not validated. "Scored" is `has_recorded_value_besides_target` on any in-scope tier, the #1031 predicate, so a consultant's typed scores stay scored.
 3. **The evidence cap is removed** (CSF_Flow_Spec section 8 said: no evidence, Implementation at most 1 and level at most 2). The level is computed from the scores alone, and evidence only labels it.
 4. **Evidence has three values,** `on_file` / `confirmed_in_discussion` / `neither` (migration 0075; `true` became `on_file`, `false` became `neither`). A Managed or Optimized level with `neither` is reported as notional.
