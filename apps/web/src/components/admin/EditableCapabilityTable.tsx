@@ -83,6 +83,11 @@ const UNDECIDED = "undecided";
 const cellInputClasses = cn(inputClasses, "w-full min-w-0");
 const cellSelectClasses = cn(selectClasses, "w-full min-w-0");
 
+/** #1175: the category a sort or filter reads; null is "Uncategorized". */
+function categoryOf(item: CapabilityItem): string {
+  return item.category ?? "Uncategorized";
+}
+
 function fmtCurrency(value: number | null): string {
   if (value === null) return "";
   return value.toLocaleString();
@@ -139,6 +144,13 @@ export function EditableCapabilityTable({
 
   // Each bundle is immediately followed by the components named inside it, so
   // the relationship is readable without a tree widget (UX finding 5).
+  //
+  // #1175: sort and filter by category. A sort moves whole groups by the
+  // bundle's category, so a part never leaves its bundle; a filter matches each
+  // row on its own category (a part shown alone still says, in its cost cell,
+  // which bundle it belongs to). "Uncategorized" is a null category.
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc" | null>(null);
+  const [filterCats, setFilterCats] = React.useState<string[]>([]);
   const ordered = React.useMemo(() => {
     const children = new Map<string, CapabilityItem[]>();
     for (const it of items) {
@@ -147,10 +159,32 @@ export function EditableCapabilityTable({
       list.push(it);
       children.set(it.parent_item_id, list);
     }
-    return items
-      .filter((it) => !it.parent_item_id)
-      .flatMap((parent) => [parent, ...(children.get(parent.id) ?? [])]);
-  }, [items]);
+    const parents = items.filter((it) => !it.parent_item_id);
+    if (sortDir !== null) {
+      // A stable sort, so rows sharing a category keep their list order.
+      parents.sort(
+        (a, b) =>
+          categoryOf(a).localeCompare(categoryOf(b)) *
+          (sortDir === "asc" ? 1 : -1),
+      );
+    }
+    const grouped = parents.flatMap((parent) => [
+      parent,
+      ...(children.get(parent.id) ?? []),
+    ]);
+    return filterCats.length === 0
+      ? grouped
+      : grouped.filter((it) => filterCats.includes(categoryOf(it)));
+  }, [items, sortDir, filterCats]);
+  const presentCategories = React.useMemo(
+    () =>
+      Array.from(new Set(items.map(categoryOf))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [items],
+  );
+  // The selection is over the rows SHOWN, so a bulk action never reaches a
+  // row a filter hides (`useRowSelection` derives from the current ids).
   const orderedIds = React.useMemo(() => ordered.map((i) => i.id), [ordered]);
   const selection = useRowSelection(orderedIds);
   const [bulkChoice, setBulkChoice] = React.useState("");
@@ -273,8 +307,37 @@ export function EditableCapabilityTable({
                     col.numeric ? "text-right" : "text-left",
                   )}
                   style={{ width: `${col.rem}rem` }}
+                  aria-sort={
+                    col.label === "Category" && sortDir !== null
+                      ? sortDir === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : undefined
+                  }
                 >
-                  {col.label}
+                  {col.label === "Category" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSortDir((d) =>
+                          d === null ? "asc" : d === "asc" ? "desc" : null,
+                        )
+                      }
+                      aria-label="Sort by category"
+                      className="uppercase tracking-wider hover:text-ink-primary"
+                    >
+                      {col.label}
+                      <span aria-hidden="true">
+                        {sortDir === "asc"
+                          ? " ▲"
+                          : sortDir === "desc"
+                            ? " ▼"
+                            : ""}
+                      </span>
+                    </button>
+                  ) : (
+                    col.label
+                  )}
                 </th>
               ),
             )}
@@ -536,7 +599,52 @@ export function EditableCapabilityTable({
     </div>
   );
 
-  if (!selectable) return table;
+  // #1175 copy, approved on #736 (6206818759 item 7).
+  const filterBar =
+    items.length === 0 ? null : (
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2">
+          <span>Filter by category</span>
+          <select
+            multiple
+            value={filterCats}
+            onChange={(e) =>
+              setFilterCats(
+                Array.from(e.target.selectedOptions, (o) => o.value),
+              )
+            }
+            className={selectClasses}
+            aria-label="Filter by category"
+          >
+            {presentCategories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        {filterCats.length > 0 ? (
+          <>
+            <span role="status">{`Showing ${ordered.length} of ${items.length} rows`}</span>
+            <button
+              type="button"
+              onClick={() => setFilterCats([])}
+              className="text-ink-tertiary underline hover:text-ink-secondary"
+            >
+              Clear filter
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+
+  if (!selectable)
+    return (
+      <div className="flex flex-col gap-2">
+        {filterBar}
+        {table}
+      </div>
+    );
   const count = selection.selected.length;
   return (
     <div className="flex flex-col gap-2">
@@ -587,6 +695,7 @@ export function EditableCapabilityTable({
           </span>
         ) : null}
       </div>
+      {filterBar}
       {table}
     </div>
   );
