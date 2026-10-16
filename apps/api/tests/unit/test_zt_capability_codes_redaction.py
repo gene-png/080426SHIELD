@@ -15,6 +15,7 @@ import pytest
 from app.ai.llm import LLMResponse
 from app.ai.redact import redact_payload
 from tests._ai_runs import zt_run_ai
+from tests._zt_notes import note_rows
 from tests.unit.test_zt_run_ai import app_client  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.unit
@@ -41,6 +42,9 @@ def _service_for(c, kind: str, org: str) -> tuple[dict, str, list[dict]]:
     h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
     svc_id = c.post("/zt/services", headers=h, json={"kind": kind, "title": "ZT"}).json()["id"]
     answers = c.post(f"/zt/services/{svc_id}/assessments", headers=h).json()["answers"]
+    # #1084: a row is sent only with notes. Every row gets one; only the
+    # first names the client.
+    note_rows(c, h, answers[1:])
     notes = f"{org} staff review this capability weekly."
     r = c.patch(f"/zt/answers/{answers[0]['id']}", headers=h, json={"notes": notes})
     assert r.status_code == 200, r.text

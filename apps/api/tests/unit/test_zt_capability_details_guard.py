@@ -27,6 +27,7 @@ from app.ai.redact import redact_payload
 from app.models.client import Client
 from app.models.llm_call import LLMCall
 from tests._ai_runs import run_ai_expecting_failure, zt_run_ai
+from tests._zt_notes import note_rows
 from tests.unit.test_zt_run_ai_v2 import World, world  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.unit
@@ -79,6 +80,8 @@ def test_a_client_named_a_catalog_word_does_not_rewrite_capability_details(
 ) -> None:
     world.service(kind)
     _name_the_client(world, org)
+    # #1084: every row needs a note to be sent; only row 0's names the client.
+    note_rows(world.c, world.h, world.answers)
     world.patch(0, notes=f"{org} staff run this weekly.")
     noted = world.answers[0]["capability_code"]
     seen = world.capture({"capabilities": []})
@@ -123,6 +126,7 @@ def test_a_tampered_capability_details_entry_is_refused_before_any_provider_call
 
     monkeypatch.setattr(zt_routes, "_zt_ai_request_for", _tampered)
     world.service("zero_trust_cisa")
+    note_rows(world.c, world.h, world.answers)  # sent only with notes (#1084)
     seen = world.capture({"capabilities": []})
 
     run = run_ai_expecting_failure(world.c, f"/zt/services/{world.svc_id}/run-ai", world.h)

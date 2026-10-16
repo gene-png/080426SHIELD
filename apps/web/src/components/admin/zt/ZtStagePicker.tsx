@@ -90,10 +90,9 @@ export function ZtStagePicker({
             ].join(" ")}
             title={label}
           >
-            S{stage}
-            <span className="ml-1 hidden font-medium normal-case sm:inline">
-              {label}
-            </span>
+            {/* Z3 (#736 6204461502 section 6, approved at 6205956728): the
+                name alone; `S{n}` is gone. */}
+            {label}
           </button>
         );
       })}
