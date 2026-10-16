@@ -318,6 +318,9 @@ Name it:`,
       "",
     );
     if (name === null || !name.trim()) return;
+    // #1176: still free text, deliberately, pending a scope call on #736. The
+    // API's include route takes any category; the dropdown shows an off-list
+    // one as "(not on the list)". See `_refuse_off_list_category`.
     const category = window.prompt("Category (optional):", "") ?? undefined;
     setSplitError(null);
     // Every list-producing operation bumps `listSeq`, so an earlier read still
@@ -1008,9 +1011,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
             {categories === "error" ? (
-              // PLACEHOLDER copy (#1176), pending approval on #736. A status,
-              // not an alert: the table stays usable but for this one column.
-              <p className="text-sm text-status-danger-fg" role="status">
+              // PLACEHOLDER copy (#1176), pending approval on #736. An alert:
+              // the category column cannot be edited until a reload.
+              <p className="text-sm text-status-danger-fg" role="alert">
                 Categories could not be loaded.
               </p>
             ) : null}
