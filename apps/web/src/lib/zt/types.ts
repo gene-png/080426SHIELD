@@ -159,7 +159,8 @@ export interface ZtRunAiResponse {
    */
   preserved_client_answers?: number;
   /**
-   * #840: capabilities the run asked about, not locked, that no entry named.
+   * #840: capabilities, not locked, that no entry named, including the
+   * blank-notes ones the run never sends (#1084).
    * Not part of the values identity above: a capability with no entry sent no
    * value. Optional, so a run stored before #840 reads as none.
    */

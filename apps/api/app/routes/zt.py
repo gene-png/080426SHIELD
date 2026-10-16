@@ -752,8 +752,9 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # #1084: a capability with blank notes is never sent. A5 tells the model to
-    # return nothing for one, so code decides it, deterministically, and the
-    # run does not pay to score nothing. `rows` keeps every row: the run still
+    # return nothing for one, so code decides it, deterministically, and no
+    # blank row costs input tokens. (A wholly blank assessment still sends an
+    # empty list; that call is not skipped.) `rows` keeps every row: the run still
     # lists a blank one as omitted with `notes_blank` (#840), and drops a stray
     # entry naming one as `no_notes`.
     sent = sorted(code for code, r in rows.items() if not _notes_blank(r.notes))
@@ -1046,19 +1047,21 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
                 ZtDroppedSuggestion(reason="protected", key=key, values=recognized_values)
             )
             continue
-        if raw_code not in sent_codes:
-            # #1084: a blank-notes row was never sent, so an entry naming it
-            # answers a question nobody asked (A7). Kept, never applied, and a
-            # by-design skip like `locked`.
-            dropped.append(
-                ZtDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
-            )
-            continue
         if raw_code in edited:
             # #645: an answer edited after the run started (an edit that checked
             # the lock before the run existed). Kept, never overwritten, and
             # itemized like the other by-design skips.
             dropped.append(ZtDroppedSuggestion(reason="edited", key=key, values=recognized_values))
+            continue
+        if raw_code not in sent_codes:
+            # #1084: a blank-notes row was never sent, so an entry naming it
+            # answers a question nobody asked (A7). Kept, never applied, and a
+            # by-design skip like `locked`. Checked after `edited`: `sent_codes`
+            # is fixed when the job starts, so a row given notes during the run
+            # is named by its edit, not called a row with no notes.
+            dropped.append(
+                ZtDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
+            )
             continue
 
         # Provenance follows the VALUE, not the attempt (issue #38), and is

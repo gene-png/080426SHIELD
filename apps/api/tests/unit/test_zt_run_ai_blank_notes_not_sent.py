@@ -208,3 +208,48 @@ def test_the_preview_shows_the_same_filtered_payload(world) -> None:
 
     assert r.status_code == 200, r.text
     assert r.json()["payload"]["capabilities"] == sorted(sent)
+
+
+@pytest.mark.unit
+def test_a_row_given_notes_during_the_run_is_named_by_its_edit(world, monkeypatch) -> None:
+    """Blank when the job built its request, noted while the model answered,
+    and named by a stray entry: the drop says `edited`, the true cause, never
+    "capability has no notes" about a row that now has some.
+
+    The edit lands in the job's own session right after the provider call
+    returns (SQLite allows one writer), as in `test_zt_run_ai_omitted.py`.
+
+    Red-on-revert: check `no_notes` before `edited`, and this row is
+    dropped as `no_notes`."""
+    import uuid
+
+    from sqlalchemy import update
+
+    import app.routes.zt as zt_routes
+    from app.models._common import utcnow
+
+    _sent, blank = _noted(world)
+    late = sorted(blank)[0]
+    late_id = next(a["id"] for a in world.answers if a["capability_code"] == late)
+    real_run_job = zt_routes.run_job
+    calls: list[int] = []
+
+    def run_job_then_edit(db: Session, *args: Any, **kwargs: Any) -> Any:
+        result = real_run_job(db, *args, **kwargs)
+        db.execute(
+            update(ZtAnswer)
+            .where(ZtAnswer.id == uuid.UUID(late_id))
+            .values(notes="Noted while the model answered", updated_at=utcnow())
+        )
+        calls.append(1)
+        return result
+
+    monkeypatch.setattr(zt_routes, "run_job", run_job_then_edit)
+    world.respond(entries=[{"code": late, "current": 3}])
+
+    result = world.run()
+
+    assert calls == [1], "the edit never ran, so this test proves nothing"
+    drops = [(d["reason"], d["values"]) for d in result["dropped"] if d["key"] == late]
+    assert drops == [("edited", 1)], result["dropped"]
+    assert world.row(late).maturity_stage is None

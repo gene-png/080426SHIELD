@@ -192,7 +192,8 @@ function OmittedItems({
 }
 
 /**
- * #840: the capabilities the run asked about and got no entry for. Copy Z1 to
+ * #840: the capabilities the run got no entry for, including the blank-notes
+ * ones it never sends (#1084). Copy Z1 to
  * Z6, approved verbatim (#840 plan, #736 ruling).
  *
  * Not a drop reason: every number above counts values the model SENT, and a
@@ -332,8 +333,8 @@ export function ZtRunAiAccounting({
   // error path fired, and "applied 0 of 0" reads as calmly as "applied 12 of
   // 12" — the most reassuring possible way to report a wholly-lost response.
   //
-  // #840: a response with no entries leaves every capability it was asked
-  // about without a result, so the omitted block renders here too.
+  // #840: a response with no entries leaves every capability without a
+  // result, so the omitted block renders here too.
   if (result.suggestions_received === 0) {
     return (
       <div className="space-y-2">
