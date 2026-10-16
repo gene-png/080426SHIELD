@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.ai.catalog_fields import redact_ai_payload
 from app.ai.redact import RedactionMode
 from app.ai.run_context import ai_run_id_var
+from app.ai.session_marks import holds_for_update
 from app.config import Settings, get_settings
 from app.logging import correlation_id_var, get_logger
 from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
@@ -824,6 +825,15 @@ class LLMClient:
             # #645: NULL outside a Run-AI (the preview, Risk synthesis).
             ai_run_id=ai_run_id_var.get(),
         )
+        # #1025 holder 2 (advisor, #736 6216024281, 3e): a caller holding a
+        # FOR UPDATE lock would hold it, and its connection, for the whole
+        # provider call. Refused before the ledger row or any egress; callers
+        # end their read transaction first (`session_marks.end_read_transaction`).
+        if holds_for_update(db):
+            raise RuntimeError(
+                f"LLMClient.invoke({purpose!r}): the caller's transaction holds a "
+                "FOR UPDATE lock; end it before the AI call (#1025)"
+            )
         # #1025 holder 3: with the row flushed into the caller's session, a write
         # transaction stayed open -- one pooled connection held -- for the whole
         # provider call, in every batch worker. When the caller holds NO

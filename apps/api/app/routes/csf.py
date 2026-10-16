@@ -48,6 +48,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.assessment_targets import MIN_TARGET_TIER, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.client_naming import org_display_name
@@ -2518,6 +2519,10 @@ def _csf_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID
         _log.info("csf.run_ai.nothing_to_send", assessment_id=str(a.id))
         batched = Batched(answers=[], inputs=[], total=0, failed=0)
     else:
+        # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+        # done, so the read transaction ends here and no connection is held
+        # while the provider answers. Refuses loudly if anything was written.
+        end_read_transaction(db, where="csf.run_ai")
         batched = run_batches(
             db,
             llm,
