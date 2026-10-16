@@ -252,6 +252,12 @@ class CapabilityDispositionBulkSet(BaseModel):
     disposition: CapabilityDisposition | None
 
 
+class SecurityClassificationBulkConfirm(BaseModel):
+    """#1174: sign off many negative security classifications at once."""
+
+    item_ids: list[uuid.UUID] = Field(max_length=5000)
+
+
 class ConsolidationPlanSummary(BaseModel):
     capability_list_id: uuid.UUID
     capability_list_version: int

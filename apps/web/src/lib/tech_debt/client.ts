@@ -281,6 +281,20 @@ export async function confirmSecurityClassification(
   );
 }
 
+/**
+ * #1174: confirm many negative classifications at once, all or nothing. Each
+ * row gets the single confirm's own effect and audit row on the server.
+ */
+export async function bulkConfirmSecurityClassification(
+  listId: string,
+  itemIds: string[],
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/items/security-classification/confirm`,
+    { method: "POST", body: { item_ids: itemIds } },
+  );
+}
+
 /** Overturn a negative: this capability IS security-related. */
 export async function overrideSecurityClassification(
   itemId: string,
