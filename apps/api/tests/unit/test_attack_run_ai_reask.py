@@ -317,3 +317,27 @@ def test_a_large_reask_is_batched_and_asks_each_technique_once(app_client) -> No
     assert sorted(asked_again) == sorted(left_out)
     assert result["reask_batches_total"] == len(reasks)
     assert (result["reasked_count"], result["omitted_count"]) == (len(left_out), 0)
+
+
+def test_the_first_pass_asks_each_technique_exactly_once(app_client) -> None:  # noqa: F811
+    """The duplicate check `test_run_ai_never_sends_a_computed_parent_to_the_model`
+    gave up for the re-ask (the advisor's condition, #736 6206422365). The
+    provider answers nothing, so every technique is asked twice; the first
+    `batches_total` calls are the first pass, because the re-ask starts only
+    after every first-pass batch has answered."""
+    from app.attack.catalog import TECHNIQUES
+
+    w = _world(app_client, 1)
+    w.respond(omit_always=frozenset(t.id for t in TECHNIQUES))
+    result = w.run()
+    first_pass = w.sent[: result["batches_total"]]
+    asked_first = Counter(c for b in first_pass for c in b)
+    assert asked_first, "no first-pass batch reached the provider"
+    assert {c for c, n in asked_first.items() if n > 1} == set()
+    # Derived from the catalog's parent links, as the computed-parent test is.
+    has_children = {t.parent_id for t in TECHNIQUES if t.parent_id is not None}
+    assert sorted(asked_first) == sorted(t.id for t in TECHNIQUES if t.id not in has_children)
+    # And the re-ask, every call after those, asks each of them once more.
+    asked_again = Counter(c for b in w.sent[result["batches_total"] :] for c in b)
+    assert asked_again == asked_first
+    assert result["reask_batches_total"] == len(w.sent) - result["batches_total"]

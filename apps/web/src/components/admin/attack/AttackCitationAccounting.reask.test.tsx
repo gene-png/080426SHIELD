@@ -7,9 +7,9 @@ import { AttackCitationAccounting } from "./AttackCitationAccounting";
 
 /**
  * #1047: the run asks a second time about the techniques a successful batch
- * left out, and the panel says so. The copy is a PLACEHOLDER (R-1047-1) until
- * it is approved on #736, so these tests pin when the line renders and the
- * three numbers it carries, not its wording.
+ * left out, and the panel says so. Copy R-1047-1 approved verbatim (#736
+ * comment 6206422365). Every expected string below is a literal typed from
+ * that ruling, never read from the component.
  */
 function result(over: Partial<AttackRunAiResponse>): AttackRunAiResponse {
   return {
@@ -21,6 +21,11 @@ function result(over: Partial<AttackRunAiResponse>): AttackRunAiResponse {
     citations_rejected: 0,
     ...over,
   };
+}
+
+function lineFor(over: Partial<AttackRunAiResponse>): string {
+  render(<AttackCitationAccounting result={result(over)} />);
+  return screen.getByTestId("attack-reask").textContent ?? "";
 }
 
 describe("AttackCitationAccounting: the re-ask line (#1047)", () => {
@@ -36,19 +41,47 @@ describe("AttackCitationAccounting: the re-ask line (#1047)", () => {
     expect(screen.queryByTestId("attack-reask")).toBeNull();
   });
 
-  it("states how many techniques were asked again, in how many requests, and how many failed", () => {
-    render(
-      <AttackCitationAccounting
-        result={result({
-          reasked_count: 37,
-          reask_batches_total: 2,
-          reask_batches_failed: 1,
-        })}
-      />,
+  it("says one technique was asked about again, in the singular", () => {
+    expect(
+      lineFor({
+        reasked_count: 1,
+        reask_batches_total: 1,
+        reask_batches_failed: 0,
+      }),
+    ).toBe("1 technique the AI left out was asked about again.");
+  });
+
+  it("says how many were asked about again, comma-formatted, with no failure clause when none failed", () => {
+    expect(
+      lineFor({
+        reasked_count: 1234,
+        reask_batches_total: 50,
+        reask_batches_failed: 0,
+      }),
+    ).toBe("1,234 techniques the AI left out were asked about again.");
+  });
+
+  it("adds how many follow-up requests failed when any did", () => {
+    expect(
+      lineFor({
+        reasked_count: 37,
+        reask_batches_total: 2,
+        reask_batches_failed: 1,
+      }),
+    ).toBe(
+      "37 techniques the AI left out were asked about again. 1 of 2 of those follow-up requests failed, so those techniques are still listed above as left out.",
     );
-    const line = screen.getByTestId("attack-reask");
-    expect(line).toHaveTextContent(/asked again 37/);
-    expect(line).toHaveTextContent(/requests 2/);
-    expect(line).toHaveTextContent(/failed 1/);
+  });
+
+  it("comma-formats the failure counts too", () => {
+    expect(
+      lineFor({
+        reasked_count: 30000,
+        reask_batches_total: 1200,
+        reask_batches_failed: 1001,
+      }),
+    ).toBe(
+      "30,000 techniques the AI left out were asked about again. 1,001 of 1,200 of those follow-up requests failed, so those techniques are still listed above as left out.",
+    );
   });
 });
