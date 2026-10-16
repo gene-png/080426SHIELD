@@ -565,6 +565,9 @@ _SIGNATURE_LEAKS = [
     ("signatory line ends in punctuation", "Dana Whitfield, CISO."),
     ("name with suffix, as the LAST line", "John Smith Jr."),
     ("rank and initials, five tokens", "Lt. Col. Dana M. Whitfield"),
+    # #1256: six tokens AND a final full stop, so the prose test (more than four
+    # words, ending in ".") fired before the signatory test, and nothing was cut.
+    ("rank, initials and suffix, ending in a full stop", "Lt. Col. Dana M. Whitfield Jr."),
 ]
 
 
