@@ -171,7 +171,7 @@ def test_csf_the_clients_own_tier_adds_nothing(app_client) -> None:  # noqa: F81
     """The positive control: a guard that disclosed on every source would pass
     every test below."""
     got = _csf_finalized(app_client, _admin(app_client), tier=3)
-    assert "at target T3" in got["summary"]
+    assert "at target Repeatable" in got["summary"]  # tier 3 by name, 6216024281 3c
     _says_nothing_on_any_surface(got)
 
 
@@ -190,9 +190,10 @@ def test_csf_a_target_the_client_did_not_choose_says_so(
     _says_on_every_surface(got, TIER[source])
     # Beside the target, not somewhere later: the caption and the summary
     # state the target, and the sentence follows it directly.
-    assert f"gap(s) at target T3. {TIER[source]}" in got["summary"]
+    # Tier 3 by name since #736 6216024281 item 3c.
+    assert f"gap(s) at target Repeatable. {TIER[source]}" in got["summary"]
     for surface in ("pdf", "docx", "xlsx"):
-        assert f"at target T3. {TIER[source]}" in got[surface], surface
+        assert f"at target Repeatable. {TIER[source]}" in got[surface], surface
 
 
 # --- ZT --------------------------------------------------------------------

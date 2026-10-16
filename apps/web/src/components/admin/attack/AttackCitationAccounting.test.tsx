@@ -84,10 +84,8 @@ describe("AttackCitationAccounting", () => {
     const panel = screen.getByTestId("attack-citation-accounting");
     // The defect was the unqualified claim. On a partial run the headline must
     // not read as a statement about the whole capability list.
-    expect(panel).not.toHaveTextContent(
-      /312 tool citations checked against the client/,
-    );
-    expect(panel).toHaveTextContent(/completed batches/i);
+    expect(panel).not.toHaveTextContent(/We checked 312 of these\./);
+    expect(panel).toHaveTextContent(/from the batches that completed/);
   });
 
   it("still warns when the failure count arrives without a total", () => {
@@ -105,7 +103,7 @@ describe("AttackCitationAccounting", () => {
     // and specifically not "of undefined".
     expect(partial).not.toHaveTextContent(/undefined/);
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /completed batches/i,
+      /from the batches that completed/,
     );
   });
 
@@ -122,7 +120,7 @@ describe("AttackCitationAccounting", () => {
     expect(screen.queryByTestId("attack-run-incomplete")).toBeNull();
     // And the unqualified headline is correct here, so it comes back.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /7 tool citations checked against/,
+      /We checked 7 of these\./,
     );
   });
 
@@ -135,7 +133,7 @@ describe("AttackCitationAccounting", () => {
     );
     expect(screen.queryByTestId("attack-run-incomplete")).toBeNull();
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /7 tool citations checked against/,
+      /We checked 7 of these\./,
     );
   });
 
@@ -143,13 +141,11 @@ describe("AttackCitationAccounting", () => {
     render(
       <AttackCitationAccounting result={result({ citations_confirmed: 7 })} />,
     );
-    // Sidesteps the apostrophe: `&rsquo;` renders as U+2019, not "'", so
-    // pinning it would assert the HTML entity rather than the copy.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /7 tool citations checked against/,
+      /We checked 7 of these\./,
     );
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /7 confirmed, 0 need review, 0 rejected/,
+      /All 7 are on the list\. None need a closer look and none were rejected\./,
     );
   });
 
@@ -333,12 +329,12 @@ describe("AttackCitationAccounting", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("singularises one citation", () => {
+  it("counts one citation as one", () => {
     render(
       <AttackCitationAccounting result={result({ citations_confirmed: 1 })} />,
     );
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /^1 tool citation checked/,
+      /We checked 1 of these\./,
     );
   });
 

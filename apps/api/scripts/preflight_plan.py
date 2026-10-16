@@ -305,6 +305,10 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                             "wd": wd,
                             "name": "the certified selection, NARROWED by preflight to the same files as the run",
                             "script": (
+                                # pipefail: a broken file still lets the others'
+                                # ids through grep, so pytest's exit 2 must
+                                # decide the step (#1294).
+                                "set -o pipefail\n"
                                 # No `-q`: addopts already carries one, and at `-qq`
                                 # collect-only prints per-file counts, no node ids.
                                 f"python -m pytest --collect-only -p no:cacheprovider -m unit {files}"

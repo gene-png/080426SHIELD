@@ -120,7 +120,8 @@ export function Step3Contact({
             id="title"
             type="text"
             defaultValue={defaults.title ?? ""}
-            onBlur={(e) => save("title", e.target.value || undefined)}
+            // #1198: emptied is null, so the clear reaches the api.
+            onBlur={(e) => save("title", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -129,7 +130,8 @@ export function Step3Contact({
             id="phone"
             type="tel"
             defaultValue={defaults.phone ?? ""}
-            onBlur={(e) => save("phone", e.target.value || undefined)}
+            // #1198: emptied is null, so the clear reaches the api.
+            onBlur={(e) => save("phone", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
