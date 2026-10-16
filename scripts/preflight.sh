@@ -9,8 +9,10 @@
 # reads every `pull_request` workflow and plans each job whose steps the API
 # image can run (today: ci.yml's Python job and every audit-gate.yml job),
 # every `run:` step in order -- install, ruff, black, bandit, every gate, CI's
-# selection gate, the unit suite and its count check, the closing-keyword and
-# audit-evidence checks against YOUR drafted title and body. Jobs that need the
+# selection gate, the unit suite (and its per-test count check, once #680 adds
+# it), the closing-keyword and audit-evidence checks against YOUR drafted title
+# and body. Each job gets a bare Python venv, as setup-python gives it, and the
+# clone is HEAD merged with the base, as a pull request's checkout is. Jobs that need the
 # composed stack, a browser or the web toolchain stay on GitHub and are listed.
 # The web checks run by their own route: prettier (the lockfile's version, the
 # glob from package.json's `format:check`) and `scripts/verify-in-worktree.sh`
@@ -133,14 +135,27 @@ cp "$BODY" "$T/in/body"
 # this commit, so `checkout` had nothing to do and left an EMPTY working tree
 # while `HEAD^{tree}` still matched (measured 2026-10-16). So the check is on
 # the files: none missing, none different.
-git clone -q --no-checkout "$WORKTREE" "$T/repo"
-git -C "$T/repo" reset -q --hard "$HEAD_SHA"
-git -C "$T/repo" fetch -q "$WORKTREE" "+$BASE_SHA:refs/remotes/origin/$BASE_BRANCH"
+{
+  git clone -q --no-checkout "$WORKTREE" "$T/repo" \
+    && git -C "$T/repo" reset -q --hard "$HEAD_SHA" \
+    && git -C "$T/repo" fetch -q "$WORKTREE" "+$BASE_SHA:refs/remotes/origin/$BASE_BRANCH"
+} || { echo "$P COULD NOT LOOK -- could not make the clone under test" >&2; exit 2; }
 [ "$(git -C "$T/repo" rev-parse 'HEAD^{tree}')" = "$TREE_SHA" ] || { echo "$P COULD NOT LOOK -- the clone's HEAD is not this tree" >&2; exit 2; }
 [ -z "$(git -C "$T/repo" status --porcelain)" ] && [ -f "$T/repo/scripts/preflight.sh" ] || {
   echo "$P COULD NOT LOOK -- the clone's working files are not HEAD's tree" >&2
   exit 2
 }
+# CI TESTS THE MERGE, not the branch: a pull request's checkout is the merge of
+# the head into the base. So the clone merges the base in too (a no-op when the
+# base is already an ancestor); a branch behind main is then tested with main's
+# newer gates, as CI will test it. A conflict is could-not-look.
+git -C "$T/repo" -c user.email=preflight@example.invalid -c user.name=preflight \
+  merge -q --no-edit "refs/remotes/origin/$BASE_BRANCH" > /dev/null 2>&1 || {
+  echo "$P COULD NOT LOOK -- $BASE does not merge cleanly into HEAD; merge it in first" >&2
+  exit 2
+}
+MERGED_TREE="$(git -C "$T/repo" rev-parse 'HEAD^{tree}')"
+echo "$P merged   HEAD + $BASE -> tree $MERGED_TREE (the tree under test)"
 
 # --unit narrow: the test files this branch changes, and those importing a
 # module it changes (by dotted name or by stem: over-inclusion is safe here).
@@ -175,13 +190,13 @@ python "$TM/repo/apps/api/scripts/preflight_plan.py" --root "$TM/repo" --out "$T
 
 # What GitHub will close. Before the PR exists there is nothing to ask, and the
 # empty set is stated in the summary rather than passed off as verified.
-LINKED_NOTE="linked closes taken as EMPTY (no --pr)"
+LINKED_NOTE="linked closes NOT VERIFIED (no --pr: the close guard ran without --linked)"
 : > "$T/in/linked"
 if [ "$PR" != "0" ]; then
   gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' > "$T/in/linked.raw" \
     || { echo "$P COULD NOT LOOK -- gh pr view $PR failed" >&2; exit 2; }
   mv "$T/in/linked.raw" "$T/in/linked"
-  LINKED_NOTE="linked closes read from PR #$PR"
+  LINKED_NOTE="linked closes read from PR #$PR's LIVE body, not the drafted one"
 fi
 # The only `gh` call a planned step makes is the close guard's. Anything else
 # is refused by name rather than answered.
@@ -203,17 +218,26 @@ export DEBIAN_FRONTEND=noninteractive
 if ! { apt-get update -qq > /tmp/apt.log 2>&1 && apt-get install -y -qq git nodejs > /tmp/apt.log 2>&1; }; then
   echo "PREFLIGHT-SETUP-FAILED installing git and nodejs"; tail -5 /tmp/apt.log; exit 2
 fi
+export HOME=/tmp
 git config --global --add safe.directory '*'
 export CI=true GITHUB_ACTIONS=true GITHUB_WORKSPACE=/work/repo RUNNER_TEMP=/tmp/runner-temp
 export GITHUB_STEP_SUMMARY=/tmp/step-summary GITHUB_ENV=/tmp/github-env GITHUB_OUTPUT=/tmp/github-output
 export PREFLIGHT_TITLE_FILE=/work/in/title PREFLIGHT_BODY_FILE=/work/in/body
-export PATH="/work/bin:$PATH" HOME=/tmp
+BASE_PATH="/work/bin:$PATH"
 mkdir -p "$RUNNER_TEMP"
 while IFS=$'\t' read -r idx kind wf job wd name; do
   [ -f "/work/plan/step-$idx.sh" ] || continue
+  # EACH JOB GETS A BARE PYTHON, as setup-python gives a CI job: a fresh venv
+  # per workflow+job, so a job that installs nothing (the audit gates) cannot
+  # lean on packages the image or another job installed.
+  venv="/tmp/venv-${wf%.*}-$job"
+  if [ ! -x "$venv/bin/python" ]; then
+    python -m venv "$venv" > /dev/null 2>&1 || { echo "PREFLIGHT-SETUP-FAILED creating $venv"; exit 2; }
+  fi
   echo "::group::[$idx] $wf / $job / $name"
   s0=$(date +%s)
   (
+    export PATH="$venv/bin:$BASE_PATH" VIRTUAL_ENV="$venv"
     cd "/work/repo/$wd" || exit 2
     . "/work/plan/step-$idx.env"
     exec bash --noprofile --norc -e "/work/plan/step-$idx.sh"
@@ -239,7 +263,7 @@ crc=$?
 set -e
 
 if grep -q "^PREFLIGHT-SETUP-FAILED" "$LOG"; then
-  echo "$P COULD NOT LOOK -- the container could not install git and nodejs (network?). Log: $LOG" >&2
+  echo "$P COULD NOT LOOK -- the container could not be set up (see PREFLIGHT-SETUP-FAILED in $LOG)" >&2
   exit 2
 fi
 
@@ -248,6 +272,7 @@ glob="$(python -c "import json,re,sys; s=json.load(open(sys.argv[1]))['scripts']
 [ -n "$glob" ] || { echo "$P COULD NOT LOOK -- package.json's format:check is not \`prettier --check \"<glob>\"\`" >&2; exit 2; }
 v="$(bash scripts/prettier-hook.sh --print-version)" || { echo "$P COULD NOT LOOK -- could not read prettier's version from the lockfile" >&2; exit 2; }
 set +e
+command -v npx > /dev/null 2>&1 || { echo "$P COULD NOT LOOK -- npx is not on PATH, so prettier cannot run" >&2; exit 2; }
 (cd "$T/repo" && npx -y "prettier@$v" --check "$glob") > "$T/prettier.log" 2>&1
 prc=$?
 # eslint, tsc and vitest take minutes. A NARROW run skips them when the branch
@@ -296,5 +321,7 @@ if [ "$cnl" -gt 0 ]; then verdict="COULD-NOT-LOOK" code=2; elif [ "$fails" -gt 0
 note=", FULL unit run"
 [ "$UNIT" = "narrow" ] && note=", NARROW unit run (CI runs the full suite)"
 echo ""
-echo "$P $verdict at $HEAD_SHA tree $TREE_SHA vs $BASE_SHA -- $ran CI step(s) + $web_count web check(s) run, $fails failed, $cnl without an exit status; $LINKED_NOTE$note. Not run here: every \`github\` job above. Log: $LOG"
+skipped_web=""
+[ "$wrc" = "-" ] && skipped_web="; eslint/tsc/vitest NOT RUN (NARROW, no web change)"
+echo "$P $verdict at $HEAD_SHA (merged with $BASE_SHA: tree $MERGED_TREE) -- $ran CI step(s) + $web_count web check(s) run, $fails failed, $cnl without an exit status; $LINKED_NOTE$note$skipped_web. Not run here: every \`github\` job above. Log: $LOG"
 exit "$code"

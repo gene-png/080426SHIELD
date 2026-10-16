@@ -29,7 +29,7 @@ mkdir -p "$REPO/scripts" "$REPO/apps/api/scripts" "$REPO/apps/api/tests/unit" "$
 cp "$ROOT/scripts/preflight.sh" "$REPO/scripts/"
 cp "$ROOT/apps/api/scripts/preflight_plan.py" "$REPO/apps/api/scripts/"
 printf '#!/usr/bin/env bash\necho 3.9.8\n' > "$REPO/scripts/prettier-hook.sh"
-printf '#!/usr/bin/env bash\necho "stub web checks"\n' > "$REPO/scripts/verify-in-worktree.sh"
+printf '#!/usr/bin/env bash\necho "stub web checks"\nexit "${STUB_WEB_RC:-0}"\n' > "$REPO/scripts/verify-in-worktree.sh"
 printf '{"scripts": {"format:check": "prettier --check \\"**/*.{md,yml}\\""}}\n' > "$REPO/package.json"
 cat > "$REPO/.github/workflows/ci.yml" << 'EOF'
 on: pull_request
@@ -96,7 +96,7 @@ while IFS=$'\t' read -r idx kind rest; do
   echo "PREFLIGHT-TIME $idx 0"
 done < "$work/plan/steps.tsv"
 EOF
-printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/npx"
+printf '#!/usr/bin/env bash\nexit "${STUB_PRETTIER_RC:-0}"\n' > "$STUB/npx"
 chmod +x "$STUB/docker" "$STUB/npx"
 
 fails=0
@@ -128,6 +128,23 @@ check "advisory failure"      advisory 0 "preflight: PASS at"           ""      
 check "e2e stays on GitHub"   pass     0 "github"                       ""               "${ARGS[@]}"
 check "no title"              pass     2 "--title"                      "preflight: PASS" --body "$TMP/body"
 check "unknown flag"          pass     2 "unknown argument"             "preflight: PASS" "${ARGS[@]}" --bogus
+# The web checks count: prettier always; eslint/tsc/vitest under --unit full.
+STUB_PRETTIER_RC=1 check "prettier failed" pass 1 "preflight: FAIL at" "preflight: PASS" "${ARGS[@]}"
+STUB_WEB_RC=1 check "web checks failed" pass 1 "preflight: FAIL at" "preflight: PASS" "${ARGS[@]}" --unit full
+STUB_WEB_RC=2 check "web could not look" pass 2 "preflight: COULD-NOT-LOOK" "preflight: PASS" "${ARGS[@]}" --unit full
+check "narrow skips web, and says so" pass 0 "eslint/tsc/vitest NOT RUN" "" "${ARGS[@]}"
+# CI tests the MERGE with the base: a base that conflicts with HEAD is
+# could-not-look; one that merges cleanly is merged in, and the summary says so.
+check "the base is merged in" pass 0 "(the tree under test)" "" "${ARGS[@]}"
+git -C "$REPO" checkout -q -b conflicting refs/remotes/origin/main
+mkdir -p "$REPO/apps/api/tests/unit"
+printf 'base side\n' > "$REPO/apps/api/tests/unit/test_x.py"
+git -C "$REPO" add -A
+git -C "$REPO" -c commit.gpgsign=false commit -qm "base adds test_x differently"
+git -C "$REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$REPO" checkout -q -
+check "base conflicts with HEAD" pass 2 "does not merge cleanly" "preflight: PASS" "${ARGS[@]}"
+git -C "$REPO" update-ref refs/remotes/origin/main conflicting~1
 printf 'x\n' >> "$REPO/apps/api/tests/unit/test_x.py"
 check "a dirty tree"          pass     2 "uncommitted"                  "preflight: PASS" "${ARGS[@]}"
 git -C "$REPO" checkout -q -- apps/api/tests/unit/test_x.py

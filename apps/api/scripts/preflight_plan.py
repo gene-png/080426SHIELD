@@ -51,7 +51,11 @@ import shlex
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:  # a host Python without PyYAML: could not look, not a finding
+    sys.stderr.write("preflight-plan: COULD NOT LOOK -- PyYAML is not installed in this Python\n")
+    raise SystemExit(2) from None
 
 #: A job invoking any of these (outside a comment) cannot run in the API image.
 #: `node` and `git` are not here: `preflight.sh` installs both in its container,
@@ -77,6 +81,9 @@ _FROM_FILE = {
     "github.event.pull_request.title": "PREFLIGHT_TITLE_FILE",
     "github.event.pull_request.body": "PREFLIGHT_BODY_FILE",
 }
+
+#: The close guard's `--linked FILE`, GitHub's own answer about what a PR closes.
+_LINKED = re.compile(r"[ \t]*(\\\n[ \t]*)?--linked[ \t]+\S+")
 
 UNIT_STEP = re.compile(r"^pytest -m unit tests/unit(\s|$)")
 
@@ -173,8 +180,19 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
             raise CouldNotLook(f"{path.name} has no jobs mapping")
         if "pull_request" not in triggers(data):
             continue
+        # Settings that change what every step sees: refused, never ignored.
+        for key in ("env", "defaults"):
+            if data.get(key):
+                raise CouldNotLook(f"{path.name}: workflow-level `{key}:` is not reproduced here")
         for job_id, job in data["jobs"].items():
             name = str(job.get("name", job_id))
+            for key in ("container", "services"):
+                if job.get(key) and _job_runs_here(job):
+                    raise CouldNotLook(f"{path.name} {job_id}: job `{key}:` is not reproduced here")
+            if ((job.get("defaults") or {}).get("run") or {}).get("shell") is not None:
+                raise CouldNotLook(
+                    f"{path.name} {job_id}: job `defaults.run.shell` is not reproduced here"
+                )
             if not _job_runs_here(job):
                 steps.append(
                     {
@@ -225,6 +243,15 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                     )
                     continue
                 script = resolve(run, values, where)
+                # GitHub runs an EXPLICIT `shell: bash` as `bash -eo pipefail`,
+                # the default as `bash -e`; the runner reads this marker.
+                pipefail = shell is not None and str(shell) == "bash"
+                if pr_number == "0" and _LINKED.search(script):
+                    # Before a PR exists GitHub links nothing, and an empty set
+                    # would read as "verified: closes nothing". The flag is
+                    # dropped and the step says so; the prose check still runs.
+                    script = _LINKED.sub("", script)
+                    label += " [NO PR: --linked dropped, GitHub's linked set NOT verified]"
                 if unit == "narrow" and UNIT_STEP.match(script.strip()):
                     unit_steps += 1
                     rest = UNIT_STEP.sub("", script.strip(), count=1)
@@ -243,7 +270,7 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                         "job": job_id,
                         "wd": wd,
                         "name": label,
-                        "script": script,
+                        "script": ("set -o pipefail\n" if pipefail else "") + script,
                         "env": env,
                     }
                 )

@@ -303,3 +303,68 @@ def test_main_writes_a_script_per_planned_step_and_nothing_for_the_rest(
 def test_bad_usage_is_could_not_look(argv: list[str], capsys) -> None:
     assert pp.main(argv) == 2
     assert "COULD NOT LOOK" in capsys.readouterr().err
+
+
+GUARD = """\
+    on: pull_request
+    jobs:
+      j:
+        runs-on: ubuntu-latest
+        steps:
+          - run: pytest -m unit tests/unit
+          - name: close guard
+            run: |
+              python -m scripts.check_issue_references \
+                --title /tmp/t.txt \
+                --linked /tmp/pr_linked.txt
+"""
+
+
+def test_before_a_pr_exists_the_close_guard_runs_without_linked_and_says_so(tmp_path: Path) -> None:
+    root = _repo(tmp_path, **{"ci.yml": GUARD})
+    step = _by_name(pp.plan(root, "main", "0", "full", []))
+    (name,) = [n for n in step if n.startswith("close guard")]
+    assert "NOT verified" in name
+    assert "--linked" not in step[name]["script"]
+    assert step[name]["script"].rstrip().endswith("--title /tmp/t.txt"), step[name]["script"]
+
+
+def test_with_a_pr_the_close_guard_keeps_linked(tmp_path: Path) -> None:
+    root = _repo(tmp_path, **{"ci.yml": GUARD})
+    step = _by_name(pp.plan(root, "main", "1189", "full", []))
+    assert "--linked /tmp/pr_linked.txt" in step["close guard"]["script"]
+
+
+def test_an_explicit_bash_shell_runs_with_pipefail_as_github_does(tmp_path: Path) -> None:
+    wf = "on: pull_request\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + UNIT
+    wf += "      - name: explicit\n        shell: bash\n        run: a | b\n"
+    wf += "      - name: default\n        run: a | b\n"
+    steps = _by_name(_plan(_repo(tmp_path, **{"ci.yml": wf})))
+    assert steps["explicit"]["script"].startswith("set -o pipefail\n")
+    assert "pipefail" not in steps["default"]["script"]
+
+
+@pytest.mark.parametrize(
+    ("snippet", "why"),
+    [
+        ("env:\n  X: 1\n", "workflow-level `env:`"),
+        ("defaults:\n  run:\n    shell: sh\n", "workflow-level `defaults:`"),
+    ],
+    ids=["workflow-env", "workflow-defaults"],
+)
+def test_workflow_settings_that_reach_every_step_are_refused(
+    tmp_path: Path, snippet: str, why: str
+) -> None:
+    wf = snippet + "on: pull_request\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + UNIT
+    with pytest.raises(pp.CouldNotLook, match=why):
+        _plan(_repo(tmp_path, **{"ci.yml": wf}))
+
+
+@pytest.mark.parametrize("key", ["services", "container"])
+def test_a_local_job_with_services_or_a_container_is_refused(tmp_path: Path, key: str) -> None:
+    wf = (
+        f"on: pull_request\njobs:\n  j:\n    runs-on: ubuntu-latest\n    {key}:\n      x: y\n    steps:\n"
+        + UNIT
+    )
+    with pytest.raises(pp.CouldNotLook, match=f"job `{key}:`"):
+        _plan(_repo(tmp_path, **{"ci.yml": wf}))
