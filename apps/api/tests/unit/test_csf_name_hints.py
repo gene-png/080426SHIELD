@@ -2,8 +2,8 @@
 reaches the provider redacted, through the run AND `/ai/preview`.
 
 The tenant's user names are the redactor's name dictionary
-(`name_hints_for_tenant`), as #863 and #865 use them for ATT&CK and T2's #1235
-for ZT. `csf_score` sent `answers[*].notes` with no dictionary at all. The
+(`name_hints_for_tenant`), as #863 and #865 use them for ATT&CK (ZT's twin is
+T2's #1235, open). `csf_score` sent `answers[*].notes` with no dictionary at all. The
 shared builder (`_csf_ai_request_for`) now carries it, so the preview, the run
 and the measure script cannot differ.
 

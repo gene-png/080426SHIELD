@@ -2212,9 +2212,10 @@ def _csf_ai_request_for(db: Session, a: CsfAssessment, client: Client) -> CsfAiR
                 "answers": answers,
             },
             client_org_name=client_org,
-            # #1006: the tenant's user names are the redactor's name list, so a
-            # staff member named in notes is sent as [NAME] (as #863/#865 do
-            # for ATT&CK and #1235 for ZT). Here, in the one builder, so the
+            # #1006: the tenant's user names (client users with a SHIELD
+            # account) are the redactor's name list, so such a user named in
+            # notes is sent as [NAME], as #863/#865 do for ATT&CK (ZT's twin is
+            # #1235, open). Here, in the one builder, so the
             # preview, the run (`name_hints=req.preview.name_hints`) and the
             # measure script cannot differ.
             name_hints=tuple(name_hints_for_tenant(db, client.id)),
