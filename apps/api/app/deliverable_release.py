@@ -98,6 +98,7 @@ def _release_parent(
     svc: Service,
     action: str,
     guard: ParentGuard | None = None,
+    repair: bool = False,
 ) -> bool:
     """Flip the parent this deliverable was built from to RELEASED (W4).
 
@@ -215,7 +216,7 @@ def _release_parent(
     if flipped != 1:
         if guard is not None and row.status == parent.status_enum.APPROVED:
             raise guard.refusal(db, row.id)
-        if row.status != parent.status_enum.RELEASED and deliv.released_at is not None:
+        if row.status != parent.status_enum.RELEASED and repair:
             # The REPAIR re-release (`release_deliverable`'s already-released
             # branch): the report is already with the client, so "nothing was
             # released" would be false. The earlier release stands; the parent
@@ -322,7 +323,9 @@ def release_deliverable(
         # consultant a delivered report still needs releasing. Without this, the
         # only fix was direct SQL: the release is idempotent, so re-releasing
         # changed nothing, forever. Re-releasing now repairs it.
-        repaired = _release_parent(db, deliv=deliv, svc=svc, action=action, guard=parent_guard)
+        repaired = _release_parent(
+            db, deliv=deliv, svc=svc, action=action, guard=parent_guard, repair=True
+        )
         if repaired or db.is_modified(deliv) or db.dirty:
             db.commit()
         return deliv
