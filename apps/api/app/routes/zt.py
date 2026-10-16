@@ -109,6 +109,7 @@ from app.services.revisions import (
     start_revision,
 )
 from app.storage import StorageBackend
+from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import (
     SERVICE_SLUG_ZT_CISA,
     SERVICE_SLUG_ZT_DOD,
@@ -762,6 +763,11 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
                 },
             },
             client_org_name=client_org,
+            # #1006: the tenant's user names are the redactor's name list, so
+            # a staff member named in notes is sent as [NAME] (as #863/#865
+            # do for ATT&CK). Here, in the one builder, so the preview and the
+            # run (`name_hints=req.preview.name_hints`) cannot differ.
+            name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
 
