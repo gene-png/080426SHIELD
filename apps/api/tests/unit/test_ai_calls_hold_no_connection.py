@@ -33,7 +33,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app.ai.llm import LLMResponse
-from app.models.llm_call import LLMCall, LLMCallStatus
+from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
 from tests._ai_runs import attack_run_ai
 from tests._attack_rows import standalone_rows
 from tests.unit.test_attack_run_ai import (  # noqa: F401  (fixture)
@@ -346,12 +346,15 @@ def test_a_run_reaped_mid_call_leaves_no_ledger_row_running(
 ) -> None:
     """A batch worker's RUNNING row is committed before egress, so a process
     that dies mid-call would leave it RUNNING for ever. The reap that ends the
-    run ends its RUNNING calls too, FAILED, in the same transaction.
+    run ends that run's RUNNING calls too, FAILED, in the same transaction, and
+    touches nothing else: not the run's COMPLETED calls (billed, successful),
+    and not another call's RUNNING row.
 
-    The death is simulated inside the provider call: the run is dropped from
-    the live set, as a restart would leave it, and the run is reaped from a
-    session of its own, as the next status read would. The ledger is read
-    straight after the reap, before the worker returns."""
+    The death is simulated inside the SECOND provider call, so one COMPLETED
+    row already exists: the run is dropped from the live set, as a restart
+    would leave it, and reaped from a session of its own, as the next status
+    read would. The ledger is read straight after the reap, and again after
+    the worker returns: a call that then completes says so, with no error."""
     from app.ai import runs
     from app.ai.run_context import ai_run_id_var
     from app.routes import attack as attack_routes
@@ -368,32 +371,68 @@ def test_a_run_reaped_mid_call_leaves_no_ledger_row_running(
     ).json()["id"]
     assert c.post(f"/attack/services/{svc_id}/assessments", headers=h).status_code == 201
 
-    after_reap: list[tuple[int, int]] = []
+    # Another call in flight, outside any run (a preview, say): the reap of
+    # this run must leave it alone.
+    with TestSession() as db:
+        other = LLMCall(
+            purpose="other_call",
+            prompt_version="v1",
+            provider="fixture",
+            model="fixture-model-1",
+            mode=LLMCallMode.FIXTURE,
+            status=LLMCallStatus.RUNNING,
+            requested_by=uuid.UUID(me["id"]),
+        )
+        db.add(other)
+        db.commit()
+        other_id = other.id
+
+    def _counts(run_id) -> tuple[int, int, int]:
+        with TestSession() as db:
+            return tuple(
+                db.execute(
+                    select(func.count())
+                    .select_from(LLMCall)
+                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == st)
+                ).scalar_one()
+                for st in (LLMCallStatus.RUNNING, LLMCallStatus.FAILED, LLMCallStatus.COMPLETED)
+            )
+
+    calls: list[int] = []
+    after_reap: list[tuple[int, int, int]] = []
+    reaped_run: list[uuid.UUID] = []
 
     def _answer(payload: dict) -> LLMResponse:
-        if not after_reap:
+        calls.append(1)
+        if len(calls) == 2:
             run_id = ai_run_id_var.get()
             assert run_id is not None, "setup: the call is inside a run"
-            assert _visible_running(TestSession) == 1, "setup: the row is committed"
+            assert _counts(run_id) == (1, 0, 1), "setup: one completed, one in flight"
             runs._mark_done(run_id)
             with TestSession() as db:
                 runs.reap(db, service_id=uuid.UUID(svc_id))
-            with TestSession() as db:
-                running = db.execute(
-                    select(func.count())
-                    .select_from(LLMCall)
-                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == LLMCallStatus.RUNNING)
-                ).scalar_one()
-                failed = db.execute(
-                    select(func.count())
-                    .select_from(LLMCall)
-                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == LLMCallStatus.FAILED)
-                ).scalar_one()
-            after_reap.append((running, failed))
+            after_reap.append(_counts(run_id))
+            reaped_run.append(run_id)
         return LLMResponse(json.dumps({"techniques": []}))
 
     provider.register("mitre_map", _answer)
     started = start_run(c, f"/attack/services/{svc_id}/run-ai", h)
     run = get_run(c, started["run_id"], h)
     assert run["status"] == "failed", run
-    assert after_reap == [(0, 1)], after_reap
+    # Straight after the reap: the in-flight row FAILED, the completed one left.
+    assert after_reap == [(0, 1, 1)], after_reap
+    with TestSession() as db:
+        assert db.get(LLMCall, other_id).status == LLMCallStatus.RUNNING
+        rows = (
+            db.execute(
+                select(LLMCall.status, LLMCall.error_message)
+                .where(LLMCall.ai_run_id == reaped_run[0])
+                .order_by(LLMCall.requested_at)
+            )
+            .tuples()
+            .all()
+        )
+    # After the worker returned: the reaped call completed, and says so with no
+    # error; no row is RUNNING again.
+    assert rows[:2] == [(LLMCallStatus.COMPLETED, None), (LLMCallStatus.COMPLETED, None)], rows
+    assert LLMCallStatus.RUNNING not in {st for st, _ in rows}, rows

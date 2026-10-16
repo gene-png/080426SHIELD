@@ -884,6 +884,12 @@ class LLMClient:
         from app.models._common import utcnow as _utcnow
 
         row.completed_at = _utcnow()
+        # #1025: a run reaped while this call was in flight had its RUNNING row
+        # ended FAILED with the reap's reason. The call then completed, which is
+        # what the ledger must say; the reap stays on the ai_runs row. Set
+        # explicitly so the UPDATE carries it (an unchanged attribute is not
+        # sent).
+        row.error_message = None
         _finish()
 
         _log.info(
