@@ -1468,11 +1468,15 @@ def patch_capability_item(
 
 
 def _already_decided_message(decided: int, selected: int) -> str:
-    """TD-11 (for #1055). PLACEHOLDER copy, pending approval on #736; it
-    follows the shape of the not-in-list refusal beside it."""
+    """TD-11 (for #1055). Copy approved on #736 (6216024281 item 2)."""
+    if selected == 1:
+        return (
+            "The undecided row now has a decision. Nothing was changed. "
+            "Reload the list and try again."
+        )
     return (
-        f"{decided} of the {selected} selected rows already have a decision. "
-        "Nothing was changed. Reload the list and select again."
+        f"{decided} of the {selected} undecided rows now have a decision. "
+        "Nothing was changed. Reload the list and try again."
     )
 
 

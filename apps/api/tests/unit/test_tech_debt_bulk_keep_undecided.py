@@ -76,6 +76,11 @@ def test_one_decided_row_refuses_the_whole_request_and_writes_nothing(
     )
     assert r.status_code == 409, r.text
     assert r.json()["error"]["reason"] == "capability_items_already_decided"
+    # Copy approved on #736 (6216024281 item 2), typed here.
+    assert r.json()["error"]["message"] == (
+        "1 of the 3 undecided rows now have a decision. Nothing was changed. "
+        "Reload the list and try again."
+    )
     plan = _plan(c, bearer, svc_id)
     # The decision stands, and the two undecided rows were not written either.
     assert (plan["cut_count"], plan["keep_count"], plan["undecided_count"]) == (1, 0, 2)
@@ -83,6 +88,24 @@ def test_one_decided_row_refuses_the_whole_request_and_writes_nothing(
         assert len(s.execute(select(AuditEntry)).scalars().all()) == audits_before
     # The revision bump `_record_edit` made was rolled back with the rows.
     assert _revision(sessions, list_id) == revision_before
+
+
+def test_the_refusal_for_one_undecided_row_is_singular(app_client) -> None:  # noqa: F811
+    """Copy approved on #736 (6216024281 item 2), typed here."""
+    c, _s, bearer, _svc, list_id, item_ids = _world(app_client)
+    first = _bulk(c, bearer, list_id, {"item_ids": item_ids[:1], "disposition": "cut"})
+    assert first.status_code == 200, first.text
+    r = _bulk(
+        c,
+        bearer,
+        list_id,
+        {"item_ids": item_ids[:1], "disposition": "keep", "only_if_undecided": True},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["message"] == (
+        "The undecided row now has a decision. Nothing was changed. "
+        "Reload the list and try again."
+    )
 
 
 def test_a_decision_landing_just_before_the_write_is_not_overwritten(

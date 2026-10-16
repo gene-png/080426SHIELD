@@ -104,7 +104,8 @@ describe("BulkKeepUndecided (TD-11)", () => {
         new TechDebtProxyError(409, {
           error: {
             reason: "capability_items_already_decided",
-            message: "1 of the 3 selected rows already have a decision.",
+            message:
+              "1 of the 3 undecided rows now have a decision. Nothing was changed. Reload the list and try again.",
           },
         }),
       ),
@@ -118,7 +119,7 @@ describe("BulkKeepUndecided (TD-11)", () => {
     });
     fireEvent.click(buttons[buttons.length - 1]);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "1 of the 3 selected rows already have a decision.",
+      "1 of the 3 undecided rows now have a decision. Nothing was changed. Reload the list and try again.",
     );
     expect(screen.queryByText(/to Keep\.$/)).toBeNull();
   });
