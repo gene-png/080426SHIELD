@@ -405,3 +405,24 @@ def test_a_local_job_with_services_or_a_container_is_refused(tmp_path: Path, key
     )
     with pytest.raises(pp.CouldNotLook, match=f"job `{key}:`"):
         _plan(_repo(tmp_path, **{"ci.yml": wf}))
+
+
+def test_a_job_that_reads_other_jobs_results_stays_on_github(tmp_path: Path) -> None:
+    # An aggregate job (#680) reads `needs.<job>.result`: it judges OTHER jobs,
+    # which only exist on GitHub. It is listed as `github`, never given a
+    # guessed value (#736 6217409672).
+    # CI is indented four spaces (it is dedented when written), so the extra
+    # job is too.
+    wf = CI + (
+        "      aggregate:\n"
+        "        needs: [python]\n"
+        "        if: always()\n"
+        "        runs-on: ubuntu-latest\n"
+        "        steps:\n"
+        "          - env:\n"
+        "              RESULT: ${{ needs.python.result }}\n"
+        '            run: test "$RESULT" = success\n'
+    )
+    kinds = {s["job"]: s["kind"] for s in _plan(_repo(tmp_path, **{"ci.yml": wf}))}
+    assert kinds["aggregate"] == "github", kinds
+    assert kinds["python"] != "github", kinds
