@@ -1,6 +1,6 @@
 # Gene — in-flight status
 
-_2026-10-16 (track T5): #1223, a failed upload list says it failed._ On the intake's review step, if the list of a client's uploads cannot be loaded, the page now says "Failed to load uploads." instead of "No documents uploaded. You can still submit", which told clients their files were missing. The admin's client-documents panel says "Couldn't load documents." instead of "Upload failed: 500". It comes back to you: condition 5.
+_2026-10-16 (track T5): #1223, a failed upload list says it failed._ On the intake's review step, if the list of a client's uploads cannot be loaded, the page now says "We couldn't load your uploaded documents. Your uploads are not affected, and you can still submit." (the wording you approved for #1225) instead of "No documents uploaded. You can still submit", which told clients their files were missing. The admin's client-documents panel says "Couldn't load documents." instead of "Upload failed: 500". It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1213, the intake part._ If a client's intake submit, assessment start or upload gets a success answer the browser cannot read (only possible from something like a network sign-in page), the page now says it could not confirm whether it went through, instead of "Failed to submit intake.". The other services' screens are still open on #1213. It comes back to you: condition 5.
 
