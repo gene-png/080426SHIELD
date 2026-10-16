@@ -152,7 +152,10 @@ def _release_parent(
     * `parent_version` is NULL — finalized before 0041. Guessing is the thing the
       column exists to prevent, so it does not guess.
     * the parent is not APPROVED — flipping a DRAFT would skip APPROVED entirely
-      and lock work in progress; anything else is already terminal.
+      and lock work in progress; anything else is already terminal. On the
+      REPAIR re-release this one IS fatal (#1123): the report is with the
+      client and its parent left APPROVED, so it raises
+      `refuse_parent_changed_after_release` rather than logging only.
 
     THE FLIP IS A CONDITIONAL UPDATE (#657 round 3), `status = APPROVED` plus the
     caller's `guard` if any, with a rowcount check -- the approve route's shape.
@@ -235,6 +238,12 @@ def _release_parent(
             parent_version=deliv.parent_version,
             parent_status=row.status.value,
         )
+        if repair:
+            # The same state as a parent that moves inside the flip window,
+            # reached before the request: the report is with the client and its
+            # parent is no longer APPROVED. Refused, never log-only (#1123,
+            # #736 6221187740 item 5); the earlier release stands.
+            raise refuse_parent_changed_after_release()
         return False
 
     conditions = [parent.model.id == row.id, parent.model.status == parent.status_enum.APPROVED]
@@ -324,14 +333,21 @@ def release_deliverable(
 ) -> Deliverable:
     """Release a finalized deliverable to the client.
 
-    Tenant-enforced (404 on mismatch, never 403), kind-checked so a service's
-    route only releases its own deliverables (`kinds` is the set the calling
-    router serves — one for csf/attack/tech_debt, two for zt), and idempotent:
-    re-releasing an already-released deliverable is a logged no-op, not an error.
+    Tenant-enforced (404 on mismatch, never 403), and kind-checked so a
+    service's route only releases its own deliverables (`kinds` is the set the
+    calling router serves — one for csf/attack/tech_debt, two for zt).
+    Re-releasing an already-released deliverable never releases it again; it is
+    the REPAIR path, which retries the parent flip and is refused when the
+    parent did not flip (#1123). The earlier release stands either way.
 
     Raises:
         HTTPException 404: unknown / cross-tenant / wrong-kind deliverable.
         HTTPException 409: deliverable was never finalized (typed `not_finalized`).
+        HTTPException 409: the parent moved, on a first release (typed
+            `parent_changed_during_release`) or on a repair (typed
+            `parent_changed_after_release`).
+        HTTPException 409: the caller's `parent_guard` refusal, when its
+            condition misses (on a repair, its `repair_refusal` if it has one).
     """
     deliv = require_deliverable_in_tenant(db, deliverable_id, tenant_client_id)
     svc = db.get(Service, deliv.service_id)
@@ -351,8 +367,8 @@ def release_deliverable(
         )
 
     if deliv.released_at is not None:
-        # Idempotent: already released. Loud no-op so a re-release is auditable
-        # in the logs without a second audit row or a lie that it "changed".
+        # Already released: never released twice, so no second audit row or
+        # email. Logged, then the repair below, which may still refuse.
         _log.info(
             "deliverable.release noop (already released)",
             deliverable_id=str(deliv.id),
