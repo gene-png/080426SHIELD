@@ -217,3 +217,138 @@ def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
     assert "Appendix line 1 lists" not in cleaned
     for kept in ("Appendix line 2 lists", "Appendix line 3 lists", "Appendix line 4 lists"):
         assert kept in cleaned, f"{kept!r} was cut, past the window"
+
+
+# --- #1256: a rank-and-name line ending in a full stop -----------------------
+#
+# The REDACT row for the issue's exact line is in test_redact_rules_matrix.py's
+# _SIGNATURE_LEAKS. Here: the same shape with other suffixes, which must be cut
+# too, and the sentences the fix must NOT start cutting -- Title-Case sentences
+# whose last word is short and ends in a stop (review of 96b41f97: dropping
+# every abbreviation-shaped token turned each into a "name" and cut the text
+# after it).
+
+_SUFFIXED_NAMES = [
+    "Lt. Col. Dana M. Whitfield 3rd.",
+    "Lt. Col. Dana M. Whitfield (Ret.).",
+    # Four real words: counted the same by both tests only once `(Ret.).` is
+    # an abbreviation to each of them (review of 8310931d).
+    "Col. Dana Marie Whitfield, USAF (Ret.).",
+]
+
+_TITLE_CASE_SENTENCES = [
+    "Phase Two Is Under Way.",
+    "Section A. Overview Of Findings.",
+    "U.S. Gov. Systems Are Affected.",
+    "All Systems Are Now Up.",
+    "Dr. Smith approved the change.",
+    # Ends in a suffix WORD, but has lowercase words: a sentence (review of
+    # 8310931d). Phase II, Tier III and Level IV are ordinary in findings.
+    "Patching resumes in Phase II.",
+    "Hosts move to Tier III next quarter.",
+]
+
+
+@pytest.mark.parametrize("name", _SUFFIXED_NAMES)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_a_ranked_name_ending_in_a_suffix_is_cut(name: str, scope: str) -> None:
+    cleaned, counts = redact_for_ai(
+        "Findings follow.\nBest,\n" + name + "\n", mode="strict", signature_scope=scope
+    )
+    assert counts.get("signature_block") == 1, name
+    assert "Whitfield" not in cleaned and "Dana" not in cleaned, name
+
+
+@pytest.mark.parametrize("sentence", _TITLE_CASE_SENTENCES)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_a_sentence_after_an_opener_still_ends_the_lookahead(sentence: str, scope: str) -> None:
+    # The name line AFTER the sentence must not be reached (B1, #135): a
+    # sentence ends the lookahead, so nothing is cut and the text survives.
+    text = "Findings follow.\nBest\n" + sentence + "\nDana Whitfield\n"
+    cleaned, counts = redact_for_ai(text, mode="strict", signature_scope=scope)
+    assert "signature_block" not in counts, sentence
+    # Other rules may rewrite words of it ("Way" reads as a street), but the
+    # sign-off line and what follows it are not deleted.
+    assert "\nBest\n" in cleaned and cleaned.endswith("Dana Whitfield\n"), sentence
+
+
+# --- #1256: the line classes, as a TABLE written before the logic -----------
+#
+# CLAUDE.md: a predicate rewritten three times is a design problem, so the
+# state space is written down first. Each row is a line that follows a bare
+# opener ("Best,"), then a name line that only a scan reaching PAST it would
+# find. "cut" means the signature rule fires on it (a name, removed); "keep"
+# means it is a sentence: the lookahead stops there and nothing is cut.
+_LINE_CLASSES = [
+    # Names: rank or honorific, then a stopped last token.
+    ("cut", "rank, suffix last", "Lt. Col. Dana M. Whitfield Jr."),
+    ("cut", "rank, ordinal suffix last", "Lt. Col. Dana M. Whitfield 3rd."),
+    ("cut", "rank, bracketed suffix and stop", "Lt. Col. Dana M. Whitfield (Ret.)."),
+    ("cut", "four words, bracketed suffix and stop", "Col. Dana Marie Whitfield, USAF (Ret.)."),
+    ("cut", "four words, bracketed suffix, no stop", "Col. Dana Marie Whitfield, USAF (Ret.)"),
+    ("cut", "suffix before a comma, not last", "Lt. Col. Dana Whitfield Jr., USAF, CISO"),
+    ("cut", "credential with inner stops last", "Dr. Dana M. Whitfield, M.D."),
+    ("cut", "service abbreviation last", "Lt. Col. Dana M. Whitfield, USAF."),
+    ("cut", "certification last", "Maj. Dana M. Whitfield, CISSP."),
+    ("cut", "job title last", "Dr. Dana M. Whitfield, CISO."),
+    # Sentences.
+    ("keep", "Title-Case, short final word", "Phase Two Is Under Way."),
+    ("keep", "Title-Case, abbreviation mid-line", "Section A. Overview Of Findings."),
+    ("keep", "Title-Case, leading abbreviations", "U.S. Gov. Systems Are Affected."),
+    ("keep", "Title-Case, two-letter final word", "All Systems Are Now Up."),
+    ("keep", "honorific, sentence case", "Dr. Smith approved the change."),
+    ("keep", "Roman numeral last, sentence case", "Patching resumes in Phase II."),
+    ("keep", "Roman numeral mid-line, sentence case", "Hosts move to Tier III next quarter."),
+    ("keep", "ordinal last, sentence case", "The patch window opens on the 3rd."),
+    # Title-Case sentences ending in an acronym of three letters or fewer (or a
+    # dotted one): a designation tail WITHOUT a comma before it (review of
+    # db522400 -- each was cut there).
+    ("keep", "Title-Case, short acronym last", "Enable MFA On Every VPN."),
+    ("keep", "Title-Case, three-letter acronym last", "Escalate Findings To The SOC."),
+    ("keep", "Title-Case, dotted acronym last", "Data Stays Inside The U.S."),
+    ("keep", "Title-Case, abbreviations and acronym", "U.S. Gov. Systems Report To CISA."),
+    # A RECORDED residual, pinned so a change to it is seen: a Title-Case
+    # sentence ending ", <short acronym>." has a name tail and is cut (new with
+    # #1256; it errs toward removing).
+    (
+        "cut",
+        "residual: Title-Case sentence, comma and short acronym",
+        "Report Issues To Support, IT.",
+    ),
+]
+# Accepted residuals. The leaking ones are open as #1267; the rest are recorded
+# here (some pinned as rows above):
+#   - an all-Title-Case stopped line of four RAW words or fewer is not prose
+#     ("Next Steps Below.", pre-existing);
+#   - a name-shaped line with a name TAIL is counted without its
+#     abbreviations, so an all-Title-Case sentence that ends in a suffix word
+#     ("Hosts Move To Tier III.") or in a short designation after a comma
+#     ("Report Issues To Support, IT.") reads as a name -- new with #1256, and
+#     it errs toward removing;
+#   - a name with a lowercase particle ("Dana van der Berg Jr.") is not
+#     name-shaped, and one ending in a plain stopped surname after its ranks
+#     ("Lt. Col. Dana M. Whitfield.") has no tail; both still read as sentences
+#     (pre-existing);
+#   - a name with a designation and NO comma before it ("Lt. Col. Dana M.
+#     Whitfield USAF.", six raw words) has no tail and reads as a sentence: the
+#     comma is the only thing telling it from "U.S. Gov. Systems Report To
+#     CISA." (a leak, pre-existing on main; open as #1267).
+
+
+@pytest.mark.parametrize(
+    ("verdict", "shape", "line"), _LINE_CLASSES, ids=[c[1] for c in _LINE_CLASSES]
+)
+@pytest.mark.parametrize("scope", ["to_end", "block"])
+def test_each_line_class_is_cut_or_kept(verdict: str, shape: str, line: str, scope: str) -> None:
+    # A "cut" row is followed by a SENTENCE, so the cut can only come from the
+    # row itself; a "keep" row by a NAME, which only a scan reaching past the
+    # row would find.
+    after = "The scan of every host is now complete." if verdict == "cut" else "Alex Morgan"
+    text = "Findings follow.\nBest,\n" + line + "\n" + after + "\n"
+    cleaned, counts = redact_for_ai(text, mode="strict", signature_scope=scope)
+    if verdict == "cut":
+        assert counts.get("signature_block") == 1, f"{shape}: not cut"
+        assert "Whitfield" not in cleaned and "Dana" not in cleaned, f"{shape}: the name survived"
+    else:
+        assert "signature_block" not in counts, f"{shape}: a sentence was cut"
+        assert cleaned.endswith("Alex Morgan\n"), f"{shape}: text after it was lost"

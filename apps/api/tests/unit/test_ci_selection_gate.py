@@ -81,6 +81,56 @@ def test_all_marked_is_clean_and_says_what_it_counted(tmp_path, capsys) -> None:
     assert "CI selects 2 of 2" in out, out
 
 
+# --- the certified set, written for check_junit_counts (#680) -----------------
+#
+# CI's run is held to the file this gate writes, so the set it certified and the
+# set the run is checked against are one object. A separate collector, run
+# later, could be narrowed by anything between the two while the gate had
+# certified the wider set.
+
+
+def _fresh(path: Path) -> Path:
+    """A project root BESIDE the output file, so the selection is not written
+    into the tree the gate collects."""
+    path.mkdir()
+    return path
+
+
+def _run_writing(root: Path, base: Path, out: Path, capsys) -> tuple[int, str]:
+    code = gate.main(
+        ["gate", "--root", str(root), "--baseline", str(base), "--selected-out", str(out)]
+    )
+    return code, capsys.readouterr().out
+
+
+def test_a_clean_verdict_writes_exactly_the_certified_set(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, _baseline(tmp_path, {}), out, capsys)
+    assert code == 0, text
+    # From MARKED's own source: two marked tests, nothing else.
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "tests/unit/test_m.py::test_a",
+        "tests/unit/test_m.py::test_b",
+    ]
+
+
+def test_a_finding_writes_no_selection(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED, U: UNMARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, _baseline(tmp_path, {}), out, capsys)
+    assert code == 1, text
+    assert not out.exists(), "a selection was written for a set the gate refused"
+
+
+def test_could_not_look_writes_no_selection(tmp_path, capsys) -> None:
+    root = _project(_fresh(tmp_path / "p"), {"tests/unit/test_m.py": MARKED})
+    out = tmp_path / "selection.txt"
+    code, text = _run_writing(root, tmp_path / "missing.json", out, capsys)
+    assert code == 2, text
+    assert not out.exists(), "a selection was written although the gate could not look"
+
+
 def _entry(*names: str) -> dict:
     return {U: {"reason": "#500: unmarked", "tests": [f"{U}::{n}" for n in names]}}
 
@@ -182,7 +232,12 @@ def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
         if str(step.get("run", "")).strip().startswith("pytest ")
         and "tests/unit" in str(step.get("run", ""))
     ]
-    assert runs == [f"pytest {' '.join(gate.CI_SELECTOR)}"], runs
+    # CI_RUN is CI_SELECTOR plus CI_RUN_OPTIONS, and the options are written
+    # out HERE, not read back from the module: four xdist workers and a junit
+    # report select nothing. A `-k` or `--deselect` in either half is refused.
+    assert gate.CI_RUN_OPTIONS == ("-n", "4", '--junitxml="$RUNNER_TEMP/pytest-unit.xml"')
+    assert f"pytest {' '.join(gate.CI_SELECTOR + gate.CI_RUN_OPTIONS)}" == gate.CI_RUN
+    assert runs == [gate.CI_RUN], runs
 
 
 # --- config is pytest's to apply, wherever it lives (reviews of 324dc15, adaf082) --
@@ -357,7 +412,8 @@ def test_the_clean_line_counts_the_files_it_compared(tmp_path, capsys) -> None:
 
 
 ONE_JOB = "the pytest step and the gate step must sit in ONE job"
-GATE_RUN = "the gate step's run must be exactly `python -m scripts.check_ci_selection`"
+GATE_CMD = 'python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"'
+GATE_RUN = f"the gate step's run must be exactly `{GATE_CMD}`"
 NOT_ADJACENT = "the gate step must come IMMEDIATELY before the pytest step"
 ENV_DIFFERS = "step env differs between the gate step and the pytest step"
 WD_DIFFERS = "working-directory differs between the gate step and the pytest step"
@@ -377,7 +433,7 @@ def pin_violations(ci: dict) -> list[str]:
     file, and `${{ steps.X.outputs }}` in an env (review of 0cf0420); with no
     step between the two, no such route exists.
     """
-    pytest_run = f"pytest {' '.join(gate.CI_SELECTOR)}"
+    pytest_run = gate.CI_RUN
     found = []
     for name, job in ci["jobs"].items():
         steps = job.get("steps", [])
@@ -396,7 +452,7 @@ def pin_violations(ci: dict) -> list[str]:
     # EXACT, as the pytest step's is: a second line in the gate step's run
     # (writing PYTEST_ADDOPTS to $GITHUB_ENV, say) reaches pytest and not the
     # gate, and a containment match allowed it (review of ec113e1).
-    if str(steps[j].get("run", "")).strip() != "python -m scripts.check_ci_selection":
+    if str(steps[j].get("run", "")).strip() != GATE_CMD:
         out.append(GATE_RUN)
     if i != j + 1:
         out.append(f"{NOT_ADJACENT}: gate at step {j}, pytest at step {i}")
@@ -435,12 +491,12 @@ def _workflow(*steps: dict) -> dict:
 GATE_STEP = {
     "name": "gate",
     "working-directory": "apps/api",
-    "run": "python -m scripts.check_ci_selection",
+    "run": GATE_CMD,
 }
 PYTEST_STEP = {
     "name": "pytest",
     "working-directory": "apps/api",
-    "run": "pytest -m unit tests/unit",
+    "run": gate.CI_RUN,
 }
 
 
@@ -471,7 +527,7 @@ def test_a_second_line_in_the_gate_step_is_refused() -> None:
         **GATE_STEP,
         "run": "\n".join(
             [
-                "python -m scripts.check_ci_selection",
+                GATE_CMD,
                 'echo "PYTEST_ADDOPTS=--deselect x" >> "$GITHUB_ENV"',
             ]
         ),

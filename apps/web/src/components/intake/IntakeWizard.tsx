@@ -60,6 +60,16 @@ function isSubmittedField(key: string): key is SubmittedClientField {
   return (SUBMITTED_CLIENT_FIELDS as readonly string[]).includes(key);
 }
 
+/** Whether every value in `patch` is one the wizard keeps on screen after a
+ *  failed save: the submitted client fields, laid over the server's copy. */
+function keepsPatch(patch: IntakePatchRequest): boolean {
+  const { client, ...profile } = patch;
+  return (
+    Object.keys(profile).length === 0 &&
+    Object.keys(client ?? {}).every(isSubmittedField)
+  );
+}
+
 const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
   (acc, step, i) => {
     acc[step.key] = i;
@@ -71,6 +81,10 @@ const STEP_INDEX: Record<WizardStepKey, number> = WIZARD_STEPS.reduce(
 export function IntakeWizard(): JSX.Element {
   const session = useSession();
   const [state, setState] = React.useState<IntakeStateResponse | null>(null);
+  // #1262, the `/intake` residual: the client this page LOADED. Every later
+  // call names it, so a save, upload, list or submit never follows the shared
+  // active-client cookie to the tenant another tab switched it to.
+  const [clientId, setClientId] = React.useState<string | undefined>();
   const [step, setStep] = React.useState<WizardStepKey>("services");
   const [completed, setCompleted] = React.useState<Set<WizardStepKey>>(
     new Set(),
@@ -107,6 +121,10 @@ export function IntakeWizard(): JSX.Element {
         }
         return nextEntered;
       }),
+    // #1115: the wizard keeps on screen only the client fields it submits;
+    // Step 3's are re-read from the server when the step reopens.
+    keepsPatch,
+    clientId,
   );
 
   // #252: the client fields as this person last ENTERED them, from every save
@@ -135,6 +153,8 @@ export function IntakeWizard(): JSX.Element {
     if (Object.keys(entered).length > 0) {
       setEnteredClient((prev) => ({ ...prev, ...entered }));
     }
+    // Discarded on purpose: a throw from `onUpdate` is re-thrown by the hook
+    // and so surfaces here as an unhandled rejection, loudly (#1093 item 2).
     void autoSave.save(patch);
   }
 
@@ -144,6 +164,7 @@ export function IntakeWizard(): JSX.Element {
       .then((s) => {
         if (cancelled) return;
         setState(s);
+        setClientId(s.client?.id);
         // Hydrate per-service inputs from any existing requests so re-edits
         // keep notes/deadline/targets (and so target validation passes after
         // a reload of an in-progress intake).
@@ -223,26 +244,29 @@ export function IntakeWizard(): JSX.Element {
       service_type: svc,
     }));
     try {
-      const next = await submitIntake({
-        client: {
-          // Every field `?? undefined`, except one the client CLEARED (#1093):
-          // that is sent as null, because the review shows it as not provided
-          // and, if its blur save never landed, Submit is what carries the
-          // clear. Since D-080 an unnamed org is NULL rather than a sentinel,
-          // and submitting one is refused by the API with a typed 422
-          // ("Organization legal name is required to submit intake.") — the
-          // wizard does not pre-empt that check, so the user gets the
-          // server's message rather than a silent no-op.
-          ...(Object.fromEntries(
-            SUBMITTED_CLIENT_FIELDS.map((k) => [
-              k,
-              enteredClient[k] === null ? null : (client[k] ?? undefined),
-            ]),
-          ) as ClientProfilePatch),
-          service_interests: picks,
+      const next = await submitIntake(
+        {
+          client: {
+            // Every field `?? undefined`, except one the client CLEARED (#1093):
+            // that is sent as null, because the review shows it as not provided
+            // and, if its blur save never landed, Submit is what carries the
+            // clear. Since D-080 an unnamed org is NULL rather than a sentinel,
+            // and submitting one is refused by the API with a typed 422
+            // ("Organization legal name is required to submit intake.") — the
+            // wizard does not pre-empt that check, so the user gets the
+            // server's message rather than a silent no-op.
+            ...(Object.fromEntries(
+              SUBMITTED_CLIENT_FIELDS.map((k) => [
+                k,
+                enteredClient[k] === null ? null : (client[k] ?? undefined),
+              ]),
+            ) as ClientProfilePatch),
+            service_interests: picks,
+          },
+          service_requests: requests,
         },
-        service_requests: requests,
-      });
+        clientId,
+      );
       setState(next);
       // What was entered is now what the server holds; read its copy again.
       setEnteredClient({});
@@ -253,6 +277,15 @@ export function IntakeWizard(): JSX.Element {
       setSubmitting(false);
     }
   }
+
+  // #1282: Step 3's own inputs show the submitter's OWN details. `contact` is
+  // the primary-contact override once one names someone, and each input saves
+  // on blur, so reading it wrote the override onto the account. An api that
+  // sends no `submitter` falls back to `contact` only when it is not an
+  // override.
+  const ownDetails =
+    viewState?.submitter ??
+    (viewState?.contact?.is_override ? null : viewState?.contact);
 
   const isFirst = STEP_INDEX[step] === 0;
   const isLast = STEP_INDEX[step] === WIZARD_STEPS.length - 1;
@@ -306,10 +339,10 @@ export function IntakeWizard(): JSX.Element {
               // so a title or phone typed here came back blank on the next
               // visit even though it had saved (UX finding 9).
               defaults={{
-                display_name: viewState.contact?.display_name ?? userName,
-                title: viewState.contact?.title ?? null,
-                phone: viewState.contact?.phone ?? null,
-                timezone: viewState.contact?.timezone ?? null,
+                display_name: ownDetails?.display_name ?? userName,
+                title: ownDetails?.title ?? null,
+                phone: ownDetails?.phone ?? null,
+                timezone: ownDetails?.timezone ?? null,
                 email: userEmail,
               }}
               override={{

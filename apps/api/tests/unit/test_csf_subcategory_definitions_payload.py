@@ -32,6 +32,7 @@ from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import subcategory_by_code
 from app.models.llm_call import LLMCall
 from tests._ai_runs import csf_run_ai
+from tests._csf_notes import note_every_answer
 
 pytestmark = pytest.mark.unit
 
@@ -99,6 +100,8 @@ def _world(tmp_path: Path, legal_name: str) -> Iterator[World]:
         assert a.status_code in (200, 201), a.text
         seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": _TIERS})
         assert seeded.status_code in (200, 201), seeded.text
+        # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+        note_every_answer(svc_id)
         yield World(c, sessions, provider, h, svc_id)
 
 
@@ -203,8 +206,9 @@ def test_a_client_named_critical_gets_nists_text_and_its_name_is_still_redacted(
         assert "Critical" not in p["answers"]["GV.OC-04"]["notes"]
 
 
-def test_a_run_records_the_v3_prompt_in_llm_calls(world) -> None:
-    """C9: an llm_calls row from a run says which prompt produced it."""
+def test_a_run_records_the_v4_prompt_in_llm_calls(world) -> None:
+    """C9: an llm_calls row from a run says which prompt produced it (v4 since
+    CSF Option 1, D-114)."""
     world.provider.register("csf_score", _Recorder())
     csf_run_ai(world.c, world.svc_id, world.h)
     with world.sessions() as db:
@@ -214,4 +218,4 @@ def test_a_run_records_the_v3_prompt_in_llm_calls(world) -> None:
             .all()
         )
     assert versions, "the run wrote no llm_calls row"
-    assert set(versions) == {"v3"}
+    assert set(versions) == {"v4"}

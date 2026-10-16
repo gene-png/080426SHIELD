@@ -58,6 +58,7 @@ import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
+import { BulkKeepUndecided } from "./BulkKeepUndecided";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { ExtractionFindings } from "./ExtractionFindings";
@@ -486,12 +487,16 @@ Components carry no cost of their own — this licence keeps its full value.`,
   async function onBulkDisposition(
     itemIds: string[],
     disposition: CapabilityDisposition | null,
+    onlyIfUndecided = false,
   ): Promise<void> {
     if (!list) return;
     listSeq.current += 1;
     let next: CapabilityList;
     try {
-      next = await bulkSetDisposition(list.id, itemIds, disposition);
+      // The flag is passed only when set, so #641's calls are unchanged.
+      next = onlyIfUndecided
+        ? await bulkSetDisposition(list.id, itemIds, disposition, true)
+        : await bulkSetDisposition(list.id, itemIds, disposition);
     } catch (err) {
       // Rethrown, not swallowed: the TABLE owns this refusal's display (beside
       // the bulk bar, with the selection kept for a retry), and a rejection is
@@ -1015,6 +1020,15 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
             />
             <DispositionHelp />
+            {/* TD-11 (for #1055): every undecided row to Keep, guarded on the
+                server so a decision made since this page loaded is never
+                overwritten. */}
+            <BulkKeepUndecided
+              items={list.items}
+              editable={list.status === "draft" || list.status === "approved"}
+              disabled={approving || extracting || discarding}
+              onKeep={(ids) => onBulkDisposition(ids, "keep", true)}
+            />
             <EditableCapabilityTable
               categories={categories === "error" ? null : categories}
               items={list.items}
@@ -1024,7 +1038,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
             {categories === "error" ? (
-              // PLACEHOLDER copy (#1176), pending approval on #736. An alert:
+              // #1176 copy, approved on #736 (6216024281). An alert:
               // the category column cannot be edited until a reload.
               <p className="text-sm text-status-danger-fg" role="alert">
                 Categories could not be loaded.

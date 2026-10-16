@@ -301,10 +301,6 @@ _CSF_EVIDENCE_ATTACHED = (
     "and were not evaluated."
 )
 _CSF_NO_EVIDENCE = "No supporting evidence was attached to the answer."
-_CSF_NO_ANSWER = (
-    "No answer was recorded. No assessment dimension was demonstrated. "
-    "No maturity rating was recorded. No supporting evidence was attached to the answer."
-)
 
 
 def _csf_what_we_found(practices: str, missing: list[str], answer: dict[str, Any]) -> str:
@@ -319,12 +315,14 @@ def _csf_what_we_found(practices: str, missing: list[str], answer: dict[str, Any
 
 
 def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
-    """Written from the approved prompt (#806), never from the parser.
+    """Written from the approved prompt (v4, #736 6205956728), never from the
+    parser.
 
-    - Section 3: one row per (tier, Subcategory), in `subcategories` order and,
-      within each, `tiers` order; no row for a code outside `subcategories`.
-    - Section 9: no `answers` entry gets 0 on all five and the exact no-answer
-      sentence; blank notes get 0 on all five, the rating and the evidence.
+    - Section 3: one row per (tier, Subcategory WITH NOTES), in `subcategories`
+      order and, within each, `tiers` order; no row for a code outside
+      `subcategories`.
+    - Section 9: a Subcategory with no `answers` entry, or whose notes are
+      null, empty or only whitespace, gets no row for any tier.
     - Noted answers: deterministic 0/1/2 by position; every 0 is named as not
       demonstrated (section 9), then the rating and evidence sentences.
     - Section 12: no other fields, so no `executive_summary`.
@@ -335,29 +333,22 @@ def _fixture_csf_score(payload: dict[str, Any]) -> LLMResponse:
     scores: list[dict[str, Any]] = []
     for si, code in enumerate(_strs(payload.get("subcategories"))):
         answer = answers.get(code)
+        notes = answer.get("notes") if isinstance(answer, dict) else None
+        if not isinstance(answer, dict) or not isinstance(notes, str) or not notes.strip():
+            continue  # section 9 (v4): no notes, no row, for any tier
         for ti, tier in enumerate(tiers):
             row: dict[str, Any] = {"tier": tier, "subcategory_code": code}
-            notes = answer.get("notes") if isinstance(answer, dict) else None
-            if not isinstance(answer, dict):
-                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
-                row["what_we_found"] = _CSF_NO_ANSWER
-            elif not isinstance(notes, str) or not notes.strip():
-                row.update(dict.fromkeys(_CSF_DIMENSIONS, 0))
-                row["what_we_found"] = _csf_what_we_found(
-                    "No assessment dimension was demonstrated by the notes.", [], answer
-                )
-            else:
-                base = (ti + si) % 3
-                for di, dim in enumerate(_CSF_DIMENSIONS):
-                    row[dim] = (base + di) % 3  # deterministic 0/1/2
-                missing = [
-                    name
-                    for dim, name in zip(_CSF_DIMENSIONS, _CSF_DIMENSION_NAMES, strict=True)
-                    if row[dim] == 0
-                ]
-                row["what_we_found"] = _csf_what_we_found(
-                    f"Fixture-mode finding for {code} in the {tier} tier profile.", missing, answer
-                )
+            base = (ti + si) % 3
+            for di, dim in enumerate(_CSF_DIMENSIONS):
+                row[dim] = (base + di) % 3  # deterministic 0/1/2
+            missing = [
+                name
+                for dim, name in zip(_CSF_DIMENSIONS, _CSF_DIMENSION_NAMES, strict=True)
+                if row[dim] == 0
+            ]
+            row["what_we_found"] = _csf_what_we_found(
+                f"Fixture-mode finding for {code} in the {tier} tier profile.", missing, answer
+            )
             scores.append(row)
     return _resp({"scores": scores})
 

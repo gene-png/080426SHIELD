@@ -67,6 +67,9 @@ def preview_ai_payload(
     Deliberately does NOT run the job: no provider is constructed, no
     ``llm_calls`` row is written, nothing egresses. Reuses the exact payload
     builder run-ai uses so the preview equals what would actually be sent.
+    One exception: when that payload asks about nothing (a ZT assessment with
+    every capability blank, #1084), run-ai makes no call at all, so the empty
+    payload shown here is never sent.
     """
     svc: Service = require_service_in_tenant(db, body.service_id, client.id)
     builder = _BUILDERS.get(svc.kind)

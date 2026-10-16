@@ -666,9 +666,10 @@ def test_re_releasing_repairs_a_parent_that_never_got_flipped(app_client, capsys
 @pytest.mark.unit
 def test_a_parent_released_concurrently_is_logged_not_overwritten(app_client, capsys) -> None:
     """#657 round 4. The parent flip is a conditional UPDATE (WHERE status =
-    APPROVED), so for CSF, ZT and ATT&CK -- which pass no guard -- the one new
-    branch is a flip that misses because the status moved underneath it. The
-    only concurrent transition is APPROVED -> RELEASED (another release). Driven
+    APPROVED), so a flip can miss because the status moved underneath it. For
+    CSF, which passes no guard, that is the only way it misses. A move to
+    RELEASED (another release) is the benign case, pinned here; any other move
+    is refused (#1123, `test_release_status_change_race*.py`). Driven
     here for CSF: a one-shot hook commits that transition from a separate
     session immediately before the flip. The release itself must still land
     exactly as main gives it (200, deliverable released, parent released), and

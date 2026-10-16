@@ -28,6 +28,10 @@ class CatalogCapability(BaseModel):
     #: "function", or "cross_cutting" for a CISA pillar's Visibility and
     #: Analytics, Automation and Orchestration and Governance rows (#838).
     kind: str = "function"
+    #: #922: the highest MATURITY stage this capability may be stored at, the
+    #: value every maturity-stage write refuses above (`max_stage_for`, #839).
+    #: Not a cap on the target stage, which is stored above it and disclosed.
+    max_stage: int
 
 
 class CatalogPillar(BaseModel):
@@ -82,6 +86,8 @@ class ZtAnswerResponse(BaseModel):
     capability_code: str
     maturity_stage: int | None
     target_stage: int | None = None
+    #: #982: who set `target_stage`; None = origin not recorded.
+    target_source: str | None = None
     notes: str | None
     evidence_artifact_id: uuid.UUID | None
     locked: bool = False
