@@ -54,11 +54,13 @@ function statusOf(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-/** #1115 (advisor 6207611148): the statuses that JUDGED the value, a 400, a
- *  409 (the intake will never take it) or a 422. Only these let the typed
- *  value go. A 401, 403 or 429, typed or not, says nothing about the value,
- *  so the client keeps what they typed and can save it again. */
-const JUDGED_THE_VALUE = new Set([400, 409, 422]);
+/** #1115 (advisor 6207611148), narrowed by #1207 item 1 (option (A),
+ *  6216024281): the status that JUDGED the value is a 422 only, the schema's
+ *  or the route's typed 422s. On PATCH /intake a 400 comes from
+ *  `current_client` or the proxy's "Invalid JSON body.", and nothing returns
+ *  a 409, so neither says anything about the value. Only a 422 lets the typed
+ *  value go; any other answer keeps it, so the client can save it again. */
+const JUDGED_THE_VALUE = new Set([422]);
 
 function isValueRefusal(err: unknown): boolean {
   const status = statusOf(err);
@@ -103,7 +105,7 @@ function fallbackFor(err: unknown, kept: boolean): string {
  * `null` on failure. The SaveStatus indicator reads `saveState` directly.
  *
  * `onRefused(patch)` is called when the api ANSWERED and judged the value (a
- * 400, 409 or 422, #1115), so a caller holding the typed value can let it go:
+ * 422, #1115 and #1207), so a caller holding the typed value can let it go:
  * the server does not hold it and never will (review of #757, finding 2).
  * Any other answer keeps it.
  *
