@@ -148,12 +148,14 @@ if [ "$UNIT" = "narrow" ]; then
     exit 2
   fi
   echo "$P narrow   $n test file(s): $(tr '\n' ' ' < "$T/narrow.txt")"
-  NARROW=(--narrow-files "$T/narrow.txt")
+  NARROW=(--narrow-files "$TM/narrow.txt")
 else
   NARROW=()
 fi
 
-python "$T/repo/apps/api/scripts/preflight_plan.py" --root "$T/repo" --out "$T/plan" \
+# Paths handed to python, a native Windows executable under Git Bash, are in
+# the mixed form: an MSYS path reaches it as \tmp\... and does not resolve.
+python "$TM/repo/apps/api/scripts/preflight_plan.py" --root "$TM/repo" --out "$TM/plan" \
   --base-branch "$BASE_BRANCH" --pr-number "$PR" --unit "$UNIT" "${NARROW[@]}" > /dev/null
 
 # What GitHub will close. Before the PR exists there is nothing to ask, and the
@@ -223,7 +225,7 @@ if grep -q "^PREFLIGHT-SETUP-FAILED" "$T/container.log"; then
 fi
 
 # The web checks, by their own route, against the same committed tree.
-glob="$(python -c "import json,re,sys; s=json.load(open(sys.argv[1]))['scripts']['format:check']; m=re.fullmatch(r'prettier --check \"([^\"]+)\"', s); print(m.group(1) if m else '')" "$T/repo/package.json")"
+glob="$(python -c "import json,re,sys; s=json.load(open(sys.argv[1]))['scripts']['format:check']; m=re.fullmatch(r'prettier --check \"([^\"]+)\"', s); print(m.group(1) if m else '')" "$TM/repo/package.json")"
 [ -n "$glob" ] || { echo "$P COULD NOT LOOK -- package.json's format:check is not \`prettier --check \"<glob>\"\`" >&2; exit 2; }
 v="$(bash scripts/prettier-hook.sh --print-version)" || { echo "$P COULD NOT LOOK -- could not read prettier's version from the lockfile" >&2; exit 2; }
 set +e
