@@ -11,9 +11,9 @@ import {
 } from "./client";
 
 /**
- * #1213, the intake sites (#1093 item 2's rule, applied to the twins). Our
- * proxy answers every 2xx with JSON, and an api 2xx it cannot read already
- * reaches the browser as the typed 504. So a 2xx whose body is not JSON came
+ * #1213, the intake sites (#1093 item 2's rule, applied to the twins). The
+ * intake proxies answer a 2xx with JSON (see `unreadableWrite` in client.ts for
+ * the per-route trace). So a 2xx whose body is not JSON came
  * from something in front of the app (a captive portal, a proxy's block page)
  * and the request may never have arrived.
  *
