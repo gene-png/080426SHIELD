@@ -426,3 +426,18 @@ def test_a_job_that_reads_other_jobs_results_stays_on_github(tmp_path: Path) -> 
     kinds = {s["job"]: s["kind"] for s in _plan(_repo(tmp_path, **{"ci.yml": wf}))}
     assert kinds["aggregate"] == "github", kinds
     assert kinds["python"] != "github", kinds
+
+
+def test_a_job_that_only_depends_on_another_job_still_runs_here(tmp_path: Path) -> None:
+    # The false-positive side: a `needs:` KEY orders jobs and reads nothing, so
+    # a job with one and no `${{ needs.* }}` expression is still planned to run
+    # (review of 3e91ece6).
+    wf = CI + (
+        "      after:\n"
+        "        needs: [python]\n"
+        "        runs-on: ubuntu-latest\n"
+        "        steps:\n"
+        "          - run: python -m scripts.check_b\n"
+    )
+    kinds = {s["job"]: s["kind"] for s in _plan(_repo(tmp_path, **{"ci.yml": wf}))}
+    assert kinds["after"] == "run", kinds
