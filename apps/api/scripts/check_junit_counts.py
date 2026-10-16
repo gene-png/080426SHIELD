@@ -2,7 +2,8 @@
 
 WHY. CI runs `pytest -m unit tests/unit` over four xdist workers on one runner
 (`-n 4`). pytest's own summary line counts what the workers REPORTED, and a
-worker that dies has its test re-run elsewhere or reported as an error, so a
+worker that dies is replaced, its running test reported as failed and its
+pending tests handed to the others, so a
 green summary does not by itself say that every selected test ran exactly
 once. `check_ci_selection.py --selected-out` writes the set it certified; this
 holds the run's junit XML to that set, TEST BY TEST, never by the summary line.
@@ -84,7 +85,9 @@ def _read_cases(path: Path) -> list[tuple[tuple[str, str], str]]:
     return cases
 
 
-def evaluate(selected: list[str], cases: list[tuple[tuple[str, str], str]]) -> tuple[list[str], dict]:
+def evaluate(
+    selected: list[str], cases: list[tuple[tuple[str, str], str]]
+) -> tuple[list[str], dict]:
     """Findings, and the counts by outcome."""
     wanted = {junit_id(nodeid): nodeid for nodeid in selected}
     seen = Counter(key for key, _ in cases)
@@ -100,9 +103,7 @@ def evaluate(selected: list[str], cases: list[tuple[tuple[str, str], str]]) -> t
         if key not in seen
     ]
     findings += [
-        f"reported but not selected: {'::'.join(key)}"
-        for key in sorted(seen)
-        if key not in wanted
+        f"reported but not selected: {'::'.join(key)}" for key in sorted(seen) if key not in wanted
     ]
     accounted = counts["passed"] + counts["skipped"] + counts["xfailed"]
     if accounted < len(selected):
@@ -142,9 +143,7 @@ def main(argv: list[str]) -> int:
         f"{counts['passed']} passed, {counts['skipped']} skipped, "
         f"{counts['xfailed']} xfailed, {counts['failed']} failed or errored"
     )
-    skipped = sorted(
-        "::".join(key) for key, outcome in cases if outcome == "skipped"
-    )
+    skipped = sorted("::".join(key) for key, outcome in cases if outcome == "skipped")
     for name in skipped[:50]:
         print(f"  skipped, did not run: {name}")
     if len(skipped) > 50:

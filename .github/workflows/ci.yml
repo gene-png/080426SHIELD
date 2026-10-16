@@ -548,8 +548,9 @@ jobs:
         working-directory: apps/api
         run: pytest -m unit tests/unit -n 4 --junitxml="$RUNNER_TEMP/pytest-unit.xml"
 
-      # Workers can lose a test without pytest noticing the way a serial run
-      # would, and xdist re-runs a crashed worker's test elsewhere. So the run
+      # A worker that crashes is replaced: xdist reports its running test as
+      # failed and hands its pending tests to the others, so the summary line
+      # alone does not say which tests ran. So the run
       # is checked against the certified set, test by test, from the junit XML
       # rather than the summary line: every selected test reported exactly once,
       # nothing reported that was not selected, and passed + skipped + xfailed

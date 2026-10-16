@@ -20,6 +20,9 @@ import pytest
 
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py.
 import scripts.check_junit_counts as counts
+import yaml
+
+from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +59,17 @@ def _project(tmp_path: Path) -> Path:
 def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
     return subprocess.run(  # noqa: S603 - fixed argv
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-m", "unit", "tests/unit", *args],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            "unit",
+            "tests/unit",
+            *args,
+        ],
         cwd=root,
         env=env,
         capture_output=True,
@@ -110,3 +123,54 @@ def test_the_identity_is_the_one_pytest_writes(nodeid: str, expected: tuple[str,
     """Written from pytest's own examples of `mangle_test_address`, not from the
     function under test; the real runs above are what prove it matches."""
     assert counts.junit_id(nodeid) == expected
+
+
+# --- the step that runs this gate in CI ----------------------------------------
+#
+# Deleting the step, or pointing it at a different file than the one the run
+# wrote, leaves a green Python check over a run nothing counted. So the step is
+# pinned by EQUALITY, and both file paths are read from the steps that produce
+# them rather than from this module.
+
+COUNT_CMD = (
+    "python -m scripts.check_junit_counts"
+    ' --junit "$RUNNER_TEMP/pytest-unit.xml"'
+    ' --selected "$RUNNER_TEMP/pytest-selection.txt"'
+)
+
+
+def _python_steps() -> list[dict]:
+    wf = find_workflows_dir(Path(__file__).resolve())
+    assert wf is not None, "no .github/workflows above this file: run from a full checkout"
+    jobs = yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))["jobs"]
+    found = [j for j in jobs.values() if j.get("name") == "Python (ruff + black + pytest + bandit)"]
+    assert len(found) == 1, f"expected one job with the required Python name, found {len(found)}"
+    return found[0]["steps"]
+
+
+def _run(step: dict) -> str:
+    return str(step.get("run", "")).strip()
+
+
+def test_ci_counts_the_unit_run_immediately_after_it() -> None:
+    steps = _python_steps()
+    pytest_at = [i for i, s in enumerate(steps) if _run(s).startswith("pytest ")]
+    assert len(pytest_at) == 1, f"expected one pytest step, found {len(pytest_at)}"
+    i = pytest_at[0]
+    counted = [s for s in steps if "check_junit_counts" in _run(s)]
+    assert len(counted) == 1, f"expected one step running check_junit_counts, found {len(counted)}"
+    step = steps[i + 1]
+    assert _run(step) == COUNT_CMD, _run(step)
+    # Counted on a red run too, and never allowed to fail quietly.
+    assert step.get("if") == "always()", step.get("if")
+    assert "continue-on-error" not in step, step
+    assert "shell" not in step, step
+    assert step.get("working-directory") == "apps/api", step.get("working-directory")
+
+
+def test_the_counted_files_are_the_ones_the_run_and_the_gate_wrote() -> None:
+    steps = _python_steps()
+    (i,) = [i for i, s in enumerate(steps) if _run(s).startswith("pytest ")]
+    assert '--junitxml="$RUNNER_TEMP/pytest-unit.xml"' in _run(steps[i]).split(), _run(steps[i])
+    gate = steps[i - 1]
+    assert _run(gate).endswith('--selected-out "$RUNNER_TEMP/pytest-selection.txt"'), _run(gate)

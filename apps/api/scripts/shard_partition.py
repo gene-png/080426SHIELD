@@ -23,7 +23,6 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
 # --- the command -----------------------------------------------------------------
 
 
