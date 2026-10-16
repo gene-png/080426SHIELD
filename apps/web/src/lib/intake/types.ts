@@ -134,8 +134,10 @@ export interface ClientProfilePatch {
 export interface IntakePatchRequest {
   client?: ClientProfilePatch;
   display_name?: string;
-  title?: string;
-  phone?: string;
+  /** #1198: null clears a stored title or phone; display_name and timezone
+   *  cannot be cleared, so they stay optional strings. */
+  title?: string | null;
+  phone?: string | null;
   timezone?: string;
 }
 
