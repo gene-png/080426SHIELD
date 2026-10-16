@@ -98,6 +98,44 @@ from pathlib import Path
 # mapping nor the fixture tree FAILS the run: silence must not be how coverage
 # quietly shrinks.
 DEFERRED: dict[str, str] = {
+    "merge_group_pr.py": (
+        "Resolves a merge-queue entry to its PR's current body with `gh`, so every "
+        "exit-0 case needs a network fetch, and a fixture here runs "
+        "`[sys.executable] + argv` with no way to replace `gh`. It also has NO exit 1 "
+        "by design: it resolves inputs and judges nothing, so the contract's "
+        "negative-control rule has nothing to hold it to. Its states are covered by "
+        "`tests/unit/test_merge_group_pr.py` with `gh` replaced in-process: 0 for a "
+        "valid queue ref, writing that PR's body (the fake answers per PR number, so "
+        "the wrong PR is visible); 2 for 16 malformed refs refused by "
+        "`parse_pr_number` (4 of them run through `main()`, calling `gh` zero "
+        "times), for each of the five fetches failing with pre-seeded stale outputs "
+        "deleted, for a file or commit list shorter than the PR reports (GitHub "
+        "truncates silently), for GitHub answering with a different PR, and for bad arguments. "
+        "Red-on-revert, 2026-09-26, nine mutations each red on its named test "
+        "(leading zeros, search for fullmatch, a PR-0 fallback, no stale-output "
+        "delete, a foreign PR accepted, null body as 'None', a gh failure uncaught, "
+        "nothing asked for accepted, the wrong body written). "
+        "The group-head confirmation (#736 item C) is covered by "
+        "`tests/unit/test_merge_group_head.py` with `git` replaced (0 when the group's "
+        "tree is base plus the PR head; 2 for a moved head, a merge-tree conflict, "
+        "merge-tree failing, an unfetchable commit, a missing or malformed group sha, "
+        "and an unreadable PR head), by `tests/unit/test_merge_group_payloads.py`, "
+        "which replays a recorded merge_group payload through both workflows' steps, "
+        "and against real git by `tests/gates/merge_group_head.sh`. Red-on-revert, "
+        "2026-10-15: the confirmation skipped, a conflict accepted, one group sha "
+        "accepted, an unfetchable commit accepted, each red on its named test."
+    ),
+    "merge_group_head.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It builds a throwaway repository and runs `merge_group_pr.py` with "
+        "`--base-sha/--group-head-sha` against a stub `gh` in seven states: a "
+        "squash-shaped group and a merge-commit-shaped group exit 0; a PR pushed "
+        "after it was queued, a group holding a second PR, and a head conflicting "
+        "with the base exit 2 with no body written; a head missing from the clone "
+        "is fetched by sha and then exits 0; a head that cannot be fetched exits 2. "
+        "Red-on-revert, 2026-10-15: the confirmation skipped turns four cases red, "
+        "and the fetch removed turns the fetch case red."
+    ),
     "compose_unchanged.py": (
         "Reads a git RANGE -- the merge base and the head -- and a fixture here is "
         "a static directory, not a repository, so no case can give it a range. "
@@ -130,6 +168,15 @@ DEFERRED: dict[str, str] = {
     # thing it guards -- and what this file now enforces for them is the half
     # that was actually missing: that a workflow INVOKES them. Both shipped
     # with neither, and ran nowhere for weeks.
+    "gitleaks_merge_group.sh": (
+        "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
+        "It builds a throwaway repository and runs `scripts/gitleaks-merge-group.sh` "
+        "against a stub gitleaks in five states: a squash-shaped group exits 0 "
+        "having run the scanner over exactly base..head; a merge-shaped group "
+        "exits 2 without running it (the zero-commit guard); a leak exits 1; an "
+        "unknown sha and a missing argument exit 2. Red-on-revert, 2026-09-26: "
+        "the zero-commit guard removed turns the merge-shaped case red."
+    ),
     "prepush_hook_status.sh": (
         "Bash, so unfixturable by a harness that runs `[sys.executable] + argv`. "
         "It EXTRACTS the api-unit-tests hook's `bash -c` body from "

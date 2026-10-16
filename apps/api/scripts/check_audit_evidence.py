@@ -97,6 +97,13 @@ def _label(word: str) -> re.Pattern[str]:
 FINDINGS = _label("findings")
 DISPOSITION = _label("disposition")
 
+#: The hashes opening a heading line, to find where the audit section ends.
+_HASHES = re.compile(r"[ \t]{0,3}(#{1,6})")
+#: A hex token of 7 to 40 characters standing alone: `13af17d`, `review-13af17d`
+#: and a backticked sha qualify; `x13af17d` and a 41-character run do not.
+_SHA_TOKEN = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{7,40}(?![0-9A-Za-z])")
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
 #: Paths that cannot change behaviour. Everything else counts as code — the
 #: default is deliberately "this needs an audit", so a new directory is covered
 #: without anyone remembering to add it.
@@ -144,13 +151,58 @@ def missing_evidence(body: str) -> list[str]:
     return problems
 
 
+def audit_section(body: str) -> str:
+    """The text under the `Adversarial audit` heading, up to the next heading
+    of the same or a higher level: a `### Round 2` inside it does not end it."""
+    match = HEADING.search(body)
+    if match is None:
+        return ""
+    level = len(_HASHES.match(body, match.start()).group(1))
+    rest = body[match.end() :]
+    end = re.search(rf"^[ \t]{{0,3}}#{{1,{level}}}[ \t]", rest, re.MULTILINE)
+    return rest[: end.start()] if end else rest
+
+
+def names_head(body: str, head: str) -> bool:
+    """Whether the audit section names `head` by a 7-to-40-hex prefix of it.
+
+    merge_group only (#659, #736 item C): the queue merges the PR's current
+    head, and an audit naming an earlier head says nothing about it. Measured
+    2026-10-15 over the 20 most recent merged PRs (1039 to 1162): every audit
+    section named the final head this way, so the rule asks for nothing recent
+    merges lacked.
+    An attestation like `Findings:`: it proves the audit names the merged head,
+    not that a reviewer read it."""
+    return any(head.startswith(t.lower()) for t in _SHA_TOKEN.findall(audit_section(body)))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--changed-files", required=True, help="file listing changed paths, one per line"
     )
     ap.add_argument("--body", required=True, help="file containing the PR body")
+    ap.add_argument(
+        "--head-sha",
+        help="merge_group only: file holding the queued PR's current head, which "
+        "the audit section must then name",
+    )
     args = ap.parse_args(argv)
+
+    head: str | None = None
+    if args.head_sha is not None:
+        try:
+            head = Path(args.head_sha).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"audit gate: could not read --head-sha {args.head_sha}: {exc}", file=sys.stderr)
+            return 2
+        if _FULL_SHA.fullmatch(head) is None:
+            print(
+                f"audit gate: --head-sha {args.head_sha} does not hold a 40-character "
+                f"lowercase hex sha (read {head!r}) -- refusing to guess which head is merged.",
+                file=sys.stderr,
+            )
+            return 2
 
     paths = Path(args.changed_files).read_text(encoding="utf-8").splitlines()
     # Fail CLOSED on no input. `is_code_change([])` is False, so an empty list
@@ -179,11 +231,17 @@ def main(argv: list[str] | None = None) -> int:
 
     body = Path(args.body).read_text(encoding="utf-8")
     problems = missing_evidence(body)
+    if head is not None and not names_head(body, head):
+        problems.append(
+            f"the audit section does not name the head being merged ({head}); on a "
+            "merge-queue entry it must contain a 7-to-40-character prefix of it"
+        )
     if not problems:
+        named = f"; it names the queued head {head[:12]}" if head else ""
         print(
             f"audit gate: adversarial audit recorded ({len(read)} changed path(s) read, "
             f"{len(code)} of them code; the body has an `Adversarial audit` heading, "
-            f"a `Findings:` line and a `Disposition:` line)."
+            f"a `Findings:` line and a `Disposition:` line{named})."
         )
         return 0
 

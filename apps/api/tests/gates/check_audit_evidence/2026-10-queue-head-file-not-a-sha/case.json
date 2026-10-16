@@ -1,0 +1,4 @@
+{"incident": "#736 item C, the fail-closed half: an abbreviated head would let any 7-hex token in the audit match a prefix of it, so the head file must hold a full 40-hex sha. Anything else is could-not-look, never a pass.",
+ "expect": 2, "adversarial": false,
+ "stdout_contains": "does not hold a 40-character",
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md", "--head-sha", "{dir}/head.txt"]}

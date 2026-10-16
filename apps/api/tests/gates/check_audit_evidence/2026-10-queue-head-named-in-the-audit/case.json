@@ -1,0 +1,3 @@
+{"incident": "#736 item C control: the shape the recent merges actually use, the final head named on a later line under a subheading of the audit section, must pass on a merge-queue entry or the queue reddens compliant PRs.",
+ "expect": 0, "adversarial": false,
+ "argv": ["--changed-files", "{dir}/changed.txt", "--body", "{dir}/body.md", "--head-sha", "{dir}/head.txt"]}
