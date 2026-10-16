@@ -824,8 +824,33 @@ class LLMClient:
             # #645: NULL outside a Run-AI (the preview, Risk synthesis).
             ai_run_id=ai_run_id_var.get(),
         )
-        db.add(row)
-        db.flush()
+        # #1025 holder 3: with the row flushed into the caller's session, a write
+        # transaction stayed open -- one pooled connection held -- for the whole
+        # provider call, in every batch worker. When the caller holds NO
+        # transaction (and so no connection), the row is committed from a short
+        # session of its own instead: durable before egress, and nothing held
+        # during the call. When the caller is already in a transaction, its
+        # connection is held across the call either way (#1025 holder 2, held
+        # for the advisor), so the row joins that transaction as before: a
+        # second connection beside it would double this call's peak, and could
+        # deadlock the pool under load or block on the caller's pending write.
+        # The caller's transaction is never ended or committed here.
+        own_ledger = not db.in_transaction()
+        if own_ledger:
+            with Session(bind=db.get_bind(), expire_on_commit=False) as ledger:
+                ledger.add(row)
+                ledger.commit()
+        else:
+            db.add(row)
+            db.flush()
+
+        def _finish() -> None:
+            if own_ledger:
+                with Session(bind=db.get_bind(), expire_on_commit=False) as ledger:
+                    ledger.add(row)
+                    ledger.commit()
+            else:
+                db.flush()
 
         # Pass the purpose into the fixture so tests can register per-purpose
         # responses. Real providers strip __-prefixed control keys before egress
@@ -843,7 +868,7 @@ class LLMClient:
                 row.input_tokens = exc.input_tokens
                 row.output_tokens = exc.output_tokens
             row.duration_ms = int((time.monotonic() - started) * 1000)
-            db.flush()
+            _finish()
             _log.error(
                 "llm_call_failed",
                 purpose=purpose,
@@ -859,7 +884,13 @@ class LLMClient:
         from app.models._common import utcnow as _utcnow
 
         row.completed_at = _utcnow()
-        db.flush()
+        # #1025: a run reaped while this call was in flight had its RUNNING row
+        # ended FAILED with the reap's reason. The call then completed, which is
+        # what the ledger must say; the reap stays on the ai_runs row. Set
+        # explicitly so the UPDATE carries it (an unchanged attribute is not
+        # sent).
+        row.error_message = None
+        _finish()
 
         _log.info(
             "llm_call_completed",

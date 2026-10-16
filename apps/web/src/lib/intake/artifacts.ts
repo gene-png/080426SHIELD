@@ -29,14 +29,24 @@ export class ArtifactUploadError extends Error {
   }
 }
 
+/**
+ * `clientId`, when given, files the upload under that tenant explicitly
+ * (#1262): an admin workspace passes its own client, so a document is not
+ * stored under whichever client the shared cookie names. The client wizard
+ * passes none.
+ */
 export async function uploadArtifact(
   file: File,
   notes?: string,
+  clientId?: string,
 ): Promise<ArtifactSummary> {
   const form = new FormData();
   form.append("file", file);
   if (notes) form.append("notes", notes);
-  const res = await fetch("/api/proxy/artifacts", {
+  const url = clientId
+    ? `/api/proxy/artifacts?client_id=${encodeURIComponent(clientId)}`
+    : "/api/proxy/artifacts";
+  const res = await fetch(url, {
     method: "POST",
     body: form,
   });

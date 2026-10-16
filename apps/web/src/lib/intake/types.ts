@@ -107,22 +107,22 @@ export const ASSESSMENT_SERVICE_TYPES: ReadonlyArray<ServiceType> = [
 ];
 
 export interface ClientProfilePatch {
-  legal_name?: string;
-  dba_name?: string;
-  website?: string;
-  size_band?: string;
-  industry?: string;
-  address_line1?: string;
-  address_line2?: string;
-  city?: string;
-  state?: string;
-  postal_code?: string;
-  country?: string;
-  prompting_context?: string;
+  legal_name?: string | null;
+  dba_name?: string | null;
+  website?: string | null;
+  size_band?: string | null;
+  industry?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  prompting_context?: string | null;
   service_interests?: ServiceType[];
   /**
-   * Primary-contact override (migration 0039). Explicitly nullable, unlike the
-   * fields above: clearing "I am not the primary contact" has to SEND null to
+   * Primary-contact override (migration 0039). Explicitly nullable, like the
+   * fields above since #1093: clearing "I am not the primary contact" has to SEND null to
    * erase a stored override, and an optional-undefined field cannot say that.
    */
   primary_contact_name?: string | null;

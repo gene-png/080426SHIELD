@@ -18,7 +18,11 @@ import type { AiServes } from "@/lib/aiRuns/types";
 import { useAiRun } from "@/lib/aiRuns/useAiRun";
 import { AiRunStatus } from "@/components/admin/AiRunStatus";
 import { splitLines } from "@/lib/text";
-import { sourceItems } from "@/lib/tech_debt/components";
+import {
+  noCostItems,
+  noCostSentence,
+  sourceItems,
+} from "@/lib/tech_debt/components";
 import { RedactionDisclosure } from "@/components/intake/RedactionDisclosure";
 import {
   addCapabilityComponents,
@@ -33,11 +37,12 @@ import {
   fetchConsolidationPlan,
   fetchLatestDeliverable,
   fetchLatestList,
+  fetchCategories,
   fetchOverlapAnalysis,
   proxyMessage,
   TechDebtProxyError,
 } from "@/lib/tech_debt/client";
-import type { TechDebtRun } from "@/lib/tech_debt/client";
+import type { TechDebtCategories, TechDebtRun } from "@/lib/tech_debt/client";
 import type {
   CapabilityDisposition,
   CapabilityItem,
@@ -53,6 +58,7 @@ import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
 import { DeliverableCard } from "./DeliverableCard";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
+import { BulkKeepUndecided } from "./BulkKeepUndecided";
 import { DispositionHelp } from "./DispositionHelp";
 import { EditableCapabilityTable } from "./EditableCapabilityTable";
 import { ExtractionFindings } from "./ExtractionFindings";
@@ -144,6 +150,32 @@ export function TechDebtWorkspace({
     useRefreshFailures();
   const { settled: aiSettled } = useAiStatus();
   const [extracting, setExtracting] = React.useState(false);
+  // #1176: the category dropdown's options, read once. "error" is shown, never
+  // replaced by free text.
+  const [categories, setCategories] = React.useState<
+    TechDebtCategories | "error" | null
+  >(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    // Started inside the chain, so even a synchronous throw arrives as a
+    // rejection and is handled here, after the effect has returned.
+    Promise.resolve()
+      .then(() => fetchCategories())
+      .then(
+        (c) => {
+          if (!cancelled) setCategories(c);
+        },
+        (err: unknown) => {
+          console.warn(
+            `[TechDebtWorkspace] category list not loaded: ${proxyMessage(err, "no message")}`,
+          );
+          if (!cancelled) setCategories("error");
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   const [extractError, setExtractError] = React.useState<string | null>(null);
   // #550: set once an extraction's outcome is unknown and never cleared; a
@@ -291,6 +323,9 @@ Name it:`,
       "",
     );
     if (name === null || !name.trim()) return;
+    // #1176: still free text, deliberately (the rest is tracked in #1247). The
+    // API's include route takes any category; the dropdown shows an off-list
+    // one as "(not on the list)". See `_refuse_off_list_category`.
     const category = window.prompt("Category (optional):", "") ?? undefined;
     setSplitError(null);
     // Every list-producing operation bumps `listSeq`, so an earlier read still
@@ -452,12 +487,16 @@ Components carry no cost of their own — this licence keeps its full value.`,
   async function onBulkDisposition(
     itemIds: string[],
     disposition: CapabilityDisposition | null,
+    onlyIfUndecided = false,
   ): Promise<void> {
     if (!list) return;
     listSeq.current += 1;
     let next: CapabilityList;
     try {
-      next = await bulkSetDisposition(list.id, itemIds, disposition);
+      // The flag is passed only when set, so #641's calls are unchanged.
+      next = onlyIfUndecided
+        ? await bulkSetDisposition(list.id, itemIds, disposition, true)
+        : await bulkSetDisposition(list.id, itemIds, disposition);
     } catch (err) {
       // Rethrown, not swallowed: the TABLE owns this refusal's display (beside
       // the bulk bar, with the selection kept for a retry), and a rejection is
@@ -599,6 +638,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
     (acc, i) => acc + (i.annual_cost_usd ?? 0),
     0,
   );
+  // TD-10 (for #1048): the total leaves these out, and says how many.
+  const noCost = noCostSentence(list ? noCostItems(list.items).length : 0);
   const lowConfidence =
     list?.items.filter(
       (i) => i.confidence_pct !== null && i.confidence_pct < 70,
@@ -803,7 +844,11 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 : undefined
             }
           />
-          <NumberCard label="Annual cost" value={costFmt} />
+          <NumberCard
+            label="Annual cost"
+            value={costFmt}
+            hint={noCost ?? undefined}
+          />
           <NumberCard label="Categories" value={categoryCount} />
           <NumberCard
             label="To cut"
@@ -843,6 +888,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
                 <StatusPill tone="neutral">
                   Total cost: ${totalCost.toLocaleString()}
                 </StatusPill>
+                {noCost ? (
+                  <StatusPill tone="warning">{noCost}</StatusPill>
+                ) : null}
                 <DiscardDraftButton
                   status={list.status}
                   destructionSummary={discardSummary}
@@ -972,13 +1020,30 @@ Components carry no cost of their own — this licence keeps its full value.`,
               readOnly={readOnly}
             />
             <DispositionHelp />
+            {/* TD-11 (for #1055): every undecided row to Keep, guarded on the
+                server so a decision made since this page loaded is never
+                overwritten. */}
+            <BulkKeepUndecided
+              items={list.items}
+              editable={list.status === "draft" || list.status === "approved"}
+              disabled={approving || extracting || discarding}
+              onKeep={(ids) => onBulkDisposition(ids, "keep", true)}
+            />
             <EditableCapabilityTable
+              categories={categories === "error" ? null : categories}
               items={list.items}
               onItemUpdate={onItemUpdate}
               onBulkDisposition={readOnly ? undefined : onBulkDisposition}
               readOnly={readOnly}
               onSplitBundle={readOnly ? undefined : onSplitBundle}
             />
+            {categories === "error" ? (
+              // PLACEHOLDER copy (#1176), pending approval on #736. An alert:
+              // the category column cannot be edited until a reload.
+              <p className="text-sm text-status-danger-fg" role="alert">
+                Categories could not be loaded.
+              </p>
+            ) : null}
             {splitError ? (
               <p className="text-sm text-status-danger-fg" role="alert">
                 {splitError}

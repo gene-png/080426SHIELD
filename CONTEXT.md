@@ -19,7 +19,11 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-16: #1115, intake auto-save keeps a value the server did not judge.** A failed intake save drops what the client typed only on a 400, 409 or 422; a 401, 403 or 429 keeps it and says so, and a bare 5xx from in front of the api says the outcome is unknown. Status: the 2026-10-16 #1115 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
+**2026-10-16: #1093 item 1, an emptied intake field is cleared.** Emptying a Step 2 field now clears it: the wizard sends null, and the api stores NULL for an empty or whitespace-only string instead of refusing a blank website or storing blanks. Status: the 2026-10-16 #1093 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
+**2026-10-16: #1262, a workspace upload is filed under the workspace's client.** A document dropped in a client's Tech Debt workspace is stored under that client even if another tab switched the active client. Status: the 2026-10-16 #1262 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1170, intake suite-listing banner moved to Step 5.** The banner asking Tech Debt and ATT&CK clients to list each product separately now renders at the top of Notes and artifacts (Step 5) and no longer on Systems (Step 4); same variant rule, same approved copy. Status: the 2026-10-16 #1170 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
