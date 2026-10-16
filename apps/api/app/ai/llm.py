@@ -29,8 +29,7 @@ from collections.abc import Callable
 from typing import Any, Literal, Protocol
 
 import httpx
-from sqlalchemy import event
-from sqlalchemy.orm import ORMExecuteState, Session
+from sqlalchemy.orm import Session
 
 from app.ai.catalog_fields import redact_ai_payload
 from app.ai.redact import RedactionMode
@@ -740,38 +739,6 @@ def _build_provider(settings: Settings, runtime_key: str | None = None) -> LLMPr
     )
 
 
-#: #1025: set on a Session whose CURRENT transaction has written -- a flush, or
-#: an INSERT / UPDATE / DELETE executed through it -- and cleared when that
-#: transaction ends. `invoke` reads it to decide whether it may write its
-#: ledger row in a session of its own: it never touches a caller's transaction
-#: either way, but a separate writer beside a caller's pending write would
-#: block on it (SQLite) or reorder it (Postgres).
-_TXN_WROTE = "shield.llm.txn_wrote"
-
-
-@event.listens_for(Session, "after_flush")
-def _mark_flush_wrote(session: Session, _flush_context: Any) -> None:
-    session.info[_TXN_WROTE] = True
-
-
-@event.listens_for(Session, "do_orm_execute")
-def _mark_dml_wrote(state: ORMExecuteState) -> None:
-    if state.is_insert or state.is_update or state.is_delete:
-        state.session.info[_TXN_WROTE] = True
-
-
-@event.listens_for(Session, "after_transaction_end")
-def _clear_wrote(session: Session, transaction: Any) -> None:
-    # Only the OUTERMOST transaction's end clears it: a savepoint released
-    # inside a transaction that wrote leaves that write pending.
-    if transaction.parent is None:
-        session.info.pop(_TXN_WROTE, None)
-
-
-def _caller_has_written(db: Session) -> bool:
-    return db.in_transaction() and bool(db.info.get(_TXN_WROTE))
-
-
 class LLMClient:
     """The blessed surface for AI calls. Routes never construct a provider
     directly; they go through `LLMClient.invoke(...)`."""
@@ -859,20 +826,21 @@ class LLMClient:
         )
         # #1025 holder 3: with the row flushed into the caller's session, a write
         # transaction stayed open -- one pooled connection held -- for the whole
-        # provider call, in the job and in every batch worker. When the caller's
-        # transaction has not written, the row is committed from a short
+        # provider call, in every batch worker. When the caller holds NO
+        # transaction (and so no connection), the row is committed from a short
         # session of its own instead: durable before egress, and nothing held
-        # during the call. The caller's transaction is never ended or committed
-        # here; when it HAS written, a separate writer beside that pending write
-        # would block on it, so the row stays in it, as before, and that holder
-        # is logged rather than silent.
-        own_ledger = not _caller_has_written(db)
+        # during the call. When the caller is already in a transaction, its
+        # connection is held across the call either way (#1025 holder 2, held
+        # for the advisor), so the row joins that transaction as before: a
+        # second connection beside it would double this call's peak, and could
+        # deadlock the pool under load or block on the caller's pending write.
+        # The caller's transaction is never ended or committed here.
+        own_ledger = not db.in_transaction()
         if own_ledger:
             with Session(bind=db.get_bind(), expire_on_commit=False) as ledger:
                 ledger.add(row)
                 ledger.commit()
         else:
-            _log.warning("llm_invoke_holds_caller_write", purpose=purpose)
             db.add(row)
             db.flush()
 

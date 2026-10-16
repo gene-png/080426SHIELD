@@ -241,7 +241,35 @@ def test_a_caller_that_wrote_keeps_its_transaction_and_the_ledger_row_in_it(
     assert (name, calls) == ("Acme", 0)
 
 
-def test_a_caller_that_has_not_written_gets_a_committed_ledger_row(
+def test_a_caller_with_an_open_read_keeps_one_connection_and_the_row_in_it(
+    app_client,  # noqa: F811
+) -> None:
+    """A caller already in a transaction holds its connection across the call
+    (holder 2, held for the advisor). `invoke` must not add a SECOND one beside
+    it, which would double the call's peak and could starve the pool: the row
+    joins the caller's transaction, unseen by others until it commits."""
+    TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)
+    watch = PoolWatch()
+    watch.attach(TestSession.kw["bind"])
+    seen: list[tuple[int, int]] = []
+
+    def _answer(payload: dict) -> LLMResponse:
+        held = watch.now()
+        seen.append((held, _visible_running(TestSession)))
+        return LLMResponse("{}")
+
+    provider.register("conn_probe", _answer)
+    with TestSession() as db:
+        db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        assert db.in_transaction(), "setup: the caller holds an open read"
+        llm.invoke(db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id)
+        db.commit()
+    assert seen == [(1, 0)], seen
+    with TestSession() as other:
+        assert other.execute(select(LLMCall.status)).scalars().all() == [LLMCallStatus.COMPLETED]
+
+
+def test_a_caller_with_no_transaction_gets_a_committed_ledger_row(
     app_client,  # noqa: F811
 ) -> None:
     """Holder 3 through `invoke` itself: the RUNNING row is visible to another
@@ -265,7 +293,7 @@ def test_a_caller_that_has_not_written_gets_a_committed_ledger_row(
     assert stored == [LLMCallStatus.COMPLETED], stored
 
 
-def test_a_failed_call_from_a_caller_that_has_not_written_is_recorded_failed(
+def test_a_failed_call_from_a_caller_with_no_transaction_is_recorded_failed(
     app_client,  # noqa: F811
 ) -> None:
     TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)

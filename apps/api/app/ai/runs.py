@@ -162,10 +162,12 @@ def _charged_likely(db: Session, run_id: uuid.UUID, mode: LLMCallMode) -> bool |
     True when a committed `llm_calls` row of this run says it went live. False
     only for a run whose mode was OFFLINE: it could not have gone live. For a
     LIVE run with no committed live row the answer is None, NOT KNOWN, never
-    False: `invoke` only FLUSHES its row before calling the provider, so a call
-    that was in flight when the api restarted, or one still streaming when the
-    run was ended at its deadline, leaves no committed row and may well be
-    billing. Missing data defaults to unconfirmed.
+    False. Since #1025, `invoke` COMMITS its RUNNING row before calling the
+    provider whenever the caller holds no transaction (every batch worker), so
+    a call in flight when the api restarted, or still streaming at the run's
+    deadline, reads True here: a call was being made. A call whose row joined
+    the caller's transaction is only flushed, and still leaves no committed
+    row. Missing data defaults to unconfirmed.
     """
     went_live = db.execute(
         select(exists().where(LLMCall.ai_run_id == run_id, LLMCall.mode == LLMCallMode.LIVE))
@@ -454,7 +456,8 @@ class RunContext:
 
 #: A service's job body. Runs in the job's own session; loads by id; calls the
 #: AI inside `ai_call_boundary` and COMMITS straight after, so the `llm_calls`
-#: rows survive a later rollback of the apply; applies with `flush()` only. The
+#: rows survive a later rollback of the apply (a row `invoke` wrote from its own
+#: session, #1025, is committed already); applies with `flush()` only. The
 #: framework commits the apply together with the completion swap.
 Work = Callable[[Session, RunContext], RunOutcome]
 
