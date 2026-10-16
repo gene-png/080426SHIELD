@@ -3,11 +3,18 @@
 _2026-10-16 (coordinator, session_018WJ…): D-113, the merge rule, at your instruction._ An agent merges a PR once every check on its head has finished green and the reviewer has run on that head, with auto-merge and a head guard at the guarded head (you turned the repository's "Allow auto-merge" setting on on 2026-10-16; a push after it is enabled disables it until re-review). Anything with a migration, an extra-care path or client-facing content first needs the advisor's merge approval naming its head SHA, and then the coordinator merges at exactly that head. Status docs are batched. You can still merge anything yourself.
 _2026-10-16 (track T5): #1282, a contact override no longer overwrites the submitter's own details._ When a client named someone else as the primary contact, intake Step 3 showed that person's name, title and phone in the client's own fields, and tabbing through saved them onto the client's account. Step 3 now shows and keeps the client's own details. It comes back to you: condition 5.
 
+
+_2026-10-16 (track T1): CSF Options 1 and 3, PR #1203, for #1073._ The two CSF scoring changes you approved. First, Run AI sends the AI only the subcategories that have interview notes; one with no notes is never sent and is counted as left out, including one a consultant scored (your P1 answer). Second, evidence no longer caps a score: each tier row records "Evidence on file", "Confirmed in discussion" or "Neither", which labels the level. A subcategory nobody scored has no level, target or gap, and is shown as not scored instead of level 1. Assessments approved before this keep their delivered numbers and their cap. Levels are shown by name everywhere, and averages to one decimal, rounded down. It adds migration 0075. It comes back to you: conditions 4, 5 and 6.
+
+_2026-10-16 (track T1): #1006 is done._ Zero Trust (#1235) and CSF (#1261) now hide the names of the client's own users from the AI when they appear in typed notes, as ATT&CK and Tech Debt already did. #1006 is closed.
+
 _2026-10-16 (track T5): #1115, intake auto-save no longer throws away what a client typed when the server did not judge it._ If a save fails because the client's session ended, access was refused or there were too many requests, the typed value now stays in the form with "This value was not saved. It is still in the form, so you can save it again." A bare server error from in front of the api says it could not confirm whether the save went through. Only a real refusal of the value still drops it. It comes back to you: conditions 5 and 6.
 
 _2026-10-16 (track T5): #1093 item 1, emptied intake fields are cleared._ A client who deletes the text of an intake field (Step 2) now clears it. Before, the old value came back on reload, and a blanked website was refused as "not accepted". The second half of #1093 waits on the ruling for #1115, which touches the same file. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1173, a warning about blank answers before submit._ When a client presses "Submit for review" in the CSF or Zero Trust self-assessment with answers still blank, they now see how many are blank, a "Go to Govern (2 blank)" style button for each area with blanks, and "Submit anyway". A complete assessment submits as before. The wording is the text approved on #736. It comes back to you: condition 5.
+
+_2026-10-16 (track T5): #1266, a follow-up to #1262._ When a workspace switches to another service, it no longer keeps showing the previous one's error, and a slow lookup for the previous service can no longer switch the active client back, even with its cookie write already in flight. An error clears once its service opens. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1262, uploads land under the right client._ If a consultant had two clients open in two tabs, a document dropped into one client's Tech Debt workspace could be stored under the other client. It is now always stored under the client the workspace belongs to. It comes back to you: condition 5.
 
@@ -143,7 +150,7 @@ and the what-if chat box already did. A tool an admin names after a colleague
 Two added tools that would both reach the AI as "[NAME] Scanner" are refused
 when the what-if is created. Zero Trust and CSF send typed notes without this
 dictionary too; those files belong to other open PRs, so they are reported to
-you, not changed. It comes back to you: conditions 5 and 6._
+you, not changed (since landed: ZT #1235, CSF #1261). It comes back to you: conditions 5 and 6._
 
 _2026-10-09 (track1): #993 is built on `track1/993-docx-control-chars`, for
 #993; the PR is not yet open. A client legal name with a control character

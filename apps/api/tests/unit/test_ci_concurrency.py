@@ -1,15 +1,20 @@
-"""CI on `main` is never cancelled by the next merge; a PR's superseded run is.
+"""CI on `main` is never cancelled mid-run, and main's runs do not pile up.
 
-`ci.yml` grouped every run by `github.ref` with `cancel-in-progress: true`. On a
-pull request that is right: a new push makes the old run worthless. On `main`
-it is wrong: each merge is a different tree, and merging the next PR cancelled
-the run testing the previous one, so main's own CI never finished: the main
-runs for 7b396488, 779bba01, 1ab60b79, 25b34592 and 9b5623ba (2026-10-16) all
-ended `cancelled`, and the combination of those merges went untested on main.
+History. `ci.yml` first grouped every run by `github.ref` with
+`cancel-in-progress: true`, so merging the next PR cancelled the run testing the
+previous one: the main runs for 7b396488, 779bba01, 1ab60b79, 25b34592 and
+9b5623ba (2026-10-16) all ended `cancelled`. The fix that followed gave each
+push its own group (the commit), which ended the cancelling but let every merge
+start a full run of its own, so main's runs piled up.
 
-The group for a push is therefore the commit, which no other run shares; for a
-pull request it stays the ref. Pinned by equality: the expression IS the
-behaviour, and GitHub evaluates it, not this file.
+Now (the advisor's block, #736 6217076147): the group is the ref again, and
+only a pull request cancels a run in progress. So main has ONE group: a running
+main run is never cancelled, and GitHub keeps at most one PENDING run behind it,
+replacing an older pending one with the newest -- the newest commit is the one
+worth testing. A pull request's superseded run is still cancelled.
+
+Pinned by equality: the expression IS the behaviour, and GitHub evaluates it,
+not this file.
 """
 
 from __future__ import annotations
@@ -25,9 +30,8 @@ pytestmark = pytest.mark.unit
 
 #: Only a pull request cancels a run in progress; a push never does.
 CANCEL = "${{ github.event_name == 'pull_request' }}"
-GROUP = (
-    "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}"
-)
+#: One group per ref: a PR's ref, or main's.
+GROUP = "${{ github.workflow }}-${{ github.ref }}"
 
 
 def _ci() -> dict:
@@ -40,20 +44,18 @@ def _ci() -> dict:
     return yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))
 
 
-def test_a_push_to_main_has_a_group_of_its_own() -> None:
+def test_main_has_one_group_and_only_a_pull_request_cancels() -> None:
     concurrency = _ci().get("concurrency")
     assert concurrency == {"group": GROUP, "cancel-in-progress": CANCEL}, concurrency
 
 
-def test_ci_runs_on_both_events_the_group_tells_apart() -> None:
-    # The group's two arms are only meaningful while CI runs on both events.
+def test_ci_runs_on_the_events_the_group_was_decided_for() -> None:
     on = _ci().get("on", _ci().get(True))
-    # BOUNDED, not equality: `merge_group` (which #659 adds) is the one extra
-    # trigger allowed, because each queue entry is its own temporary commit, so
-    # the commit arm gives it a group of its own. Others are NOT safe there:
-    # `pull_request_target`'s sha is the base tip (every PR would share one
-    # group), and `schedule` / `workflow_dispatch` on main would share a push's
-    # group. Sharing a group serialises runs, and a newer PENDING run replaces
-    # an older pending one even without cancel-in-progress (review of 7c9d2535).
+    # BOUNDED, not equality. `merge_group` (which #659 adds) is the one extra
+    # trigger allowed: each queue entry has a ref of its own, so a group of its
+    # own, and it never cancels. Others would land in a group they were not
+    # decided for: `pull_request_target`, `schedule` and `workflow_dispatch` on
+    # main all carry main's ref, so they would queue behind main's run and could
+    # replace main's pending run (review of 7c9d2535, restated for this group).
     assert {"push", "pull_request"} <= set(on) <= {"push", "pull_request", "merge_group"}, on
     assert on["push"] == {"branches": ["main"]}, on["push"]

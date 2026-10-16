@@ -559,6 +559,7 @@ def get_catalog(
                 name=c.name,
                 outcome=c.outcome,
                 kind=c.kind,
+                max_stage=max_stage_for(cat_fw, c.code),
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code

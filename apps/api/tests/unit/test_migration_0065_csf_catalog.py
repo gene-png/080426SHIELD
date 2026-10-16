@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, insert, literal_column, select
 from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.unit
@@ -187,9 +187,14 @@ def _profile(engine, assessment_id) -> dict[tuple[str, str], tuple]:
     from app.models.csf_profile import CsfDimensionScore
 
     with Session(engine) as db:
+        # `has_evidence` is read as a raw column beside the row: since migration
+        # 0075 the model maps `evidence_status` in its place, which this schema
+        # does not have.
         rows = db.execute(
-            select(CsfDimensionScore).where(CsfDimensionScore.assessment_id == assessment_id)
-        ).scalars()
+            select(CsfDimensionScore, literal_column("has_evidence")).where(
+                CsfDimensionScore.assessment_id == assessment_id
+            )
+        ).all()
         return {
             (r.tier, r.subcategory_code): (
                 r.governance,
@@ -198,12 +203,12 @@ def _profile(engine, assessment_id) -> dict[tuple[str, str], tuple]:
                 r.monitoring,
                 r.improvement,
                 r.in_scope,
-                r.has_evidence,
+                bool(has_evidence),
                 r.locked,
                 r.target_level,
                 r.answer_source,
             )
-            for r in rows
+            for r, has_evidence in rows
         }
 
 

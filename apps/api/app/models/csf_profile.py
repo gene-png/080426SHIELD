@@ -29,6 +29,9 @@ from app.models._common import TimestampMixin, UUIDPKMixin
 #: The deferred group holding `CsfDimensionScore.evidence_basis` (migration
 #: 0068); a query that renders it undefers it.
 EVIDENCE_BASIS_GROUP = "evidence_basis"
+#: The deferred group holding `CsfDimensionScore.evidence_status` (migration
+#: 0075); a query that reads it for many rows undefers it.
+EVIDENCE_STATUS_GROUP = "evidence_status"
 
 
 class CsfEvidenceBasis(enum.StrEnum):
@@ -43,6 +46,18 @@ class CsfEvidenceBasis(enum.StrEnum):
     MANUAL_TICK_FROZEN = "manual_tick_frozen"
     #: Confirmed `evidence_links` rows.
     LINKED = "linked"
+
+
+class CsfEvidenceStatus(enum.StrEnum):
+    """A Working Profile row's evidence, three values (Gene, #736 6201691989
+    item 2; migration 0075, which read `has_evidence` true as ON_FILE and false
+    as NEITHER). Stored as the VALUE. No value changes a score or a level
+    except under the frozen cap (`csf/rules.py::evidence_cap_applies`), which
+    reads ON_FILE alone, as the boolean it replaced did."""
+
+    ON_FILE = "on_file"
+    CONFIRMED_IN_DISCUSSION = "confirmed_in_discussion"
+    NEITHER = "neither"
 
 
 class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
@@ -78,7 +93,29 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     evidence_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artifacts.id", ondelete="SET NULL")
     )
-    has_evidence: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Migration 0075. NOT NULL in the database, server default `neither`.
+    #
+    # DEFERRED (group `EVIDENCE_STATUS_GROUP`) and `evaluates_none()` with NO
+    # ORM default, for `evidence_basis`'s reason below: a select or an ORM
+    # insert against a pre-0075 schema (the migration tests that pin an older
+    # revision) must not name it. An unset attribute is left out of the INSERT
+    # and the server default writes `neither`. The model does NOT declare
+    # that default: declared, SQLAlchemy would read it back with `RETURNING
+    # evidence_status`, naming the column again. The roll-up and the Playbook
+    # reads undefer it in their own query (`undefer_group`), so there is no
+    # per-row load there.
+    evidence_status: Mapped[CsfEvidenceStatus | None] = mapped_column(
+        SAEnum(
+            CsfEvidenceStatus,
+            name="csf_evidence_status",
+            native_enum=False,
+            length=32,
+            values_callable=lambda e: [m.value for m in e],
+        ).evaluates_none(),
+        nullable=False,
+        deferred=True,
+        deferred_group=EVIDENCE_STATUS_GROUP,
+    )
     target_level: Mapped[int | None] = mapped_column(SmallInteger)
 
     # Work Order C2: locked rows are untouched by a Run-AI rerun.
@@ -104,7 +141,7 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
     # #1126. Every other row is NULL: a DRAFT (or SUBMITTED) row's
     # tick switches to the EV-1 rule at launch, and an unticked row has no
     # tick to freeze. NOTHING READS IT FOR SCORING YET: `score_tier`'s
-    # evidence cap still reads `has_evidence` alone.
+    # frozen evidence cap reads `has_evidence` (evidence on file) alone.
     #
     # DEFERRED (group `EVIDENCE_BASIS_GROUP`) and `evaluates_none()`, for
     # `Artifact`'s evidence-intake columns' reason: a select or an ORM insert
@@ -116,6 +153,18 @@ class CsfDimensionScore(UUIDPKMixin, TimestampMixin, Base):
         deferred=True,
         deferred_group=EVIDENCE_BASIS_GROUP,
     )
+
+    @property
+    def has_evidence(self) -> bool:
+        """Evidence on file: what the boolean column meant before 0075, and
+        what the frozen cap reads."""
+        return self.evidence_status == CsfEvidenceStatus.ON_FILE
+
+    @has_evidence.setter
+    def has_evidence(self, value: bool) -> None:
+        """The two values the boolean could write: true is ON_FILE, false is
+        NEITHER. CONFIRMED_IN_DISCUSSION is written through `evidence_status`."""
+        self.evidence_status = CsfEvidenceStatus.ON_FILE if value else CsfEvidenceStatus.NEITHER
 
 
 class CsfGapAction(UUIDPKMixin, TimestampMixin, Base):
