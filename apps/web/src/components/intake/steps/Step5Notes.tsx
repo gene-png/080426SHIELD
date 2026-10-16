@@ -5,6 +5,7 @@ import { Field, inputClasses, textareaClasses } from "../Field";
 import { Dropzone, EmptyArtifactsHint } from "../Dropzone";
 import { RedactionDisclosure } from "../RedactionDisclosure";
 import { SharedServiceDefaults } from "./SharedServiceDefaults";
+import { SuiteListingBanner, suiteBannerVariant } from "../SuiteListingBanner";
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import {
   CSF_PROFILES,
@@ -50,6 +51,9 @@ export function Step5Notes({
   onChange,
 }: Step5NotesProps): JSX.Element {
   const picks = (state.client?.service_interests ?? []) as ServiceType[];
+  // #1170: the suite-listing banner sits here, above the uploads, where the
+  // client lists and uploads what they use (it was on Systems).
+  const bannerVariant = suiteBannerVariant(state.client?.service_interests);
 
   // Explicit open/closed per card once the user touches it; before that the
   // default comes from whether the service still needs a required target.
@@ -126,6 +130,7 @@ export function Step5Notes({
 
   return (
     <div className="flex flex-col gap-6">
+      {bannerVariant ? <SuiteListingBanner variant={bannerVariant} /> : null}
       <section
         aria-labelledby="uploads-heading"
         className="flex flex-col gap-3"
