@@ -15,6 +15,19 @@ import { CrossCuttingHeading, startsCrossCutting } from "./CrossCuttingHeading";
 
 import type { JSX } from "react";
 
+// Z1 and Z2 (#736 6204461502 section 6, approved by Gene at 6205956728).
+// This questionnaire is the ADMIN one; the client's own page has its own
+// legend (ZtSelfAssessment) and never shows Z1.
+const SELF_REPORTED = "Self-reported, not validated";
+const LEGEND = "The highlighted stage is the current assessed score.";
+
+/** Null, empty or whitespace only: the rule `routes/zt.py` applies when it
+ *  decides a capability has no notes (#1084, PR #1220). JS `trim()` and Python `strip()`
+ *  differ only on rare control and BOM characters. */
+function notesBlank(notes: string | null): boolean {
+  return notes === null || notes.trim() === "";
+}
+
 export interface ZtQuestionnaireProps {
   catalog: ZtCatalog;
   answersByCode: Record<string, ZtAnswer>;
@@ -136,6 +149,12 @@ export function ZtQuestionnaire({
                             });
                           }}
                         />
+                        {ans.maturity_stage !== null &&
+                        notesBlank(ans.notes) ? (
+                          <p className="text-xs text-status-warning-fg">
+                            {SELF_REPORTED}
+                          </p>
+                        ) : null}
                         <label className="flex items-center gap-1 text-xs text-ink-tertiary">
                           Target
                           <select
@@ -203,6 +222,8 @@ export function ZtQuestionnaire({
               );
             })}
           </ul>
+          {/* Z2: once, under the stage buttons. */}
+          <p className="text-xs text-ink-tertiary">{LEGEND}</p>
         </div>
       ) : null}
     </section>

@@ -208,6 +208,12 @@ export interface GapItem {
   target_stage: number;
   gap_size: number;
   priority_score: number;
+  /**
+   * Z4: the pillar weight the priority multiplied the gap by, as the engine
+   * stores it. The API always sends it (the analysis is computed per request,
+   * never stored); optional only so test fixtures written before it type-check.
+   */
+  pillar_weight?: number;
   notes: string | null;
 }
 
