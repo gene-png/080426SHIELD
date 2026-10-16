@@ -72,7 +72,7 @@ from app.csf.exporters import render_xlsx as render_csf_xlsx
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
 from app.csf.gap import analyze as analyze_gaps
 from app.csf.gap import resolve_target_tier
-from app.csf.maturity import TIER_DEFINITIONS
+from app.csf.maturity import TIER_DEFINITIONS, tier_label
 from app.csf.playbook import (
     Tier,
     score_tier,
@@ -1168,6 +1168,7 @@ def gap_analysis(
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
                 notes=g.notes,
+                weight=g.weight,
             )
             for g in analysis.gaps
         ],
@@ -3250,7 +3251,7 @@ def finalize_csf_deliverable(
     summary_line = (
         f"Overall maturity: {score.overall_maturity_label}. "
         f"{score.answered_subcategories}/{score.total_subcategories} subcategories scored; "
-        f"{gap.total_gap_count} gap(s) at target T{gap.target_tier}."
+        f"{gap.total_gap_count} gap(s) at target {tier_label(gap.target_tier)}."
     )
     # #783: `/results` shows this line to the client, so it says what the
     # document says when the target is a default.
