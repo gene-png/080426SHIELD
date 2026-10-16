@@ -1,0 +1,136 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { AttackBlindCategory } from "@/components/dashboards/attack/AttackBlindCategory";
+import { ApiError, apiFetch } from "@/lib/api";
+import {
+  dashboardLoadReason,
+  isCatalogWithheld,
+} from "@/lib/describe-save-error";
+import { resolveDashboardClientId } from "@/lib/dashboards/resolveClient";
+import { auth } from "@/lib/auth/options";
+import { SkipToContent } from "@/components/site/SkipToContent";
+import type { AttackDashboardData } from "@/lib/dashboards/attack";
+
+import type { JSX } from "react";
+
+export const metadata: Metadata = { title: "ATT&CK Coverage Dashboard" };
+
+/**
+ * #1180: one category of the ATT&CK dashboard's blind spots, on its own page.
+ * The same read, access and not-available states as the dashboard page beside
+ * it (`../../page.tsx`), copied rather than shared because
+ * `dashboards-render-the-typed-reason.test.ts` reads each dashboard PAGE's own
+ * source for its typed-reason handling. Change both together.
+ */
+export default async function AttackBlindCategoryPage({
+  params,
+}: {
+  params: Promise<{ serviceId: string; tactic: string }>;
+}): Promise<JSX.Element> {
+  const { serviceId, tactic } = await params;
+  const session = await auth();
+  if (!session?.accessToken) {
+    redirect(
+      `/sign-in?callbackUrl=/dashboards/attack/${serviceId}/blind/${tactic}`,
+    );
+  }
+  const token = session.accessToken;
+
+  // Resolve the tenant exactly like /results: client users are pinned; a
+  // platform admin uses the active-client cookie (forwarded as X-Client-Id).
+  // Issue 4: admins reaching this from a deliverable card may have no active
+  // client cookie yet; the resolver falls back to the service's owning tenant.
+  const clientId = await resolveDashboardClientId(token, serviceId);
+
+  let data: AttackDashboardData | null = null;
+  let notReleased = false;
+  // #556: released, but scored against an ATT&CK catalog other than the
+  // current one, so the API withholds its figures (typed 409). Rendered with
+  // the server's sentence; it used to fall to `throw err` and Next's error page.
+  let withheld = false;
+  // The server's typed explanation, where it sent one (#244).
+  let reason: string | null = null;
+  if (clientId) {
+    try {
+      data = await apiFetch<AttackDashboardData>(
+        `/clients/${clientId}/attack/${serviceId}/dashboard`,
+        { bearer: token, clientId },
+      );
+    } catch (err) {
+      // 404 = no released report for this service yet (or wrong tenant). Show a
+      // friendly not-available state rather than a dead end (§12 no-dead-ends).
+      if (err instanceof ApiError && err.status === 404) {
+        notReleased = true;
+        // #244: keep the server's OWN sentence. A 404 here has more than one
+        // cause and the API already distinguishes them -- `_unresolved_parent`
+        // returns a typed reason written specifically NOT to say "no released
+        // report yet", because there IS one and what is missing is the link
+        // saying which assessment it was built from. Keying the copy on the
+        // STATUS discarded that and printed the very sentence the typed
+        // message was written to avoid.
+        // #318: the server's sentence only where it says something this page's
+        // copy does not. `serverReason` here rendered the API's
+        // developer-facing 'No released X report for this service yet.'
+        // over the client copy below, in the page's MOST COMMON state --
+        // the typed reason overriding the normal case instead of the
+        // exceptional one. The decision lives in one place so the five
+        // dashboards cannot drift.
+        reason = dashboardLoadReason(err);
+      } else if (isCatalogWithheld(err)) {
+        withheld = true;
+        reason = dashboardLoadReason(err);
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    notReleased = true;
+  }
+
+  if (!data) {
+    return (
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-6 py-16 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
+        <h1 className="text-2xl font-semibold text-ink-primary">
+          {withheld ? "Dashboard withheld" : "Dashboard not available yet"}
+        </h1>
+        <p className="text-sm text-ink-secondary">
+          {reason ??
+            (withheld
+              ? "This ATT&CK coverage report's figures are withheld."
+              : notReleased
+                ? "This ATT&CK coverage report hasn't been released to your organization yet. It will appear here once your SHIELD analyst releases it."
+                : "We couldn't load this dashboard.")}
+        </p>
+        <Link
+          href="/results"
+          className="text-sm font-medium text-brand-600 hover:text-brand-700"
+        >
+          ← Back to results
+        </Link>
+      </main>
+    );
+  }
+
+  // The dashboards render their own dark shell, so they were returning no
+  // <main> at all — the skip-to-content link had no destination here and the
+  // page exposed no main landmark (found in the 2026-08-04 review). Matches
+  // the eight app shells: one <main id="main-content"> with tabIndex={-1}.
+  return (
+    <>
+      <SkipToContent />
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="focus:outline-2 focus:outline-offset-4 focus:outline-brand-500"
+      >
+        <AttackBlindCategory data={data} slug={decodeURIComponent(tactic)} />
+      </main>
+    </>
+  );
+}
