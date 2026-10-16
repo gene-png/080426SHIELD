@@ -223,8 +223,10 @@ Every merge is pinned to the head that was checked:
   head SHA, posted after the advisor's own review of that head.
 - **Who merges:** the coordinator, at exactly that head, with
   `--match-head-commit`, then it posts the merge SHA.
-- **If the head moves after approval,** the approval lapses and a new one is
-  needed.
+- **If the head moves after approval,** the approval lapses, unless every
+  later commit is a merge of main and `git patch-id --stable` over
+  `git diff -U0 <merge-base> <head> -- . ':!*.md'` equals that of the approved
+  head (rule 0, #736 6216024281).
 - **No self-approval:** the agent that built a PR never approves it.
 - **Limit, stated plainly:** sessions can share a GitHub account, so a header
   is a convention, not proof of identity. Gene may approve and merge anything
