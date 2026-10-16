@@ -13,13 +13,19 @@ depends on that race is not one a consultant can be shown as "made no call".
 The interleaving is forced, not hoped for: every batch is held between its
 stop check and `run_job` (so before `invoke`) until the run has been recorded
 failed at its deadline. A worker past its stop check has marked the run, so
-the record is the conservative "not known". What this pins is that ORDER; it
-does not drive a call into the gap, which needs the release itself delayed.
+the record is the conservative "not known". It does not drive a call into the
+gap, which needs the release itself delayed.
+
+The hold sits inside `run_job`, after both the mark and the stop check, so
+that test alone cannot tell "mark before the check" from "mark after the check
+but before `run_job`". The second test pins the order itself: it reads the
+run's mark at the moment each worker asks the stop flag.
 """
 
 from __future__ import annotations
 
 import threading
+import types
 from datetime import timedelta
 
 import pytest
@@ -77,3 +83,37 @@ def test_a_batch_held_past_its_stop_check_leaves_the_run_not_known(
         if body_passed:
             alive = [t.name for t in held_threads if t.is_alive()]
             assert not alive, f"a released batch never finished: {alive}"
+
+
+def test_a_batch_worker_has_marked_its_run_when_it_checks_the_stop_flag(
+    world, monkeypatch  # noqa: F811
+) -> None:
+    """Every `stop.is_set()` a batch worker makes must find the run already
+    marked. Red if `note_invoke_entered()` moves below the stop check in
+    `batching._one`: the first worker to check finds the mark unset."""
+    import app.ai.batching as batching
+    from app.ai.run_context import invoke_mark_var
+
+    # Recorded in the worker and judged here: an assertion raised inside a
+    # worker would only fail its batch. None means no mark in its context.
+    seen: list[bool | None] = []
+
+    class _RecordingEvent(threading.Event):
+        def is_set(self) -> bool:
+            mark = invoke_mark_var.get()
+            seen.append(None if mark is None else mark.entered)
+            return super().is_set()
+
+    # Only `run_batches`' stop flag is built from `batching.threading`.
+    monkeypatch.setattr(batching, "threading", types.SimpleNamespace(Event=_RecordingEvent))
+    monkeypatch.setattr(type(world.provider), "name", "anthropic", raising=False)
+    world.suggest(2)
+
+    started = start_run(world.c, world.run_url, world.h, serves="live")
+    get_run(world.c, started["run_id"], world.h)
+
+    # A selector that selected nothing passes: the workers must have checked.
+    assert seen, "no batch worker checked the stop flag"
+    assert all(
+        x is True for x in seen
+    ), f"a worker checked the stop flag before marking the run: {seen}"
