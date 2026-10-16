@@ -1,5 +1,7 @@
 # Gene — in-flight status
 
+_2026-10-16 (track T5): #1129, a workspace's document list stays on its own client._ If a consultant has two clients open in two tabs, the Tech Debt workspace's document list now always shows the documents of the client that workspace belongs to, instead of whichever client the other tab switched to. It comes back to you: condition 5.
+
 _2026-10-16 (track T5): #1225 item 1, the admin documents panel shows no internal server text._ If the client-documents panel cannot load its list, it now says "Couldn't load documents." unless the server sent a sentence written for people; a raw technical message such as "X-Client-Id header is required for this role." is no longer shown. The client's intake Steps 5 and 6 follow the same rule for the same list. Your wording question for the client side (#1225 item 2) is still open. It comes back to you: condition 5.
 
 _2026-10-16 (track T5): #1223, a failed upload list says it failed._ On the intake's review step, if the list of a client's uploads cannot be loaded, the page now says "Failed to load uploads." instead of "No documents uploaded. You can still submit", which told clients their files were missing. The admin's client-documents panel says "Couldn't load documents." instead of "Upload failed: 500". It comes back to you: condition 5.
