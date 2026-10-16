@@ -648,8 +648,9 @@ def _looks_like_prose(line: str) -> bool:
         return True
     words = stripped.split()
     # A NAME can end in a full stop that is not a sentence's: a suffix ("Jr.",
-    # "(Ret.)."), a credential ("M.D.") or a capitalised designation ("USAF.",
-    # "CISSP.", "CISO."). Counted raw, "Lt. Col. Dana M. Whitfield Jr." is six
+    # "(Ret.)."), or -- after a comma -- a credential (", M.D.") or a
+    # capitalised designation (", USAF.", ", CISSP.", ", CISO."); see
+    # `_is_name_tail`. Counted raw, "Lt. Col. Dana M. Whitfield Jr." is six
     # words and a stop, so the signature cut stopped before it and the name
     # went to the model (#1256). Such a line -- name-shaped, with a name tail --
     # is counted as `_looks_like_a_signatory` counts it, through the SAME
@@ -662,12 +663,12 @@ def _looks_like_prose(line: str) -> bool:
     #     rank (review of 96b41f97);
     #   - name-SHAPED, not a tail alone: "Patching resumes in Phase II." ends
     #     in a suffix word but has lowercase words (review of 8310931d).
-    # Residuals, accepted (the table's notes say which predate #1256): an
-    # all-Title-Case stopped line of four RAW words or fewer is not prose ("Next
-    # Steps Below.", pre-existing); and a name-shaped line ending in a SUFFIX
-    # word is counted without its abbreviations, so "Hosts Move To Tier III."
-    # (five raw, four counted) is not prose either -- new with #1256. After an
-    # opener either can read as a signatory, which errs toward removing.
+    # Residuals, accepted; the table in test_redact_signature_bound.py lists
+    # them with examples and says which predate #1256. Toward removing: a short
+    # all-Title-Case stopped line, and a Title-Case sentence with a name tail
+    # ("Hosts Move To Tier III.", "Report Issues To Support, IT."). Toward
+    # leaking: a name with a lowercase particle, a ranked name ending in a
+    # plain surname, and a designation with no comma before it.
     if _is_name_shaped(stripped) and _is_name_tail(words):
         return len(_substantive_words(stripped)) > _MAX_SIGNATORY_WORDS
     return len(words) > _MAX_SIGNATORY_WORDS

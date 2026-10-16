@@ -311,14 +311,19 @@ _LINE_CLASSES = [
 # Accepted residuals, recorded on #1256 rather than pinned either way:
 #   - an all-Title-Case stopped line of four RAW words or fewer is not prose
 #     ("Next Steps Below.", pre-existing);
-#   - a name-shaped line ending in a SUFFIX word is counted without its
-#     abbreviations, so an all-Title-Case sentence like "Hosts Move To Tier
-#     III." (five raw words, four counted) reads as a name -- new with #1256,
-#     and it errs toward removing;
-#   - a name of more than four counted words ("Dana van der Berg Jr."), or one
-#     that ends in a plain stopped surname after its ranks ("Lt. Col. Dana M.
-#     Whitfield.", five raw words, no tail), still reads as a sentence
-#     (pre-existing).
+#   - a name-shaped line with a name TAIL is counted without its
+#     abbreviations, so an all-Title-Case sentence that ends in a suffix word
+#     ("Hosts Move To Tier III.") or in a short designation after a comma
+#     ("Report Issues To Support, IT.") reads as a name -- new with #1256, and
+#     it errs toward removing;
+#   - a name with a lowercase particle ("Dana van der Berg Jr.") is not
+#     name-shaped, and one ending in a plain stopped surname after its ranks
+#     ("Lt. Col. Dana M. Whitfield.") has no tail; both still read as sentences
+#     (pre-existing);
+#   - a name with a designation and NO comma before it ("Lt. Col. Dana M.
+#     Whitfield USAF.", six raw words) has no tail and reads as a sentence: the
+#     comma is the only thing telling it from "U.S. Gov. Systems Report To
+#     CISA." (a leak, pre-existing on main; tracked on #1256).
 
 
 @pytest.mark.parametrize(
