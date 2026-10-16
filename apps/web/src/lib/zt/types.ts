@@ -166,6 +166,11 @@ export interface ZtRunAiResponse {
    */
   omitted_count?: number;
   omitted_capabilities?: ZtOmittedCapability[];
+  /**
+   * #1084: how many capabilities the run sent. 0 means every row was blank,
+   * so no model call was made. Absent or null on a run stored before it.
+   */
+  capabilities_sent?: number | null;
 }
 
 /**

@@ -403,6 +403,10 @@ class ZtRunAiResponse(BaseModel):
     # optional, so a stored run result written before them parses unchanged.
     omitted_count: int = 0
     omitted_capabilities: list[ZtOmittedCapability] = []
+    # #1084: how many capabilities the run sent. 0 means every row was blank,
+    # so no model call was made and receiving nothing is the design, not a
+    # broken response. None on a run stored before this field: unknown.
+    capabilities_sent: int | None = None
 
 
 class ZtInterviewQuestion(BaseModel):

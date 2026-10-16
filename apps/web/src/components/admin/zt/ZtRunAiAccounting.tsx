@@ -335,6 +335,13 @@ export function ZtRunAiAccounting({
   //
   // #840: a response with no entries leaves every capability without a
   // result, so the omitted block renders here too.
+  // #1084: every capability was blank, so nothing was sent and no call was
+  // made. Receiving nothing is then the design: show the disclosure, never
+  // the drift alert. `=== 0`, not falsy: a run stored before the count
+  // existed (undefined/null) keeps the alert, as it did.
+  if (result.suggestions_received === 0 && result.capabilities_sent === 0) {
+    return <ZtOmittedBlock result={result} otherAlert={false} />;
+  }
   if (result.suggestions_received === 0) {
     return (
       <div className="space-y-2">

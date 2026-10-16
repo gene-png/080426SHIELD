@@ -753,8 +753,8 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
     # #1084: a capability with blank notes is never sent. A5 tells the model to
     # return nothing for one, so code decides it, deterministically, and no
-    # blank row costs input tokens. (A wholly blank assessment still sends an
-    # empty list; that call is not skipped.) `rows` keeps every row: the run still
+    # blank row costs input tokens; a wholly blank assessment makes no call at
+    # all (`_zt_run_work`). `rows` keeps every row: the run still
     # lists a blank one as omitted with `notes_blank` (#840), and drops a stray
     # entry naming one as `no_notes`.
     sent = sorted(code for code, r in rows.items() if not _notes_blank(r.notes))
@@ -892,19 +892,36 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             for code, r in rows.items()
         }
 
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=ctx.requested_by,
-            service_id=ctx.service_id,
-            client_id=ctx.client_id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
+    if sent_codes:
+        # A provider failure here must stay typed and leave an llm_calls row.
+        with ai_call_boundary(db, llm, purpose=req.preview.job_name):
+            result = run_job(
+                db,
+                llm,
+                req.preview.job_name,
+                inputs=req.preview.inputs,
+                requested_by=ctx.requested_by,
+                service_id=ctx.service_id,
+                client_id=ctx.client_id,
+                client_org_name=req.preview.client_org_name,
+                name_hints=req.preview.name_hints,
+            )
+        # `parse_json_object` guarantees a dict or raises (issue #41). The old
+        # `else {}` here discarded a whole unwrapped response and reported zero
+        # changes, which read as the model agreeing with everything.
+        data = result.data
+    else:
+        # #1084: every capability is blank, so there is nothing to ask and no
+        # call is made (CSF's P1 does the same). Not an error: the run
+        # completes with no entries, lists every row as omitted with
+        # `notes_blank`, and says `capabilities_sent=0`.
+        _log.info(
+            "zt_run_ai_nothing_sent",
+            service_id=str(ctx.service_id),
+            assessment_id=str(a.id),
+            capabilities=len(rows),
         )
+        data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while
     # the model answered must be seen -- and take the PRE-WRITE stamps:
@@ -926,11 +943,6 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    # `parse_json_object` guarantees a dict or raises (issue #41). The old
-    # `else {}` here discarded a whole unwrapped response and reported zero
-    # changes, which read as the model agreeing with everything.
-    data = result.data
-
     received = 0
     applied = 0
     dropped: list[ZtDroppedSuggestion] = []
@@ -1235,6 +1247,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         preserved_client_answers=len(protected),
         omitted_count=len(omitted_capabilities),
         omitted_capabilities=omitted_capabilities,
+        capabilities_sent=len(sent_codes),
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
