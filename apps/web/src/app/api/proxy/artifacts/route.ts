@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 
 import { ACTIVE_CLIENT_COOKIE } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { pickedClientId } from "@/lib/proxy-client-id";
 import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 const BASE_URL = process.env.API_BASE_URL ?? "http://api:8000";
@@ -35,11 +36,18 @@ async function bearerOrUnauthorized(): Promise<string | NextResponse> {
  */
 async function upstreamHeaders(
   bearer: string,
+  explicitClient: string | null = null,
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${bearer}`,
   };
-  const activeClient = (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
+  // #1129: a client the request names (`?client_id=`, an admin workspace's
+  // own tenant) wins over the shared cookie, which another tab may have
+  // rewritten. Without one, the cookie as before: the client wizard's read
+  // names none. It cannot widen access: the api pins a client-role user to
+  // its own client whatever X-Client-Id says (`current_client`).
+  const activeClient =
+    explicitClient ?? (await cookies()).get(ACTIVE_CLIENT_COOKIE)?.value;
   if (activeClient) {
     headers["X-Client-Id"] = activeClient;
   }
@@ -87,14 +95,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const bearer = await bearerOrUnauthorized();
   if (bearer instanceof NextResponse) return bearer;
   let upstream: Response;
   let body: string;
   try {
     upstream = await fetch(`${BASE_URL}/artifacts`, {
-      headers: await upstreamHeaders(bearer),
+      headers: await upstreamHeaders(bearer, pickedClientId(request)),
       cache: "no-store",
     });
     body = await upstream.text();

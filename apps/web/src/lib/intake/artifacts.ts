@@ -50,8 +50,18 @@ export async function uploadArtifact(
   return payload as ArtifactSummary;
 }
 
-export async function listArtifacts(): Promise<ArtifactListResponse> {
-  const res = await fetch("/api/proxy/artifacts", { cache: "no-store" });
+/**
+ * `clientId`, when given, names the tenant explicitly (#1129): an admin
+ * workspace passes its own client, so the list does not follow the shared
+ * active-client cookie. The client wizard passes none.
+ */
+export async function listArtifacts(
+  clientId?: string,
+): Promise<ArtifactListResponse> {
+  const url = clientId
+    ? `/api/proxy/artifacts?client_id=${encodeURIComponent(clientId)}`
+    : "/api/proxy/artifacts";
+  const res = await fetch(url, { cache: "no-store" });
   const payload = await safeJson(res);
   if (!res.ok || typeof payload === "string") {
     throw new ArtifactUploadError(res.status, payload);

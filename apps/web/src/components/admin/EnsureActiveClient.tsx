@@ -4,6 +4,33 @@ import * as React from "react";
 import type { JSX } from "react";
 
 /**
+ * #1129: the client this workspace was opened for, as resolved below. The
+ * active-client cookie is shared by every tab, so a component that refetches
+ * after mount must name THIS id rather than trust the cookie, which another
+ * tab may have rewritten. Null outside a workspace.
+ */
+const WorkspaceClientContext = React.createContext<string | null>(null);
+
+export function WorkspaceClientProvider({
+  clientId,
+  children,
+}: {
+  clientId: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <WorkspaceClientContext.Provider value={clientId}>
+      {children}
+    </WorkspaceClientContext.Provider>
+  );
+}
+
+/** The workspace's own client id, or null outside an EnsureActiveClient. */
+export function useWorkspaceClientId(): string | null {
+  return React.useContext(WorkspaceClientContext);
+}
+
+/**
  * Aligns the active-client cookie to a workspace's owning tenant before its
  * children render. Admin workspace data is tenant-scoped via
  * X-Client-Id (the active-client cookie), but the workspace URL only carries a
@@ -19,7 +46,8 @@ export function EnsureActiveClient({
   serviceId: string;
   children: React.ReactNode;
 }): JSX.Element {
-  const [ready, setReady] = React.useState(false);
+  // The client this workspace resolved; null until it has (#1129).
+  const [clientId, setClientId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -79,7 +107,7 @@ export function EnsureActiveClient({
             );
           }
         }
-        if (!cancelled) setReady(true);
+        if (!cancelled) setClientId(svc.client_id);
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -100,12 +128,16 @@ export function EnsureActiveClient({
       </p>
     );
   }
-  if (!ready) {
+  if (clientId === null) {
     return (
       <p className="text-sm text-ink-tertiary" aria-live="polite">
         Opening workspace…
       </p>
     );
   }
-  return <>{children}</>;
+  return (
+    <WorkspaceClientProvider clientId={clientId}>
+      {children}
+    </WorkspaceClientProvider>
+  );
 }

@@ -13,6 +13,7 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import { typedReadFailure } from "@/components/intake/readFailureCopy";
+import { useWorkspaceClientId } from "./EnsureActiveClient";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -70,13 +71,15 @@ export function IntakeDocumentsPanel({
   extractBlocked = false,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
+  // #1129: this workspace's own client, never the shared cookie.
+  const workspaceClientId = useWorkspaceClientId();
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
     // No synchronous setError(null) here — react-hooks v6 set-state-in-effect
     // flags it. A stale error clears on the next successful load instead.
-    listArtifacts()
+    listArtifacts(workspaceClientId ?? undefined)
       .then((res) => {
         if (cancelled) return;
         setDocs(res.items.filter((a) => a.origin === "client_upload"));
@@ -95,7 +98,7 @@ export function IntakeDocumentsPanel({
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, workspaceClientId]);
 
   const draftSource =
     docs?.find((a) => a.id === draftSourceId && draftSourceId !== null) ?? null;
