@@ -6635,3 +6635,54 @@ A row is an answer when someone recorded something on it. A seeded Working Profi
 - **"Released numbers never move" returns as a requirement at launch.** Track7's post-MVP note from #1044 carries it: any rule change made after real data arrives needs a freeze.
 
 **What would reopen this:** the first real client's data, or a decision to onboard one before the MVP. From then on, item 1 reverts, and every change that moves a released number needs a freeze again.
+
+## D-113 — An agent merges a PR whose checks all pass; an extra-care PR needs the advisor's merge approval first
+
+**2026-10-16 UTC · governance, the merge rule** (Decision: Gene, directly in the coordinator session: "change the rule itself so PRs can be merged if they pass the checks", then "update the rule so that extra care files go to the advisor to review and approve and merge". Shaped by the advisor's rulings on #736: 6207034866, 6207058275 and 6207123538.)
+
+**The decision.**
+
+- **Plain PRs.** An agent merges a PR, pinned to its head (`--match-head-commit`; see auto-merge below), once:
+  - every check on that head has finished green, required or not;
+  - the adversarial reviewer has run on that head;
+  - every existing-test edit, user-facing string and prompt in it carries an advisor approval naming its hash or its text.
+- **Extra-care PRs.** A PR tripping condition 4 (migration), 5 (the path list) or 6 (client content) also needs an advisor merge approval: a #736 comment naming the PR and its exact head SHA, posted after the advisor's own review of that head.
+  - The coordinator then merges at exactly that head and posts the merge SHA.
+  - If the head moves, the approval lapses.
+  - The agent that built a PR never approves it.
+- **The red-by-design gates.** "Merge rule text" and "compose content changed" go red when they report a CHANGE (exit 1). That red is the extra-care trigger, cleared only by the advisor approval. A red that means the gate could not look (exit 2) is a defect, and nobody clears it.
+- **Condition 3.** Status documents are updated in a batched docs-only PR, not in every PR (6202079854).
+- **Roles.** Who the advisor and coordinator are is the `## Current roles` table at the top of #736's description. CLAUDE.md names no session id, because ids change at every handover. Sessions can share a GitHub account, so a header is a convention, not proof of identity.
+- **Self-protection.** The merge-rule section, the reviewer-exception bullet in Rules of the road, the D-records that change either, and `.claude/agents/**` are condition-5 paths. A PR cannot clear itself under a rule it rewrites (#572).
+- **Oversight.** The advisor audits every merge afterwards. Branch protection and the required checks are never bypassed or edited.
+
+**Auto-merge, with a head guard** (Gene, #736 6207756046 item 1). The command is `gh pr merge --squash --auto --match-head-commit <sha>`. It is enabled only after the reviewer has run at that head and every non-required gate has finished green, and on an extra-care PR only after the advisor's approval at that SHA. The first draft dropped `--auto`, because auto-merge waits only for REQUIRED checks and might merge a later, unreviewed push. Gene chose to keep it, with those preconditions and the head guard. **As first written, until the guard was proven** by a throwaway PR showing that a later push does not merge, merges were done by hand with `--match-head-commit`. The probe never ran; instead the rule now says a push after auto-merge is enabled disables it at once, with re-review and re-enabling only at the new head. On 2026-10-16 that probe could not run, because the repository's "Allow auto-merge" setting is off. Later that day Gene turned the setting on ("allow auto merge if all checks are passed and the adversarial review also passed"), and auto-merge has since been used at advisor-approved heads, read with `gh pr view <n> --json headRefOid`. **When a main run goes red, merging pauses** until the cause is named and fixed: no merge by hand, and pending auto-merge requests are disabled. **Why the coordinator clicks:** Gene's words were "go to the advisor to review and approve and merge"; the advisor's permission system refuses its merge calls, so it decides and the coordinator merges at exactly the approved SHA (#736 6207058275).
+
+**What would reopen this:** an extra-care PR merged without an advisor approval naming its head, or a plain merge that should have been extra care.
+
+## D-114 — CSF scoring with no notes or evidence: unscored, not 0; evidence labels a level and no longer caps it (amends CSF_Flow_Spec section 8)
+
+**2026-10-15 · CSF** (Decision: Gene, relayed by the advisor on #736: Options 1 and 3 in 6200638511; four changes in 6201620727; Q1 to Q4 and three-state evidence in 6201691989; level names in 6202644525; the text package 6204461502, with the advisor's fixes in 6205425122 item 3, approved by Gene in 6205956728. Recorded in the landing commit of PR (a).)
+
+**Why.** Gene: most clients will not provide evidence, so it must not drive scores down. A subcategory with no notes is not evidence of anything, so scoring it 0 reported a level nobody measured.
+
+**What it changes.**
+
+1. **Code decides what is scored.** SHIELD leaves a subcategory with blank notes out of the `csf_score` payload before egress. csf_score prompt v4 says the same as a backstop, and #1000's `no_notes` drop reason stays as a second guard. Since P1 (every blank-notes subcategory is left out) no current payload reaches that guard; it is a ratchet against a loosened leave-out, and its tests reach it by switching the leave-out off.
+2. **A subcategory with no scored in-scope tier has no level** (Q1 (a); the #1073 defect). It has no target and no gap, it is in no average, and it is shown with the client's self-rating as self-reported, not validated. "Scored" is `has_recorded_value_besides_target` on any in-scope tier, the #1031 predicate, so a consultant's typed scores stay scored.
+3. **The evidence cap is removed** (CSF_Flow_Spec section 8 said: no evidence, Implementation at most 1 and level at most 2). The level is computed from the scores alone, and evidence only labels it.
+4. **Evidence has three values,** `on_file` / `confirmed_in_discussion` / `neither` (migration 0075; `true` became `on_file`, `false` became `neither`). A Managed or Optimized level with `neither` is reported as notional.
+5. **Q2, released numbers freeze.** `csf_assessments.rollup_rules` = 3 means the rules above, and approve stamps it. An assessment approved under 1 or 2 keeps the cap and its seed-row levels, as delivered. NULL (not yet approved) reads as 3.
+   - This reuses #1077's existing stamp, which D-112 item 2 keeps as "the mechanism later rule changes will need".
+   - No backfill was written. That follows D-112 item 1, which Gene's later Q2 ruling narrows only to "keep the frozen rule readable".
+6. **Coverage is stated.** Under rules 3 and NULL, every Playbook surface states four counts, scored, with notes but not yet scored, self-reported only and not answered, and they add up to the in-scope total (the fourth count is the advisor's Q-A recommendation, #736 6205425122 item 3, approved by Gene). Where evidence labels a level, the evidence counts are stated beside them, with "mixed" as its own count: at least one scored tier with neither beside one on file or confirmed.
+7. **Levels are words, and averages are exact.** Every level is shown by name (Ad hoc, Developing, Defined, Managed, Optimized). Under rules 3 and NULL an average is over the scored subcategories, to one decimal, rounded down, with its level's name. Under rules 1 and 2 an average is what was delivered, `round()` of the mean over every subcategory, so a re-export of a released assessment keeps every level, gap and average it was delivered with. Its copy still changes: level cells and averages read as names (the frozen METHODOLOGY's cap sentence keeps its delivered wording, "the maturity level to at most 2"), the PDF and DOCX lose the Rule column, and the XLSX gains the Evidence column and the rule in words. It carries no C3 or E3 line, because its unscored subcategories keep their delivered levels, and counting them as "not scored" would contradict its own tables.
+8. **risk_synthesize v5** sends each scored tier's `evidence` value, and `evidence_capped` only for an assessment approved under rules 1 or 2.
+
+**Blast radius (demo data only, D-112).**
+
+- The RELEASED and APPROVED demo assessments (rules 2) move no number.
+- The SUBMITTED one's 106 subcategories stop reading Level 1 and read not scored.
+- Measured read-only at alembic 0072 (PR (a) plan, #736 6204492978).
+
+**What would reopen this:** a ruling that evidence should again limit a level. That would be a new rules value, never a change to 3.

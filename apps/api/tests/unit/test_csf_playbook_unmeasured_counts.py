@@ -104,6 +104,6 @@ def test_the_scorecard_keeps_the_two_counts_apart() -> None:
     )
     (mixed,) = _function_summary([MET, NO_TARGET, UNMEASURED])
     assert (_scorecard_target(mixed), _scorecard_gaps(mixed)) == (
-        "L3",
+        "Defined",  # W4 (#736 6205956728): the level's name
         "0 (1 no target, 1 not measured)",
     )
