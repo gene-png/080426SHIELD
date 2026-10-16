@@ -11,9 +11,12 @@ session immediately before the flip, as
 `test_deliverable_release.py::test_a_parent_released_concurrently_is_logged_not_overwritten`
 drives APPROVED -> RELEASED.
 
-The release is refused with the approved typed 409 and nothing is released.
-On main 2f89930b every one of these returned 200: the release committed over a
-parent that moved. The message is quoted from the ruling, never imported.
+A FIRST release is refused with the approved typed 409 and nothing is
+released. On main 2f89930b every one of those returned 200: the release
+committed over a parent that moved. A REPAIR re-release (the deliverable is
+already with the client) is not refused, because "nothing was released" would
+be false; the positive and repair tests below pin that. The message is quoted
+from the ruling, never imported.
 """
 
 from __future__ import annotations
@@ -181,8 +184,8 @@ def test_a_repair_re_release_over_a_moved_parent_keeps_the_earlier_release(
     moves. "Nothing was released" would be false here, so it is not raised: the
     earlier release stands and the move is logged.
 
-    Red-on-revert: drop the `deliv.released_at is not None` branch in
-    `_release_parent` and this answers 409 about a delivered report."""
+    Red-on-revert: make `_release_parent` ignore its `repair` flag and this
+    answers 409 about a delivered report."""
     from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
     from tests.unit.test_frozen_engagement_target import (
         _register,
@@ -212,6 +215,48 @@ def test_a_repair_re_release_over_a_moved_parent_keeps_the_earlier_release(
     assert r.json()["released_at"] is not None
     assert _released(deliv_id)
     assert "release_repair_parent_changed" in capsys.readouterr().out
+
+
+def test_a_zt_repair_re_release_does_not_apply_the_first_release_guard(
+    app_client,  # noqa: F811
+) -> None:
+    """The ZT route passes guard (a) on a FIRST release only (#1123 review of
+    08fcb0b6, F1). On a repair re-release the report is already with the
+    client, so a version approved after its finalize must not be answered with
+    "nothing was released": the repair completes and the parent is flipped.
+
+    Red-on-revert: pass `parent_guard=_zt_release_guard(...)` on every release
+    in the ZT route and this answers 409."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.zt_assessment import ZtAssessment, ZtAssessmentStatus
+    from tests.unit.test_frozen_engagement_target import (
+        _register,
+        _zt_finalize_release,
+        _zt_score_approve,
+        _zt_service,
+    )
+
+    c = app_client
+    bearer = _register(c, "admin@example.com")["tokens"]["access_token"]
+    h = {"Authorization": f"Bearer {bearer}"}
+    svc_id = _zt_service(c, bearer)
+    _zt_score_approve(c, bearer, svc_id)
+    deliv_id = _zt_finalize_release(c, bearer, svc_id)  # released
+    parent = _parent_id(ZtAssessment, svc_id)
+    engine = create_engine(os.environ["DATABASE_URL"], future=True)
+    with sessionmaker(bind=engine, future=True)() as s:
+        row = s.get(ZtAssessment, parent)
+        row.status = ZtAssessmentStatus.APPROVED  # pre-W4 shape
+        row.approved_at = datetime.now(UTC) + timedelta(hours=1)  # guard (a) misses
+        s.commit()
+
+    r = c.post(f"/zt/deliverables/{deliv_id}/release", headers=h)
+
+    assert r.status_code == 200, r.text
+    assert _released(deliv_id)
+    with sessionmaker(bind=engine, future=True)() as s:
+        assert s.get(ZtAssessment, parent).status == ZtAssessmentStatus.RELEASED
 
 
 # --- ATT&CK -------------------------------------------------------------------
