@@ -6,9 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# A pull request's superseded run is cancelled; a push to main never is. Each
+# merge is a different tree, and grouping main by ref let the next merge cancel
+# the run testing the last one, so main's own CI never finished (2026-10-16).
+# For a push the group is the commit, which no other run shares, and a push
+# never cancels (a re-run of the same commit included). Exactly the advisor's
+# block (#736 6207756046 item 2). Pinned by test_ci_concurrency.py.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
