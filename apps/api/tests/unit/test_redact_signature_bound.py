@@ -231,6 +231,9 @@ def test_a_bare_opener_that_starts_no_block_does_not_end_the_window() -> None:
 _SUFFIXED_NAMES = [
     "Lt. Col. Dana M. Whitfield 3rd.",
     "Lt. Col. Dana M. Whitfield (Ret.).",
+    # Four real words: counted the same by both tests only once `(Ret.).` is
+    # an abbreviation to each of them (review of 8310931d).
+    "Col. Dana Marie Whitfield, USAF (Ret.).",
 ]
 
 _TITLE_CASE_SENTENCES = [
@@ -239,6 +242,10 @@ _TITLE_CASE_SENTENCES = [
     "U.S. Gov. Systems Are Affected.",
     "All Systems Are Now Up.",
     "Dr. Smith approved the change.",
+    # Ends in a suffix WORD, but has lowercase words: a sentence (review of
+    # 8310931d). Phase II, Tier III and Level IV are ordinary in findings.
+    "Patching resumes in Phase II.",
+    "Hosts move to Tier III next quarter.",
 ]
 
 

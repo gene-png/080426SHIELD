@@ -490,6 +490,11 @@ _SIGNATURE_LOOKAHEAD_LINES = 5
 _NAME_SUFFIXES = ("jr", "sr", "ii", "iii", "iv", "2nd", "3rd", "4th", "ret", "esq")
 
 
+#: An abbreviation inside brackets, or followed by a comma: `(Ret.)`,
+#: `(Ret.).`, `(Ret.),`, `Jr.,`. The bare form is `_is_abbreviation`'s own test.
+_RE_WRAPPED_ABBREVIATION = re.compile(r"\([^()\s]{1,3}\.\)[.,]?|[^()\s]{1,3}\.,")
+
+
 def _is_abbreviation(token: str) -> bool:
     """An honorific, rank or initial: a short token ending in a full stop.
 
@@ -499,9 +504,27 @@ def _is_abbreviation(token: str) -> bool:
     thought of, and the next rank is always the one that is missing.
 
     The full stop is what carries the meaning; without it `Lieutenant` is an
-    ordinary word and counts.
+    ordinary word and counts. Brackets and commas around it are not part of it:
+    `(Ret.)`, `(Ret.).` and `Jr.,` are the abbreviation inside (#1256), so the
+    prose test and the signatory test measure such a line the same way.
     """
-    return len(token) <= 4 and token.endswith(".")
+    if len(token) <= 4 and token.endswith("."):
+        return True
+    return _RE_WRAPPED_ABBREVIATION.fullmatch(token) is not None
+
+
+def _is_name_shaped(stripped: str) -> bool:
+    """Every word that starts with a letter is capitalised or an abbreviation.
+
+    The shape of `Dana Whitfield, CISO.` and `John Smith Jr.`; a sentence has
+    lowercase words in it. ONE definition, called by both the signatory test
+    and the prose test, so they cannot drift apart (#1256).
+    """
+    return all(
+        w[0].isupper() or _is_abbreviation(w)
+        for w in stripped.replace(",", " ").split()
+        if w and w[0].isalpha()
+    )
 
 
 def _looks_like_a_signatory(line: str) -> bool:
@@ -540,11 +563,7 @@ def _looks_like_a_signatory(line: str) -> bool:
     # `Dana Whitfield, CISO.`, `John Smith Jr.` -- while a sentence has
     # lowercase words in it. Initials and honorifics are abbreviations and are
     # exempt, which is the same test the word cap uses.
-    if stripped[-1] in ".!?" and not all(
-        w[0].isupper() or _is_abbreviation(w)
-        for w in stripped.replace(",", " ").split()
-        if w and w[0].isalpha()
-    ):
+    if stripped[-1] in ".!?" and not _is_name_shaped(stripped):
         return False
     # A person's name never contains a colon; a wrapped HEADING routinely does,
     # and security documents are full of them. Without this, "Best" wrapped above
@@ -604,13 +623,20 @@ def _looks_like_prose(line: str) -> bool:
     # because the suffix is an abbreviation, not because the line is a sentence:
     # "Lt. Col. Dana M. Whitfield Jr." counted raw is six words and a stop, so
     # the signature cut stopped before it and the name went to the model
-    # (#1256). Keyed on the LAST token being a suffix, not on the line having
-    # abbreviations: "Phase Two Is Under Way." ends in a short word with a stop
-    # too, and dropping every abbreviation-shaped token made it a "name" and
-    # cut the text after it (review of 96b41f97). With a suffix last, the line
-    # is measured as `_looks_like_a_signatory` measures it.
-    if words[-1].strip("().,").lower() in _NAME_SUFFIXES:
-        words = [w for w in words[:-1] if not _is_abbreviation(w.strip("()"))]
+    # (#1256). It needs BOTH a suffix last and a name-shaped line:
+    #   - suffix last, not "has abbreviations": "Phase Two Is Under Way." ends
+    #     in a short stopped word too, and dropping every abbreviation-shaped
+    #     token made it a "name" (review of 96b41f97);
+    #   - name-shaped, not suffix alone: "Patching resumes in Phase II." ends
+    #     in a suffix word but has lowercase words, so it is a sentence
+    #     (review of 8310931d).
+    # Then the line is counted as `_looks_like_a_signatory` counts it, through
+    # the same `_is_abbreviation`. Residual, accepted: an ALL-Title-Case
+    # sentence of four words or fewer ending in a suffix word ("Hosts Move To
+    # Tier III.") reads as a name, and errs toward removing.
+    suffix = words[-1].strip("().,").lower() in _NAME_SUFFIXES
+    if suffix and _is_name_shaped(stripped):
+        words = [w for w in words[:-1] if not _is_abbreviation(w)]
     return len(words) > _MAX_SIGNATORY_WORDS
 
 
