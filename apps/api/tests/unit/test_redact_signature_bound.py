@@ -307,6 +307,14 @@ _LINE_CLASSES = [
     ("keep", "Title-Case, three-letter acronym last", "Escalate Findings To The SOC."),
     ("keep", "Title-Case, dotted acronym last", "Data Stays Inside The U.S."),
     ("keep", "Title-Case, abbreviations and acronym", "U.S. Gov. Systems Report To CISA."),
+    # A RECORDED residual, pinned so a change to it is seen: a Title-Case
+    # sentence ending ", <short acronym>." has a name tail and is cut (new with
+    # #1256; it errs toward removing).
+    (
+        "cut",
+        "residual: Title-Case sentence, comma and short acronym",
+        "Report Issues To Support, IT.",
+    ),
 ]
 # Accepted residuals, recorded on #1256 rather than pinned either way:
 #   - an all-Title-Case stopped line of four RAW words or fewer is not prose
