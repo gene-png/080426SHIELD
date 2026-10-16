@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pytest
@@ -39,11 +40,11 @@ from tests.unit.test_attack_run_ai import (  # noqa: F401  (fixture)
 pytestmark = pytest.mark.unit
 
 
-def _entry(code: str, rationale: str = "First answer.") -> dict:
+def _entry(code: str, rationale: str = "First answer.", status: str = "gap") -> dict:
     """One answer in the prompt's keys, citing nothing."""
     return {
         "technique_code": code,
-        "status": "gap",
+        "status": status,
         "detection_tools": [],
         "prevention_tools": [],
         "response_tools": [],
@@ -74,6 +75,8 @@ class World:
         fail_reask: bool = False,
         refuse_reask: bool = False,
         reask_stray: str | None = None,
+        reask_status: str = "gap",
+        during_first_pass: Callable[[], None] | None = None,
     ) -> None:
         """Answer every code asked, except:
 
@@ -84,7 +87,11 @@ class World:
         `refuse_reask`: every re-ask call is refused by the redaction gate.
         `reask_stray`: a re-ask also answers for this code, which it was not
         asked about, with the rationale "Stray answer.".
+        `reask_status`: the status every re-ask entry gives.
+        `during_first_pass`: called once, inside the first first-pass call,
+        before it answers: a change that lands while the first pass runs.
         """
+        hook = [during_first_pass] if during_first_pass is not None else []
         asked_before: Counter[str] = Counter()
 
         def _answer(payload: dict) -> LLMResponse:
@@ -92,6 +99,8 @@ class World:
             self.sent.append(asked)
             reask = any(asked_before[c] for c in asked)
             asked_before.update(asked)
+            if not reask and hook:
+                hook.pop()()
             if reask and fail_reask:
                 raise RuntimeError("provider closed the connection")
             if reask and refuse_reask:
@@ -105,7 +114,7 @@ class World:
                 raise RuntimeError("provider closed the connection")
             left_out = omit_always | (frozenset() if reask else omit_first)
             entries = [
-                _entry(c, "Second answer." if reask else "First answer.")
+                (_entry(c, "Second answer.", reask_status) if reask else _entry(c, "First answer."))
                 for c in asked
                 if c not in left_out
             ]
@@ -117,6 +126,12 @@ class World:
 
     def run(self) -> dict:
         return attack_run_ai(self.c, self.svc_id, self.h)
+
+    def patch_status(self, i: int, status: str) -> None:
+        r = self.c.patch(
+            f"/attack/coverage/{self.rows[i]['id']}", headers=self.h, json={"status": status}
+        )
+        assert r.status_code == 200, r.text
 
     def reasks(self) -> list[list[str]]:
         """The calls that asked for a code an earlier call had asked for."""
@@ -341,3 +356,54 @@ def test_the_first_pass_asks_each_technique_exactly_once(app_client) -> None:  #
     asked_again = Counter(c for b in w.sent[result["batches_total"] :] for c in b)
     assert asked_again == asked_first
     assert result["reask_batches_total"] == len(w.sent) - result["batches_total"]
+
+
+def test_a_technique_locked_while_the_first_pass_ran_is_not_asked_again(
+    app_client,  # noqa: F811
+) -> None:
+    """The lock is read again after the first pass: a row a consultant locked
+    while it ran is left alone, so it is not paid for a second time."""
+    import uuid
+
+    from app.models.attack_assessment import AttackCoverage
+
+    w = _world(app_client, 2)
+    locked, open_ = w.code(0), w.code(1)
+
+    def _lock() -> None:
+        with w.sessions() as db:
+            db.get(AttackCoverage, uuid.UUID(w.rows[0]["id"])).locked = True
+            db.commit()
+
+    w.respond(omit_first=frozenset({locked, open_}), during_first_pass=_lock)
+    result = w.run()
+    assert w.reasks() == [[open_]]
+    assert result["reasked_count"] == 1
+    assert _row(result, locked)["locked"] is True
+
+
+def test_a_reask_answer_the_run_refuses_leaves_the_technique_on_the_omitted_list(
+    app_client,  # noqa: F811
+) -> None:
+    """A refused re-ask answer applies nothing, so the technique still got no
+    status from this run and stays listed with the status it kept, where the
+    consultant is told to check it. Before the re-ask existed it was listed;
+    the re-ask must not move it to the audit row only (#859)."""
+    w = _world(app_client, 2)
+    kept, unscored = w.code(0), w.code(1)
+    w.patch_status(0, "covered")
+    w.respond(omit_first=frozenset({kept, unscored}), reask_status="no_such_status")
+    result = w.run()
+    assert [sorted(b) for b in w.reasks()] == [sorted([kept, unscored])]
+    assert _row(result, kept)["status"] == "covered"
+    assert result["omitted_techniques"] == sorted(
+        [
+            {"technique_code": kept, "kept_status": "covered"},
+            {"technique_code": unscored, "kept_status": None},
+        ],
+        key=lambda t: t["technique_code"],
+    )
+    assert (result["omitted_count"], result["reasked_count"]) == (2, 2)
+    audit = w.audit()
+    assert {e["technique_code"] for e in audit["statuses_rejected"]} == {kept, unscored}
+    assert audit["omitted_count"] == 2

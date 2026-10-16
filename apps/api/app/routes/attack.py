@@ -2358,7 +2358,9 @@ class _Reask:
     `entries` holds only the entries naming a technique their OWN re-ask batch
     asked about; anything else is a stray, dropped and counted, so a re-ask
     can never overwrite an answer the first pass gave. `answered` is the
-    techniques those entries named, which leave the omitted list.
+    techniques those entries named. Only the ones the run then APPLIES (or
+    kept as a consultant's edit) leave the omitted list: a refused re-ask
+    answer applies nothing, so its technique still got no status this run.
     """
 
     entries: list[dict] = field(default_factory=list)
@@ -3050,10 +3052,16 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # #853: read after the apply, so `kept_status` is what the row holds now,
     # an edit that landed while the model answered included. Against the
     # PRE-recompute `locked_keys`: an unlocked parent is never asked for.
-    # #1047: less what the re-ask answered, so this is what is STILL missing.
+    # #1047: less what the re-ask settled, so this is what is STILL missing.
+    # Settled means applied, or kept as an edit made during the run. NOT a
+    # re-ask answer the loop refused: unlike a first-pass refusal, which is an
+    # answer (`_omitted_codes`), that technique was already on this list, and
+    # moving it to the audit row alone (#859) would hide a status nobody
+    # confirmed that the list exists to show.
+    reask_settled = reask.answered & (applied_codes | skipped_codes)
     omitted_techniques = [
         AttackOmittedTechnique(technique_code=code, kept_status=rows[code].status)
-        for code in sorted(_omitted_codes(batched, locked_keys) - reask.answered)
+        for code in sorted(_omitted_codes(batched, locked_keys) - reask_settled)
     ]
     locked_keys = locked_keys - frozenset(parents_unlocked)
     db.flush()
