@@ -56,13 +56,29 @@ describe("ZtStagePicker #922: stages above the capability's maximum", () => {
 
   it("lets a stage already stored above the maximum be cleared", () => {
     const onChange = vi.fn();
-    render(
+    const { rerender } = render(
       <ZtStagePicker value={3} onChange={onChange} stages={DOD} maxStage={2} />,
     );
     const advanced = screen.getByRole("radio", { name: "Advanced" });
     expect(advanced).toHaveAttribute("aria-checked", "true");
+    // While it is selected it is not called unavailable.
+    expect(screen.queryByText(/is not available\./)).toBeNull();
     fireEvent.click(advanced);
     expect(onChange).toHaveBeenCalledWith(null);
+    // Once cleared, it cannot be chosen again, and the line says why.
+    rerender(
+      <ZtStagePicker
+        value={null}
+        onChange={onChange}
+        stages={DOD}
+        maxStage={2}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "This capability has no Advanced activity, so Advanced is not available.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("offers every stage, with no reason line, when no maximum is given", () => {

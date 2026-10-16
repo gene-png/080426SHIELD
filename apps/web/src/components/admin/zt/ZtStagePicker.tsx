@@ -72,8 +72,12 @@ export function ZtStagePicker({
   // 2f89930b: every capability's maximum is the ladder's top or one below it
   // (DoD 2 or 3 of 3, CISA 4 of 4), so at most ONE stage is ever unavailable;
   // the sentence names the lowest unavailable one.
+  // The same predicate as `unreachable` below: a stage already stored above
+  // the maximum is selected and can be cleared, so the line does not call it
+  // unavailable while it is selected.
   const unreachableStages = stages.filter(
-    ({ stage }) => maxStage !== undefined && stage > maxStage,
+    ({ stage }) =>
+      maxStage !== undefined && stage > maxStage && stage !== value,
   );
   const reasonId = React.useId();
   const reason =
@@ -130,7 +134,10 @@ export function ZtStagePicker({
         })}
       </div>
       {reason ? (
-        <p id={reasonId} className="text-xs text-ink-tertiary">
+        <p
+          id={reasonId}
+          className="max-w-xs break-words text-xs text-ink-tertiary"
+        >
           {reason}
         </p>
       ) : null}
