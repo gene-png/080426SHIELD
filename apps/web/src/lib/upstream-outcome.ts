@@ -12,7 +12,11 @@
  * which lives in `upstream-outcome-unknown.ts`.
  */
 
-/** The typed reason every proxy answers when it could not see the result. */
+/**
+ * The typed reason a proxy answers when it could not see the result of a
+ * WRITE (any method but GET/HEAD). A read answers `UPSTREAM_READ_FAILED`
+ * instead (#1130), so a guard keyed on this code never sees a failed read.
+ */
 export const UPSTREAM_OUTCOME_UNKNOWN = "upstream_outcome_unknown";
 
 /**

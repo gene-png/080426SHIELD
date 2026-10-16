@@ -1,8 +1,10 @@
 /**
- * The one response a proxy gives when it could not see the api's result (#550).
+ * The response a proxy gives when it could not see the api's result: #550's
+ * "outcome unknown" for a write, and #1130's "could not load" for a read
+ * (GET/HEAD), chosen by the upstream call's method.
  *
  * HTTP 504 with the house envelope and a typed reason, never an untyped 502
- * "call failed": the api may have done the work. Pure apart from its log line:
+ * "call failed": for a write, the api may have done the work. Pure apart from its log line:
  * no `auth()`, no service knowledge, so every proxy route and helper can call
  * it from its `catch`. An `ApiError` (the api DID answer) is the caller's to
  * pass through and never reaches here.
@@ -23,7 +25,7 @@ function causeCode(err: unknown): string | undefined {
   return typeof cause?.code === "string" ? cause.code : undefined;
 }
 
-/** A read cannot have done anything, so its missing answer is not "unknown". */
+/** A GET or HEAD changes nothing by HTTP contract, so its missing answer is not "unknown". A read sent as a POST still gets the #550 body (it over-warns). */
 function isRead(method: string): boolean {
   const m = method.toUpperCase();
   return m === "GET" || m === "HEAD";
