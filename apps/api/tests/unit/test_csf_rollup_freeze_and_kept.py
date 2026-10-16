@@ -137,13 +137,15 @@ def _row(sheet: list[tuple], code: str) -> dict:
 # --- Ruling 3: approve records the rule; a frozen assessment keeps the old one ---------
 
 
-def test_approve_records_the_scored_tiers_rule(app_client) -> None:  # noqa: F811
+def test_approve_records_the_newest_rule(app_client) -> None:  # noqa: F811
+    """Approve records the newest rules: 2 under #1031, 3 since Options 1 and 3
+    (D-114), which still rolls up scored tiers only."""
     c, h = app_client
     svc, aid = _world(c, h, tiers=["high", "moderate", "low"], high={**LEVEL_3, "target_level": 3})
     assert _rollup_rules(aid) is None  # positive first: a draft records nothing
     r = c.post(f"/csf/assessments/{aid}/approve", headers=h)
     assert r.status_code == 200, r.text
-    assert _rollup_rules(aid) == 2
+    assert _rollup_rules(aid) == 3
     assert _sub(c, h, svc)["enterprise_level"] == 3
 
 

@@ -257,8 +257,10 @@ def world(tmp_path) -> Iterator[tuple[TestClient, sessionmaker, FixtureProvider,
 
 def test_through_the_run_only_the_noted_subcategory_moves_a_dimension(world) -> None:
     """The s7 premise (#806 A5): on a draft with one noted answer, the fixture
-    run applies every row with no drop, moves a dimension on the noted code
-    only, and writes the section 9 sentence on every unanswered row."""
+    run applies every row with no drop and moves a dimension on the noted code
+    only. Since CSF Option 1 (D-114) an unanswered row is never sent, so the
+    run writes nothing on it: its `what_we_found` stays empty, where before it
+    got the section 9 sentence."""
     from app.ai.fixtures import _fixture_csf_score
 
     c, sessions, provider, h, svc_id = world
@@ -282,4 +284,4 @@ def test_through_the_run_only_the_noted_subcategory_moves_a_dimension(world) -> 
     assert len(rows) == 318
     for r in rows:
         if r.subcategory_code != "GV.OC-01":
-            assert r.what_we_found == _NO_ANSWER, r.subcategory_code
+            assert r.what_we_found is None, r.subcategory_code

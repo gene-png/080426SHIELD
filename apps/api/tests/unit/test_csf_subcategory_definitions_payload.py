@@ -32,6 +32,7 @@ from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
 from app.csf.catalog import subcategory_by_code
 from app.models.llm_call import LLMCall
 from tests._ai_runs import csf_run_ai
+from tests._csf_notes import note_every_answer
 
 pytestmark = pytest.mark.unit
 
@@ -99,6 +100,8 @@ def _world(tmp_path: Path, legal_name: str) -> Iterator[World]:
         assert a.status_code in (200, 201), a.text
         seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": _TIERS})
         assert seeded.status_code in (200, 201), seeded.text
+        # CSF Option 1 (D-114): only rows whose answer has notes are sent.
+        note_every_answer(svc_id)
         yield World(c, sessions, provider, h, svc_id)
 
 
