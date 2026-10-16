@@ -255,8 +255,9 @@ class CitationResolver:
     def _redacted_form(self, name: str) -> str | None:
         """`name` as the model sees it, or None when redaction changes nothing.
 
-        Calls `redact_for_ai` -- the WHOLE pipeline, with the same mode and name
-        hints the egress path uses -- rather than the org-name rule alone.
+        Asks the egress's WHOLE redactor (`redact_for_ai`, through `shown_forms`
+        since #1080), with the same mode and name hints the egress path uses --
+        rather than the org-name rule alone.
 
         The first version called `redact_org_name` directly while its docstring
         claimed to use "the SAME redactor the egress path uses". That was false

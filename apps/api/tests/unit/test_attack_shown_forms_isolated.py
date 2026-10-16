@@ -175,3 +175,152 @@ def test_the_client_dashboard_subset_check_never_asks_the_child(
     body = _dashboard(w)
     # Positive: the subset check ran (and found LEGACY outside the list).
     assert body["tool_outside_subset"] == [LEGACY], body.get("tool_outside_subset")
+
+
+# --- review of 8c3c85e0: nothing asks the child after a paid call ------------------
+
+
+def _busy() -> isolation.RedactionRefused:
+    return isolation.RedactionRefused(
+        isolation.REDACTION_CAPACITY_BUSY,
+        isolation.busy_message(sent_before=False),
+        status_code=503,
+        sent_before=False,
+    )
+
+
+def test_a_refused_check_after_the_paid_chat_call_is_n2_not_nothing_was_sent(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """F1: the chat call is made, and then the check of the AI's proposed
+    added names is refused. The answer is the N2 fallback with the attempt
+    audited, never a 503 saying nothing was sent: the call WAS sent."""
+    import json
+
+    from app.ai.llm import LLMResponse
+    from app.attack import scenario_intent
+    from app.models.audit_entry import AuditEntry
+    from tests.unit.test_ai_runs_attack import LiveLookingProvider
+    from tests.unit.test_attack_scenario_intent_routes import N2, VAGUE
+
+    w = _world(app_parts)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    seen: list[dict] = []
+    provider = LiveLookingProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        seen.append(payload)
+        return LLMResponse(json.dumps({"remove": [], "add": ["XDR Suite"], "unclear": []}))
+
+    provider.register(scenario_intent.PURPOSE, respond)
+    w.use(provider)
+    real = isolation.redact_payload_isolated
+
+    def refuse_after_the_call(payload, **kwargs):
+        if seen:
+            raise _busy()
+        return real(payload, **kwargs)
+
+    monkeypatch.setattr(shown_module, "redact_payload_isolated", refuse_after_the_call)
+    r = w.c.post(
+        f"/attack/services/{w.svc_id}/scenarios/parse",
+        headers=w.h,
+        json={"text": VAGUE, "serves": "live"},
+    )
+    assert r.status_code == 200, r.text
+    assert len(seen) == 1, "setup: the paid call was made"
+    assert (r.json()["source"], r.json()["note"]) == ("matcher", N2)
+    with w.sessions() as db:
+        entry = db.execute(
+            select(AuditEntry).where(AuditEntry.action == "attack.scenario.chat_ai_parse")
+        ).scalar_one()
+    assert entry.details["failure"] == "redaction_capacity_busy", entry.details
+    assert entry.details["fell_back"] is True
+
+
+def test_a_refused_check_before_the_chat_call_is_a_typed_503_with_nothing_sent(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """F1's other half: the names known before the call are checked BEFORE
+    it, so a refusal there is true when it says nothing was sent."""
+    import json
+
+    from app.ai.llm import LLMResponse
+    from app.attack import scenario_intent
+    from tests.unit.test_ai_runs_attack import LiveLookingProvider
+    from tests.unit.test_attack_scenario_intent_routes import VAGUE
+
+    w = _world(app_parts)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    seen: list[dict] = []
+    provider = LiveLookingProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        seen.append(payload)
+        return LLMResponse(json.dumps({"remove": [], "add": [], "unclear": []}))
+
+    provider.register(scenario_intent.PURPOSE, respond)
+    w.use(provider)
+
+    def refuse(*_a, **_k):
+        raise _busy()
+
+    monkeypatch.setattr(shown_module, "redact_payload_isolated", refuse)
+    r = w.c.post(
+        f"/attack/services/{w.svc_id}/scenarios/parse",
+        headers=w.h,
+        json={"text": VAGUE, "serves": "live"},
+    )
+    assert r.status_code == 503, r.text
+    assert _error(r)["reason"] == "redaction_capacity_busy"
+    assert seen == []
+
+
+def test_the_what_if_run_asks_the_child_nothing_after_its_answers_arrive(
+    app_parts,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """F3: the shown forms the answers are read against are asked before
+    `run_batches`; reading the paid-for answers asks the child nothing, so a
+    refusal after them cannot fail a run whose answers were bought."""
+    import json
+
+    from app.ai.llm import FixtureProvider, LLMResponse
+    from tests.unit.test_attack_scenario_routes import (
+        EDR,
+        PURPOSE,
+        SIEM,
+        _flags,
+        _run_to_completion,
+    )
+
+    w = _world(app_parts)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    answered: list[str] = []
+    provider = FixtureProvider()
+
+    def respond(payload: dict) -> LLMResponse:
+        answered.append("answer")
+        sent = payload.get("technique_codes") or []
+        return LLMResponse(json.dumps({"rows": [_flags(c, SIEM, d=True) for c in sent]}))
+
+    provider.register(PURPOSE, respond)
+    w.use(provider)
+    real = isolation.redact_payload_isolated
+    after: list[list[str]] = []
+
+    def refuse_after_answers(payload, **kwargs):
+        if answered:
+            after.append(list(payload))
+            raise _busy()
+        return real(payload, **kwargs)
+
+    monkeypatch.setattr(shown_module, "redact_payload_isolated", refuse_after_answers)
+    r = w.create([EDR])
+    assert r.status_code == 201, r.text
+    body = _run_to_completion(w, r.json()["id"])
+    assert answered, "setup: the batches were answered"
+    assert after == [], after
+    assert body["run_status"] == "completed", body["run_error"]

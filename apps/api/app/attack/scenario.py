@@ -343,6 +343,7 @@ def validate_added(
     name_hints: Iterable[str] = (),
     limit: int = MAX_ADDED,
     check_characters: bool = True,
+    shown: Mapping[str, str] | None = None,
 ) -> list[AddedTool]:
     """The admin's added tools, or a typed refusal naming the first bad one.
 
@@ -386,8 +387,11 @@ def validate_added(
     entry_names = [
         n for n in (_text(e.get("name")) for e in raw if isinstance(e, Mapping)) if n is not None
     ]
-    shown = shown_forms(
-        [*client, *entry_names],
+    # `shown`: forms a caller already asked for with THIS mode, client name
+    # and hints; only the names it lacks are asked here.
+    given = dict(shown or {})
+    shown = given | shown_forms(
+        [n for n in [*client, *entry_names] if n not in given],
         mode=redaction_mode,
         client_org_name=client_org_name,
         name_hints=hints,
@@ -905,8 +909,13 @@ def parse_delta(
     client_org_name: str | None = None,
     redaction_mode: RedactionMode = "strict",
     name_hints: tuple[str, ...] = (),
+    shown: Mapping[str, str] | None = None,
 ) -> ParsedDelta:
     """Validate one batch's answer against the contract.
+
+    `shown` (#1080): the shown forms of every `available` name and vendor,
+    asked ONCE by the caller before the batches were sent, so reading an
+    answer that has already been paid for never asks the redaction child.
 
     `asked` is the batch's slice of affected techniques; `available` is the
     client's tools minus the removed ones. A tool is resolved by `mitre_map`'s
@@ -942,6 +951,7 @@ def parse_delta(
         client_org_name=client_org_name,
         redaction_mode=redaction_mode,
         name_hints=name_hints,
+        shown=shown,
     )
     lists = {code: {name: [] for name in _LISTS} for code in asked}
     accepted: list[dict[str, Any]] = []

@@ -27,6 +27,7 @@ from app.ai.engine import AIResponseShapeError, parse_json_object
 from app.ai.redact import RedactionMode
 from app.attack import scenario
 from app.attack.citations import Candidate, CitationResolver
+from app.attack.shown_forms import shown_forms
 
 PURPOSE = "attack_scenario_intent"
 
@@ -100,8 +101,14 @@ def read(
     client_org_name: str | None,
     redaction_mode: RedactionMode,
     name_hints: Iterable[str] = (),
+    shown: Mapping[str, str] | None = None,
 ) -> scenario.ParsedChange:
     """The AI's answer as a proposed change list, every name checked.
+
+    `shown` (#1080): the shown forms of `cited` and `client_tools`, asked by
+    the caller BEFORE the paid call. The AI's proposed added names are known
+    only now, so they are asked here in one call; a refusal of that call is
+    the caller's to disclose (the call was already made).
 
     Raises `IntentShapeError` when the answer is out of shape, or when an
     `unclear` phrase is not in the description sent (condition 1): either way
@@ -113,6 +120,20 @@ def read(
         [Candidate(name=c) for c in cited],
         client_org_name=client_org_name,
         redaction_mode=redaction_mode,
+        name_hints=hints,
+        shown=shown,
+    )
+    # Every name an addition is judged by, asked ONCE: the client's tools
+    # (from `shown`) and each name the AI proposed adding.
+    table = dict(shown or {})
+    table |= shown_forms(
+        [
+            n
+            for n in [*client_tools, *(scenario.bare_name(a) for a in lists["add"])]
+            if n not in table
+        ],
+        mode=redaction_mode,
+        client_org_name=client_org_name,
         name_hints=hints,
     )
     removed: list[str] = []
@@ -151,6 +172,7 @@ def read(
                 redaction_mode=redaction_mode,
                 name_hints=hints,
                 limit=scenario.MAX_ADDED,
+                shown=table,
             )
         except scenario.Duplicate:
             # A second spelling of a tool already added: in the list, so not
