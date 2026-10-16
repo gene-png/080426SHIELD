@@ -106,6 +106,26 @@ describe("IntakeWizard: which fields the kept-value sentence may name (#1115)", 
     expect(screen.queryByText(RETYPE, { exact: false })).toBeNull();
   });
 
+  it("does not say a Step 3 contact override is still in the form", async () => {
+    // Review of 74211b70: the override travels under `client`, so only
+    // keepsPatch's every-key-is-submitted clause stands between it and the
+    // kept sentence. Its fields re-read from the server when the step reopens.
+    render(<IntakeWizard />);
+    await screen.findByRole("button", { name: "Next →" });
+    await next(2); // -> organization, contact
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: /I am not the primary contact/ }),
+      );
+    });
+    await typeAndBlur("primary_contact_email", "pat@atlas.example");
+    expect(vi.mocked(intakeClient.patchIntake)).toHaveBeenLastCalledWith({
+      client: { primary_contact_email: "pat@atlas.example" },
+    });
+    expect(screen.getByText(RETYPE, { exact: false })).toBeVisible();
+    expect(screen.queryByText(KEPT, { exact: false })).toBeNull();
+  });
+
   it("does not say a Step 3 value is still in the form", async () => {
     render(<IntakeWizard />);
     await screen.findByRole("button", { name: "Next →" });
