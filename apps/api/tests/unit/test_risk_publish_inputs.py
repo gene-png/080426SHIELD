@@ -91,7 +91,8 @@ def test_an_engaged_service_with_no_assessment_blocks(app_client) -> None:  # no
 
 def test_a_newer_version_after_generate_blocks(app_client) -> None:  # noqa: F811
     """Released at generate, then a new ATT&CK version is opened: the register
-    was built from the old one and must be regenerated."""
+    was built from the old one and must be regenerated. Refused as `changed`
+    since #1156: the register drew on the released record, not the new draft."""
     c, provider = app_client
     bearer, cid = _admin(c)
     s = seed_released(c, bearer, cid)
@@ -100,7 +101,7 @@ def test_a_newer_version_after_generate_blocks(app_client) -> None:  # noqa: F81
     v2 = c.post(f"/attack/services/{s.attack_service}/assessments", headers=h)
     assert v2.status_code in (200, 201), v2.text
     assert _blockers(_publish(c, bearer, cid)) == [
-        {"input": "attack", "reason": "not_released", "status": "draft"}
+        {"input": "attack", "reason": "changed", "status": "draft"}
     ]
 
 
