@@ -349,7 +349,8 @@ def test_csf_evidence_is_the_playbook_per_tier(app_client) -> None:  # noqa: F81
         },
     }
     # The label is the code-built one (D'), and the questionnaire note is not sent.
-    assert findings[CSF_A]["label"] == f"CSF {CSF_A}: level 2 of target 3"
+    # Levels by name since #736 6216024281 item 3c (2 Developing, 3 Defined).
+    assert findings[CSF_A]["label"] == f"CSF {CSF_A}: Developing, below target Defined"
     assert "QUESTIONNAIRE-NOTE-4417" not in json.dumps(sent)
 
 

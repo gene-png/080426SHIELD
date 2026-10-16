@@ -74,6 +74,9 @@ export interface IntakeStateResponse {
   intake_completed_at: string | null;
   /** The primary contact, so Review & submit can show what is being sent. */
   contact?: IntakeContactResponse | null;
+  /** #1282: the submitter's OWN account details, never an override's. Step 3's
+   *  own inputs read these, so a blur never writes the override onto them. */
+  submitter?: IntakeContactResponse | null;
 }
 
 /** One assessment = one Service (workspace) the client owns. */
@@ -134,8 +137,10 @@ export interface ClientProfilePatch {
 export interface IntakePatchRequest {
   client?: ClientProfilePatch;
   display_name?: string;
-  title?: string;
-  phone?: string;
+  /** #1198: null clears a stored title or phone; display_name and timezone
+   *  cannot be cleared, so they stay optional strings. */
+  title?: string | null;
+  phone?: string | null;
   timezone?: string;
 }
 

@@ -28,6 +28,11 @@ function notesBlank(notes: string | null): boolean {
   return notes === null || notes.trim() === "";
 }
 
+// #982 (A): a per-capability target whose origin is not recorded. Approved
+// verbatim at #736 comment 6220094031 item 5.
+const TARGET_ORIGIN_NOT_RECORDED =
+  "Who set this target is not recorded. An earlier AI run may have set it.";
+
 export interface ZtQuestionnaireProps {
   catalog: ZtCatalog;
   answersByCode: Record<string, ZtAnswer>;
@@ -179,6 +184,12 @@ export function ZtQuestionnaire({
                             ))}
                           </select>
                         </label>
+                        {ans.target_stage != null &&
+                        ans.target_source == null ? (
+                          <p className="max-w-xs text-xs text-ink-tertiary">
+                            {TARGET_ORIGIN_NOT_RECORDED}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <details className="mt-2">
@@ -200,11 +211,10 @@ export function ZtQuestionnaire({
                         // failed save left the REFUSED text on screen while the
                         // alert said it had been restored.
                         //
-                        // This component is rendered by the CLIENT
-                        // self-assessment as well as the admin workspace, which
-                        // is why a client-facing fix reaches an admin file. The
-                        // admin path gets the same correction, incidentally and
-                        // correctly -- it reverts by re-fetch too.
+                        // Only the admin workspace (ZtWorkspace) renders this
+                        // component; the client self-assessment has its own.
+                        // The admin path reverts by re-fetch, so the key gives
+                        // it the same correction.
                         key={`${ans.id}:${ans.notes ?? ""}`}
                         defaultValue={ans.notes ?? ""}
                         disabled={readOnly}

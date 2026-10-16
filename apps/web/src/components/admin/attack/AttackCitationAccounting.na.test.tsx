@@ -56,7 +56,7 @@ describe("AttackCitationAccounting: AI N/A refused (#841)", () => {
     );
     // The panel itself rendered (the positive state) before the absence.
     expect(screen.getByTestId("attack-citation-accounting")).toHaveTextContent(
-      /4 tool citations checked against/,
+      /We checked 4 of these\./,
     );
     expect(screen.queryByTestId("attack-not-applicable-refused")).toBeNull();
   });

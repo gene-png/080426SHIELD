@@ -30,3 +30,21 @@ export function clientIdRequired(route: string): NextResponse {
     { status: 400 },
   );
 }
+
+/**
+ * #1262, the `/intake` residual. A client the request NAMES (`?client_id=`)
+ * wins over the shared active-client cookie, which another tab may have
+ * rewritten since the page loaded. An EMPTY value is refused, as above. With
+ * no parameter, `undefined`: `apiFetch` then reads the cookie, as before. It
+ * cannot widen access: the api pins a client-role user to its own client
+ * whatever X-Client-Id says (`current_client`).
+ */
+export function namedClientId(
+  request: Request,
+  route: string,
+): string | undefined | NextResponse {
+  const params = new URL(request.url).searchParams;
+  if (!params.has("client_id")) return undefined;
+  const id = params.get("client_id");
+  return id ? id : clientIdRequired(route);
+}

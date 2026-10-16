@@ -103,7 +103,8 @@ describe("useIntakeAutoSave refusal copy", () => {
   });
 
   // The 4xx/5xx boundary (review of #1092), as #1115 redraws it (advisor
-  // 6207611148). A 400, 409 or 422 judged the value; any other 4xx did not.
+  // 6207611148) and #1207 item 1 narrows it (option (A), 6216024281): only a
+  // 422 judged the value; any other 4xx, a 400 or 409 included, did not.
   // A 5xx with no api envelope may have landed, so its outcome is unknown.
   // The api's own JSON 500 carries a typed message, which is shown instead,
   // and is not what these tests cover.
@@ -136,9 +137,17 @@ describe("useIntakeAutoSave refusal copy", () => {
     expect(message).toBe(NOT_SAVED_KEPT);
   });
 
-  it("says the value was not accepted for a 4xx with an empty body", async () => {
-    respondRaw(400, null);
+  it("says the value was not accepted for a 422 with an empty body", async () => {
+    respondRaw(422, null);
     const message = await saveWebsite();
     expect(message).toBe(REFUSED);
+  });
+
+  it("says the value was not saved and is kept for a 400 with an empty body (#1207)", async () => {
+    // On PATCH /intake a 400 comes from `current_client` or the proxy's
+    // "Invalid JSON body.", and neither judged the value.
+    respondRaw(400, null);
+    const message = await saveWebsite();
+    expect(message).toBe(NOT_SAVED_KEPT);
   });
 });
