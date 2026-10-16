@@ -71,6 +71,8 @@ _SETUP_ACTIONS = (
     "actions/download-artifact@",
 )
 
+#: An expression reading another job: `${{ needs.<job>.result }}` and the like.
+_NEEDS_EXPR = re.compile(r"\$\{\{[^}]*\bneeds\.")
 _EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 _BOT = "github.event.pull_request.user.login == 'dependabot[bot]'"
 _NOT_BOT = "github.event.pull_request.user.login != 'dependabot[bot]'"
@@ -125,7 +127,15 @@ def resolve(text: str, values: dict[str, str], where: str) -> str:
 
 
 def _job_runs_here(job: dict) -> bool:
-    """Every step a setup action or a `run:` using only what the API image has."""
+    """Every step a setup action or a `run:` using only what the API image has,
+    and nothing in the job reading another job's outcome.
+
+    A job that reads `needs.<job>.result` (an aggregate, #680) judges OTHER
+    jobs, which exist only on GitHub. It stays there and is listed, rather than
+    being run with a value the planner would have to guess (#736 6217409672).
+    """
+    if _NEEDS_EXPR.search(yaml.safe_dump(job)):
+        return False
     steps = job.get("steps") or []
     if any(
         s.get("uses") is not None and not str(s["uses"]).startswith(_SETUP_ACTIONS) for s in steps
