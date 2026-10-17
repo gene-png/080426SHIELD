@@ -28,6 +28,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import AI_CALL_FAILED, ai_call_boundary, is_credential_rejection
 from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
+from app.ai.run_context import note_invoke_entered
 from app.ai.runs import RUN_DEADLINE_EXCEEDED, RunFailed
 from app.logging import get_logger
 from app.models._common import utcnow
@@ -128,6 +129,13 @@ def run_batches(
     stop = threading.Event()
 
     def _one(inputs: dict[str, Any]) -> dict:
+        # #1219: mark the run BEFORE the stop check. Marked after it, a worker
+        # could pass the check, the collector could end the run (deadline,
+        # failure) and record "not charged" from an unset mark, and the worker
+        # could still reach the provider if it entered `invoke` before the run
+        # released its redaction place. Marked here, a batch turned away below
+        # costs only a conservative "not known".
+        note_invoke_entered()
         if stop.is_set():
             raise _NotSent()
         # Bind to the CALLER's engine, not the module-level SessionLocal:
