@@ -228,7 +228,13 @@ export const TD_SECTION_COPY = {
     someLeftOut: (applied: number, asked: number) =>
       `${applied} of ${asked} uploaded ${asked === 1 ? "row" : "rows"} ${applied === 1 ? "is" : "are"} in the list.`,
     leftOutReason: "Not in the list",
+    // Only when some rows were left out. PENDING advisor approval, verbatim:
+    // `nextOne`, the singular, which the approved line has no form for.
     next: "Check the list in Review. The rows left out are listed in Inputs.",
+    nextOne: "Check the list in Review. The row left out is listed in Inputs.",
+    // PENDING advisor approval, verbatim: a stored upload can have no rows (a
+    // header-only file), which is not a success to count.
+    noRows: "This upload had no rows, so there is nothing to count.",
     uncounted:
       "This result can't be counted: the AI could not match every capability to one uploaded row. Inputs shows what is known.",
     noRowCount:

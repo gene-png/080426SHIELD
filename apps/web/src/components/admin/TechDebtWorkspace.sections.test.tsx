@@ -382,6 +382,59 @@ describe("the AI draft result card, counted in uploaded rows (#1376)", () => {
     );
   });
 
+  // The next-step line points at the rows left out, so it exists only when
+  // some were (advisor ruling #736 6229125629 left it unconditional; it read
+  // "The rows left out are listed in Inputs." over a success card).
+  it("nothing left out: no next-step line pointing at rows that are not there", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({ source_rows_total: 4, excluded_rows: [] }),
+    );
+    await renderSettled("ai-draft");
+    const card = screen.getByTestId("ai-result-card");
+    expect(card).toHaveTextContent("All 4 uploaded rows are in the list.");
+    expect(card).not.toHaveTextContent(
+      /left out are listed|left out is listed/,
+    );
+    expect(card).not.toHaveTextContent("Check the list in Review");
+  });
+
+  it("one row left out: the next-step line is singular", async () => {
+    await renderSettled("ai-draft"); // the default list: 5 received, 4 in, 1 left out
+    expect(screen.getByTestId("ai-result-card")).toHaveTextContent(
+      "Check the list in Review. The row left out is listed in Inputs.",
+    );
+  });
+
+  it("two rows left out: the next-step line is plural", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({
+        source_rows_total: 6,
+        excluded_rows: [
+          { index: 4, summary: "a" },
+          { index: 5, summary: "b" },
+        ],
+      }),
+    );
+    await renderSettled("ai-draft");
+    expect(screen.getByTestId("ai-result-card")).toHaveTextContent(
+      "Check the list in Review. The rows left out are listed in Inputs.",
+    );
+  });
+
+  it("an upload with no rows is not a success: no card, and a line that says so", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({ source_rows_total: 0, excluded_rows: [], items: [] }),
+    );
+    await renderSettled("ai-draft");
+    expect(screen.queryByTestId("ai-result-card")).toBeNull();
+    expect(
+      screen.getByText(
+        "This upload had no rows, so there is nothing to count.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/All 0 uploaded rows/)).toBeNull();
+  });
+
   it("an unknown count shows no card, and says why", async () => {
     fetchLatestList.mockResolvedValue(
       list({ exclusion_count_state: "unknown", excluded_rows: [] }),

@@ -1534,6 +1534,12 @@ function extractionResult(list: CapabilityList): JSX.Element {
     return <p className="text-sm text-ink-secondary">{copy.noRowCount}</p>;
   }
   const included = sourceItems(list.items).length;
+  // A header-only upload parses to no rows and nothing refuses it before the
+  // list is stored, so `received` can be 0. "All 0 rows are in the list" over
+  // a success card would be a lie by omission.
+  if (received === 0 && included === 0) {
+    return <p className="text-sm text-ink-secondary">{copy.noRows}</p>;
+  }
   if (exclusionUnknown(list) || included > received) {
     return <p className="text-sm text-ink-secondary">{copy.uncounted}</p>;
   }
@@ -1554,7 +1560,9 @@ function extractionResult(list: CapabilityList): JSX.Element {
           leftOut > 0 ? [{ reason: copy.leftOutReason, count: leftOut }] : [],
         unscored: 0,
       }}
-      nextStep={copy.next}
+      nextStep={
+        leftOut === 0 ? undefined : leftOut === 1 ? copy.nextOne : copy.next
+      }
     />
   );
 }
