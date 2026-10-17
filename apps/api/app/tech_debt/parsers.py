@@ -35,6 +35,24 @@ SUPPORTED_MIME = {
 MAX_ROWS = 500
 
 
+class InventoryOverRowLimit(ValueError):
+    """Raised when an inventory holds more than MAX_ROWS rows (#1425).
+
+    The file is REFUSED, never read short: a cut file reported counts for rows
+    nobody read ("501 received, 1 excluded" over a 600-row upload).
+    """
+
+    def __init__(self, rows: int) -> None:
+        self.rows = rows
+        # New copy, a placeholder until the advisor approves it verbatim.
+        self.message = (
+            f"This inventory has {rows} rows, and one extraction reads at most "
+            f"{MAX_ROWS}. Nothing was read and no capability list was created. "
+            f"Remove rows to bring the file to {MAX_ROWS} or fewer, then upload it again."
+        )
+        super().__init__(self.message)
+
+
 def kind_for_mime(mime_type: str) -> str:
     try:
         return SUPPORTED_MIME[mime_type]
@@ -47,8 +65,8 @@ def kind_for_mime(mime_type: str) -> str:
 def parse_inventory(data: bytes, mime_type: str) -> list[dict[str, Any]]:
     """Parse `data` into a list of row-dicts. Header row becomes the keys.
 
-    Returns at most MAX_ROWS rows; the last row in the response is a
-    sentinel `{"__truncated__": True}` marker when the input was longer.
+    Raises InventoryOverRowLimit when the input has more than MAX_ROWS rows;
+    it never returns a cut list (#1425).
     """
     kind = kind_for_mime(mime_type)
     if kind == "csv":
@@ -59,10 +77,8 @@ def parse_inventory(data: bytes, mime_type: str) -> list[dict[str, Any]]:
         raise UnsupportedInventoryFormat(f"Unknown internal kind {kind!r}.")
 
     out = list(rows)
-    truncated = len(out) > MAX_ROWS
-    if truncated:
-        out = out[:MAX_ROWS]
-        out.append({"__truncated__": True, "__hint__": f"Input had > {MAX_ROWS} rows."})
+    if len(out) > MAX_ROWS:
+        raise InventoryOverRowLimit(len(out))
     return out
 
 

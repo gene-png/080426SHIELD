@@ -2820,7 +2820,11 @@ def _inventory_rows(path: str) -> tuple[list[dict], str]:
     """The rows of `path`, parsed by the upload's own `parse_inventory`."""
     from pathlib import Path
 
-    from app.tech_debt.parsers import UnsupportedInventoryFormat, parse_inventory
+    from app.tech_debt.parsers import (
+        InventoryOverRowLimit,
+        UnsupportedInventoryFormat,
+        parse_inventory,
+    )
 
     suffix = Path(path).suffix.lower()
     mime = _INVENTORY_MIME.get(suffix)
@@ -2836,6 +2840,8 @@ def _inventory_rows(path: str) -> tuple[list[dict], str]:
         rows = parse_inventory(data, mime)
     except UnsupportedInventoryFormat as exc:
         raise Refused("inventory_format", str(exc)) from exc
+    except InventoryOverRowLimit as exc:
+        raise Refused("inventory_over_row_limit", exc.message) from exc
     if not rows:
         raise Refused("inventory_empty", "--inventory holds no rows.")
     return rows, mime
