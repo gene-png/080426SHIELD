@@ -1676,7 +1676,7 @@ def zt_dashboard(
         tp = target_by_code.get(pc.pillar_code)
         cur_pct = pc.maturity_pct
         tgt_pct = tp.maturity_pct if tp is not None else None
-        gap = round(max(0.0, (tgt_pct or 0.0) - (cur_pct or 0.0)), 1)
+        gap = None if cur_pct is None else round(max(0.0, (tgt_pct or 0.0) - cur_pct), 1)
         weakest = [zt_capability_by_code(code).name for code in pc.weakest_capability_codes]
         pillars.append(
             ZtPillarDashboard(
@@ -1693,7 +1693,14 @@ def zt_dashboard(
             )
         )
 
-    largest = max(pillars, key=lambda p: p.gap_pct, default=None)
+    # Stage 1 is 0% (#1183), so a pillar with nothing scored (null) must not be
+    # named the largest gap as if it sat at the lowest stage; CSF's guard is the
+    # same (`current_pct is not None`).
+    largest = max(
+        (p for p in pillars if p.current_pct is not None),
+        key=lambda p: p.gap_pct or 0.0,
+        default=None,
+    )
 
     # #1343: the same predicate the deliverable's gap rows use.
     unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))

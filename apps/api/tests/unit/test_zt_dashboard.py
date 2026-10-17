@@ -242,8 +242,9 @@ def test_zt_dashboard_released_returns_pillars(app_client) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["framework"] == "cisa_ztmm_2_0"
-    # current stage 2 of 4 -> 50%, "Initial"; target stage 4 -> 100%, "Optimal".
-    assert body["current_pct"] == 50.0
+    # #1183: (stage - 1) / (4 - 1), floored to one decimal. Current stage 2 ->
+    # 33.3%, "Initial"; target stage 4 -> 100%, "Optimal".
+    assert body["current_pct"] == 33.3
     assert body["target_pct"] == 100.0
     assert body["current_label"] == "Initial"
     assert body["target_label"] == "Optimal"
@@ -260,10 +261,10 @@ def test_zt_dashboard_released_returns_pillars(app_client) -> None:
         p["code"] for p in body["pillars"]
     }, "the pillar NAME, not its code"
     p0 = body["pillars"][0]
-    assert p0["current_pct"] == 50.0
+    assert p0["current_pct"] == 33.3
     assert p0["target_pct"] == 100.0
-    assert p0["gap_pct"] == 50.0
-    assert body["largest_gap_pct"] == 50.0
+    assert p0["gap_pct"] == 66.7
+    assert body["largest_gap_pct"] == 66.7
 
 
 @pytest.mark.unit
@@ -313,7 +314,7 @@ def test_admin_sees_the_dashboard_once_finalized_before_release(app_client) -> N
     body = r.json()
     assert body["released"] is False, "an unreleased dashboard must be labelled a preview"
     # The figures are real, not placeholders — same engine output as post-release.
-    assert body["current_pct"] == 50.0
+    assert body["current_pct"] == 33.3
     assert body["target_pct"] == 100.0
 
 
@@ -451,7 +452,7 @@ def test_dashboard_uses_the_engagement_target_when_no_per_capability_targets(
     # Was "Unscored"/None/0.0 -- the three values that made this read as good news.
     assert body["target_label"] == "Optimal"
     assert body["target_pct"] == 100.0
-    assert body["largest_gap_pct"] == 50.0
+    assert body["largest_gap_pct"] == 66.7
     assert body["total_gap_count"] == _CISA_CAPABILITY_COUNT
 
     assert body["pillars"], "precondition: the rollup produced pillars"
@@ -459,7 +460,7 @@ def test_dashboard_uses_the_engagement_target_when_no_per_capability_targets(
         code = p["code"]
         assert p["target_pct"] == 100.0, f"{code} target must not be unscored"
         assert p["target_label"] == "Optimal", f"{code} label must not be Unscored"
-        assert p["gap_pct"] == 50.0, f"{code} must not report a 0-point move"
+        assert p["gap_pct"] == 66.7, f"{code} must not report a 0-point move"
 
 
 @pytest.mark.unit
@@ -545,9 +546,10 @@ def test_dashboard_labels_a_default_target_as_a_default(app_client) -> None:
     assert body["target_stage"] == 3, "DEFAULT_TARGET_STAGE"
     assert body["target_stage_source"] == "default"
     assert body["engagement_target_capability_count"] == _CISA_CAPABILITY_COUNT
-    # Stage 3 of 4 = 75%, and current 2 of 4 = 50%.
-    assert body["target_pct"] == 75.0
-    assert body["largest_gap_pct"] == 25.0
+    # #1183: target stage 3 = (3 - 1) / 3 = 66.6% (floored), and current
+    # stage 2 = 33.3%, so the gap is 33.3 points.
+    assert body["target_pct"] == 66.6
+    assert body["largest_gap_pct"] == 33.3
 
 
 @pytest.mark.unit
@@ -638,7 +640,7 @@ def test_dashboard_does_not_credit_intake_for_a_fully_overridden_target(
 def test_zt_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
     """#114, ZT's half. Released v1 at stage 2; v2 approved at stage 4, unfinalized.
 
-    The dashboard must keep reporting v1's 50% under its "v1, released" header
+    The dashboard must keep reporting v1's 33.3% under its "v1, released" header
     rather than swapping to v2's 100% the moment the consultant approves it.
     """
     c = app_client
@@ -682,9 +684,9 @@ def test_zt_dashboard_numbers_come_from_the_version_the_header_claims(app_client
     body = r.json()
 
     assert body["deliverable_version"] == 1, "the header stopped naming the released report"
-    assert body["current_pct"] == 50.0, (
+    assert body["current_pct"] == 33.3, (
         "the dashboard served v2's stage-4 score (100%) under a header naming the "
-        "released v1 report, whose PDF says 50%"
+        "released v1 report, whose stage-2 score is 33.3%"
     )
     assert body["current_label"] == "Initial", "the maturity label followed the wrong version"
-    assert body["largest_gap_pct"] == 50.0, "the gap figure came from the wrong version too"
+    assert body["largest_gap_pct"] == 66.7, "the gap figure came from the wrong version too"

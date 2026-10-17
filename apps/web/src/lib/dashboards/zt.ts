@@ -17,7 +17,7 @@ export interface ZtPillar {
   current_label: string;
   target_pct: number | null;
   target_label: string;
-  gap_pct: number;
+  gap_pct: number | null;
   weakest: string[];
 }
 
@@ -109,16 +109,18 @@ export interface ZtDashboardData {
 
 export interface RadarData {
   labels: string[];
-  current: number[];
-  target: number[];
+  current: (number | null)[];
+  target: (number | null)[];
 }
 
-/** Current-vs-target maturity % per pillar for the radar chart. */
+/** Current-vs-target maturity % per pillar for the radar chart. A pillar with
+ *  nothing scored stays null: stage 1 is 0% (#1183), so 0 would plot it as a
+ *  pillar scored at the lowest stage. */
 export function radarData(pillars: ZtPillar[]): RadarData {
   return {
     labels: pillars.map((p) => p.name),
-    current: pillars.map((p) => p.current_pct ?? 0),
-    target: pillars.map((p) => p.target_pct ?? 0),
+    current: pillars.map((p) => p.current_pct),
+    target: pillars.map((p) => p.target_pct),
   };
 }
 
@@ -142,7 +144,8 @@ export function scoredNote(pillars: ZtPillar[]): string {
 
 /** Pillars ordered by the largest current→target gap first (focus ordering). */
 export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
-  return [...pillars].sort((a, b) => b.gap_pct - a.gap_pct);
+  // A pillar with nothing scored has no gap figure; it goes last (#1183).
+  return [...pillars].sort((a, b) => (b.gap_pct ?? -1) - (a.gap_pct ?? -1));
 }
 
 /**
