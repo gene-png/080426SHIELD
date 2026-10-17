@@ -2943,6 +2943,27 @@ NEWER_DRAFT_OPEN = (
 )
 
 
+#: #1156 review round 2 F1: a `changed` input whose newer record is SUBMITTED
+#: or APPROVED. "Generate a new version" alone cannot publish (the new register
+#: would draw on that unreleased version), and it cannot be discarded, so the
+#: sentence names it and says to release it first. PENDING advisor copy.
+_WAITING_STATES = ("submitted", "approved")
+
+
+def _newer_version_waiting(waiting: list[str]) -> str:
+    if len(waiting) == 1:
+        return (
+            "This register can't be published while a newer version of an assessment "
+            "it draws on is waiting to be released: " + waiting[0] + ". Release that "
+            "version, then generate a new version before publishing."
+        )
+    return (
+        "This register can't be published while newer versions of assessments it "
+        "draws on are waiting to be released: " + "; ".join(waiting) + ". Release "
+        "those versions, then generate a new version before publishing."
+    )
+
+
 def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     """#737. One sentence per cause, naming each input. DRAFT copy."""
     if any(b.reason == "not_recorded" for b in blockers):
@@ -2974,10 +2995,17 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     # "Discard draft" control is on that service's workspace.
     if any(b.reason == "changed" and b.status == "draft" for b in blockers):
         parts.append(NEWER_DRAFT_OPEN)
+    newer_waiting = [
+        f"{_INPUT_LABELS.get(b.kind, b.kind)} ({_STATE_WORDS[b.status]})"
+        for b in blockers
+        if b.reason == "changed" and b.status in _WAITING_STATES
+    ]
+    if newer_waiting:
+        parts.append(_newer_version_waiting(newer_waiting))
     changed = [
         _INPUT_LABELS.get(b.kind, b.kind)
         for b in blockers
-        if b.reason == "changed" and b.status != "draft"
+        if b.reason == "changed" and b.status not in ("draft", *_WAITING_STATES)
     ]
     if changed:
         parts.append(
