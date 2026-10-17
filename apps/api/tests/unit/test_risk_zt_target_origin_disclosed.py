@@ -40,7 +40,7 @@ pytestmark = pytest.mark.unit
 SENTENCE = "Who set this target is not recorded. An earlier AI run may have set it."
 
 
-def _world(c, *, recorded: bool) -> tuple[str, dict, dict, str]:
+def _world(c, *, recorded: bool, maturity: int = 1) -> tuple[str, dict, dict, str]:
     from app.models.zt_assessment import ZtAnswer
 
     admin = _register(c, "admin@example.com")
@@ -62,7 +62,7 @@ def _world(c, *, recorded: bool) -> tuple[str, dict, dict, str]:
     za = c.post(f"/zt/services/{zsvc.json()['id']}/assessments", headers=h).json()
     ans = za["answers"][0]
     r = c.patch(
-        f"/zt/answers/{ans['id']}", headers=h, json={"maturity_stage": 1, "target_stage": 3}
+        f"/zt/answers/{ans['id']}", headers=h, json={"maturity_stage": maturity, "target_stage": 3}
     )
     assert r.status_code == 200, r.text
     if not recorded:
@@ -153,3 +153,26 @@ def test_a_consultant_set_target_states_nothing(app_client) -> None:  # noqa: F8
     )
     assert dash.status_code == 200, dash.text
     assert dash.json()["zt_unrecorded_target_notes"] == []
+
+
+def test_a_target_that_suppresses_a_finding_is_stated_too(app_client) -> None:  # noqa: F811
+    # The same unrecorded target of 3, but the capability is AT it (stage 3):
+    # the target decided that this is NOT a risk. Who set it is still unknown,
+    # and the sentence is about that, so the register states it with no
+    # finding to hang it on (PR A's deliverable lists it with or without a gap).
+    c = app_client
+    cid, h, _client, code = _world(c, recorded=False, maturity=3)
+    g = c.post(f"/risk/clients/{cid}/register/generate", headers=h)
+    assert g.status_code == 201, g.text
+    line = f"{code}: {SENTENCE}"
+    assert g.json()["zt_unrecorded_target_notes"] == [line]
+    pub = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
+    assert pub.status_code in (200, 201), pub.text
+    pdf, docx, summary = _files(c, h, pub.json())
+    # The register is real, and no ZT finding for this capability is in it.
+    assert "Total entries:" in pdf
+    assert f"ZT {code}: stage" not in pdf
+    # ... yet the files state who set the target.
+    assert line in pdf
+    assert line in docx
+    assert line in summary
