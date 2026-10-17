@@ -8,7 +8,7 @@ import { SHELL_COPY } from "@/components/service-shell/shellCopy";
 import { SignOutButton } from "@/components/site/SignOutButton";
 import { SkipToContent } from "@/components/site/SkipToContent";
 
-import { isClientFramePage, isWorkspace } from "./frameWidth";
+import { isClientFramePage } from "./frameWidth";
 
 import type { JSX } from "react";
 
@@ -152,9 +152,9 @@ export function AdminShell({
         tabIndex={-1}
         className={
           "w-full min-w-0 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500 " +
-          (clientFrame
-            ? ""
-            : "mx-auto px-6 py-8 " + (isWorkspace(pathname) ? "" : "max-w-6xl"))
+          // #1385 (Gene's spec): a page with no client uses the full width, so
+          // the shell caps nothing; the client frame keeps its own cap.
+          (clientFrame ? "" : "px-6 py-8")
         }
       >
         {/* Issue 2: shell-level so the warning is visible on every admin

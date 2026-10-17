@@ -54,9 +54,10 @@ describe("AdminShell and the client frame", () => {
   });
 
   // #1385: a client's own pages run edge to edge; the frame owns their cap.
-  it.each(["/admin/clients"])("keeps the readable cap on %s", (path) => {
+  // The clients list has no client, so it runs full-width like any such page.
+  it.each(["/admin/clients"])("runs %s full-width", (path) => {
     at(path);
-    expect(screen.getByRole("main").className.split(/\s+/)).toContain(
+    expect(screen.getByRole("main").className.split(/\s+/)).not.toContain(
       "max-w-6xl",
     );
   });
