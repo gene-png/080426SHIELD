@@ -20,6 +20,14 @@ import { MIN_TARGET_TIER } from "@/lib/assessment-targets";
 
 import { CsfQuestionnaire } from "@/components/admin/csf/CsfQuestionnaire";
 import { BlankAnswersWarning } from "@/components/self-assessment/BlankAnswersWarning";
+import {
+  LAST_FUNCTION,
+  SUBMIT_LOCKED_TITLE,
+  csfIntro,
+  functionCounter,
+  functionProgress,
+  submitLocked,
+} from "@/components/self-assessment/csfStepperCopy";
 import { SelfAssessmentSubmitted } from "@/components/self-assessment/SelfAssessmentSubmitted";
 import {
   fetchCatalog,
@@ -317,16 +325,35 @@ export function CsfSelfAssessment({
     ? (PROFILE_LABEL[assessment.client_profile] ?? null)
     : null;
   const targetTiers = catalog.tiers.filter((t) => t.tier >= MIN_TARGET_TIER);
-  // #1173: blanks per in-scope function, over the same in-scope set as the
-  // "answered" count above, so the two always add up to `total`.
-  const blankAreas = filteredCatalog.functions.map((fn) => ({
-    code: fn.code,
-    name: fn.name,
-    blank: fn.categories
-      .flatMap((c) => c.subcategories)
-      .filter((s) => (answersByCode[s.code]?.maturity_tier ?? null) === null)
-      .length,
+  // Per in-scope function, over the same in-scope set as the "answered" count
+  // above, so the blanks always add up to `total - answeredCount`. Drives the
+  // step-through progress (#1171) and the blank-answer warning (#1173).
+  const functionStats = filteredCatalog.functions.map((fn) => {
+    const subs = fn.categories.flatMap((c) => c.subcategories);
+    const answered = subs.filter(
+      (s) => (answersByCode[s.code]?.maturity_tier ?? null) !== null,
+    ).length;
+    return { code: fn.code, name: fn.name, answered, total: subs.length };
+  });
+  const blankAreas = functionStats.map((s) => ({
+    code: s.code,
+    name: s.name,
+    blank: s.total - s.answered,
   }));
+  // #1171: the function on screen. Before the client picks one it is the
+  // first, which is also what the questionnaire shows by default.
+  const fnIdx = Math.max(
+    0,
+    functionStats.findIndex((s) => s.code === activeFunction),
+  );
+  const fnStat = functionStats[fnIdx];
+  const nextFn = functionStats[fnIdx + 1];
+  // #1171, Gene's decision: Submit stays locked until every function has at
+  // least one answer, as ZT's does for pillars.
+  const unstarted = functionStats.filter((s) => s.answered === 0);
+  // Vacuously true with no function in scope, unlike ZT's: CSF never gated
+  // before, and an empty catalog is not a lock to impose here.
+  const everyFunctionStarted = unstarted.length === 0;
   const blankTotal = total - answeredCount;
   // The warning answers one press of Submit. Once the blanks are gone it is
   // done, so an answer cleared later must not bring it back unasked, pulling
@@ -398,9 +425,7 @@ export function CsfSelfAssessment({
         </CardHeader>
         <CardBody>
           <p className="mb-2 text-sm text-ink-secondary">
-            For each outcome, choose the tier that best reflects your
-            organization today. Answer what you can — your consultant reviews
-            everything before anything is processed.
+            {csfIntro(functionStats.length)}
           </p>
           {profileLabel ? (
             <p className="mb-4 text-xs text-ink-tertiary">
@@ -435,6 +460,45 @@ export function CsfSelfAssessment({
               readOnly={submitting}
             />
           </div>
+          {fnStat ? (
+            // #1171: step through the functions as ZT steps through pillars.
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3">
+              <button
+                type="button"
+                onClick={() => goToFunction(functionStats[fnIdx - 1].code)}
+                disabled={fnIdx === 0}
+                className={cn(
+                  "rounded-md border px-3 py-1.5 text-sm font-medium transition",
+                  fnIdx === 0
+                    ? "cursor-not-allowed border-border-subtle text-ink-tertiary opacity-50"
+                    : "border-border text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary",
+                )}
+              >
+                ← Previous
+              </button>
+              <div className="text-center text-xs text-ink-tertiary">
+                <p className="font-medium text-ink-secondary">
+                  {functionCounter(fnIdx + 1, functionStats.length)}
+                </p>
+                <p>
+                  {functionProgress(fnStat.name, fnStat.answered, fnStat.total)}
+                </p>
+              </div>
+              {nextFn ? (
+                <button
+                  type="button"
+                  onClick={() => goToFunction(nextFn.code)}
+                  className="rounded-md border border-brand-500 bg-brand-500 px-4 py-1.5 text-sm font-semibold text-ink-on-accent transition hover:bg-brand-600"
+                >
+                  Next: {nextFn.name} →
+                </button>
+              ) : (
+                <span className="text-xs text-ink-tertiary">
+                  {LAST_FUNCTION}
+                </span>
+              )}
+            </div>
+          ) : null}
         </CardBody>
       </Card>
 
@@ -463,7 +527,7 @@ export function CsfSelfAssessment({
           areas={blankAreas}
           total={total}
           noun="outcomes"
-          disabled={submitting || savesInFlight > 0}
+          disabled={submitting || !everyFunctionStarted || savesInFlight > 0}
           onGoTo={goToFunction}
           onSubmitAnyway={() => void onSubmit()}
         />
@@ -471,13 +535,15 @@ export function CsfSelfAssessment({
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-ink-tertiary">
-          You can submit now and your consultant will follow up if anything
-          needs more detail.
+          {everyFunctionStarted
+            ? "You can submit now and your consultant will follow up if anything needs more detail."
+            : submitLocked(unstarted.map((s) => s.name))}
         </p>
         <button
           type="button"
           onClick={onSubmitClick}
-          disabled={submitting || savesInFlight > 0}
+          disabled={submitting || !everyFunctionStarted || savesInFlight > 0}
+          title={everyFunctionStarted ? undefined : SUBMIT_LOCKED_TITLE}
           className="rounded-md bg-brand-500 px-5 py-2.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Submitting…" : "Submit for review"}

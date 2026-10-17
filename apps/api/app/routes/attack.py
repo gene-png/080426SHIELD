@@ -45,6 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.attack import release_readiness
 from app.attack.after import after_planned_changes
 from app.attack.after import counts as after_counts
@@ -2541,6 +2542,9 @@ def _reask_omitted(db: Session, ctx: RunContext, req: AttackAiRequest, omitted: 
         )
         return _Reask(skipped_past_deadline=True)
     planned = len(_mitre_batches(codes))
+    # #1025 holder 2: the caller re-read the rows' locks after the first pass,
+    # which opened a new read transaction; it ends before the re-ask's calls.
+    end_read_transaction(db, where="attack.run_ai.reask")
     try:
         out = _mitre_map_batches(
             db,
@@ -2888,6 +2892,10 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+    # done, so the read transaction ends here and no connection is held
+    # while the provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.run_ai")
     batched = _mitre_map_batches(
         db,
         ctx.llm,

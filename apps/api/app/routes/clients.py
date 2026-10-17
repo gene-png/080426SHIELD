@@ -62,6 +62,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.maturity_percent import maturity_percent
 from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
@@ -157,6 +158,7 @@ from app.zt.scoring import (
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
 from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
+from app.zt.target_origin import unrecorded_target_codes as zt_unrecorded_target_codes
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1693,6 +1695,9 @@ def zt_dashboard(
 
     largest = max(pillars, key=lambda p: p.gap_pct, default=None)
 
+    # #1343: the same predicate the deliverable's gap rows use.
+    unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))
+
     _log.info(
         "client.zt_dashboard.built",
         client_id=str(client.id),
@@ -1713,6 +1718,8 @@ def zt_dashboard(
         # this records the same class of fault one level down, and it belongs
         # in the row for the same reason: it is a number the client can dispute.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #1343: the codes served below as having no recorded target origin.
+        unrecorded_target_codes=unrecorded_codes,
     )
 
     return ZtDashboardResponse(
@@ -1745,6 +1752,7 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        unrecorded_target_codes=unrecorded_codes,
         # #839: off the same GapAnalysis, as #188's field above.
         target_cap_notes=zt_target_cap_sentences(gap_analysis),
         # #914: the same derivation the workspace and the three files call.
@@ -2295,14 +2303,15 @@ def csf_dashboard(
     gap = csf_analyze_gaps(answers, target_tier=target_tier)
 
     max_tier = CSF_MAX_TIER
-    target_pct = round(target_tier / max_tier * 100, 1)
+    # #1183: (avg - 1) / (top - 1), floored to one decimal (`maturity_percent`).
+    target_pct = maturity_percent(target_tier, max_tier)
 
     functions: list[CsfFunctionDashboard] = []
     largest_gap_function: str | None = None
     largest_gap_pct = 0.0
     for fn in score.by_function:
         current_pct = (
-            round(fn.average_tier / max_tier * 100, 1) if fn.average_tier is not None else None
+            maturity_percent(fn.average_exact, max_tier) if fn.average_exact is not None else None
         )
         gap_pct = round(max(0.0, target_pct - (current_pct or 0.0)), 1)
         if current_pct is not None and gap_pct > largest_gap_pct:
@@ -2351,8 +2360,8 @@ def csf_dashboard(
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(
-            round(score.average_tier / max_tier * 100, 1)
-            if score.average_tier is not None
+            maturity_percent(score.average_exact, max_tier)
+            if score.average_exact is not None
             else None
         ),
         coverage_pct=score.coverage_pct,

@@ -71,7 +71,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream tech-debt call");
+    return upstreamOutcomeUnknown(err, "Upstream tech-debt call", init.method);
   }
 }
 

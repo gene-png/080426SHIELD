@@ -75,7 +75,8 @@ function initial<R>(key: string): State<R> {
 /**
  * An error the api ANSWERED (a 4xx with its own message), as opposed to one
  * where nothing usable came back: a network failure, or the proxy's 504
- * "outcome unknown".
+ * (`upstream_read_failed` for this poll's GET since #1130; #550's "outcome
+ * unknown" for a write).
  */
 function answeredRefusal(err: unknown): boolean {
   const status = (err as { status?: unknown } | null)?.status;

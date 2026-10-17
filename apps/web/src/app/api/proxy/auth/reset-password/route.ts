@@ -35,6 +35,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream reset-password call");
+    return upstreamOutcomeUnknown(err, "Upstream reset-password call", "POST");
   }
 }

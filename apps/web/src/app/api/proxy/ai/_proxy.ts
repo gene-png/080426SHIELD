@@ -82,6 +82,6 @@ async function forward(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream AI call");
+    return upstreamOutcomeUnknown(err, "Upstream AI call", method);
   }
 }
