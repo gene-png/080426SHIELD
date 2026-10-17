@@ -51,8 +51,13 @@ function Workspace({
         />
       );
     case "attack_coverage":
+      // #1377: ATT&CK is split; each section shows only its own blocks.
       return (
-        <AttackWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />
+        <AttackWorkspace
+          serviceId={serviceId}
+          serviceTitle={serviceTitle}
+          section={section}
+        />
       );
     case "nist_csf":
       return <CsfWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />;
