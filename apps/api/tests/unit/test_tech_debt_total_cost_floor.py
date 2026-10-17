@@ -33,7 +33,8 @@ EXACT_FORMAT = "$#,##0"
 TOTAL = 123456.0
 
 #: (id, source_rows_total, included, excluded, spend_cost_known, exclusion_state, expected)
-#: Each row is a world the extraction writer can produce.
+#: Each row is a world the extraction writer can produce, except `more-items-than-rows`
+#: with an exact state (unreachable since 0058, kept as a ratchet on the rule's last branch).
 STATES = [
     ("never-reconciled", None, 3, 0, True, "not_recorded", "unknown"),
     ("never-reconciled-and-uncosted", None, 3, 0, False, "not_recorded", "unknown"),
