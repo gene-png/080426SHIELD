@@ -261,3 +261,46 @@ def test_the_plugin_reads_nothing_but_the_certified_selection(tmp_path: Path) ->
     assert proc.returncode == 0, proc.stdout + proc.stderr
     listed = [ln for ln in proc.stdout.splitlines() if "::" in ln]
     assert len(listed) == 4  # ceil(7 / 2)
+
+
+def test_a_collected_test_no_leg_was_dealt_fails_the_run_not_dropped(tmp_path: Path) -> None:
+    # The gate certified a selection; this run collects a marked test that is NOT in it
+    # (a collection that differs between the gate's --collect-only and the run's).
+    # Dropping it silently would hide it from check_junit_counts, which used to
+    # report "reported but not selected". It must fail the run, whichever leg.
+    root = _project(tmp_path)
+    ids = _certify(root, tmp_path / "temp")
+    left_out = ids[0]
+    selection = tmp_path / "temp" / deselect.SELECTION_NAME
+    selection.write_text("".join(f"{i}\n" for i in ids[1:]), encoding="utf-8")
+    for k in ("1", "2"):
+        proc = _run(root, tmp_path / "temp", index=k)
+        assert proc.returncode != 0, (k, proc.stdout + proc.stderr)
+        out = proc.stdout + proc.stderr
+        assert "not in the certified selection" in out and left_out in out, out
+
+
+def test_a_collected_test_no_leg_was_dealt_fails_under_xdist_too(tmp_path: Path) -> None:
+    pytest.importorskip("xdist", reason="pytest-xdist is a pinned dev dependency")
+    root = _project(tmp_path)
+    ids = _certify(root, tmp_path / "temp")
+    (tmp_path / "temp" / deselect.SELECTION_NAME).write_text(
+        "".join(f"{i}\n" for i in ids[1:]), encoding="utf-8"
+    )
+    proc = _run(root, tmp_path / "temp", "-n", "2", index="1")
+    # xdist reports a worker's collection error in its own words, so what is pinned
+    # is the exit status and that nothing ran, not the plugin's sentence.
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "no tests ran" in proc.stdout and " passed" not in proc.stdout, proc.stdout
+
+
+def test_a_dealt_test_that_is_not_collected_fails_under_xdist_too(tmp_path: Path) -> None:
+    pytest.importorskip("xdist", reason="pytest-xdist is a pinned dev dependency")
+    root = _project(tmp_path)
+    ids = _certify(root, tmp_path / "temp")
+    (tmp_path / "temp" / deselect.SELECTION_NAME).write_text(
+        "".join(f"{i}\n" for i in [*ids, "tests/unit/test_gone.py::test_x"]), encoding="utf-8"
+    )
+    proc = _run(root, tmp_path / "temp", "-n", "2", index="2")
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "no tests ran" in proc.stdout and " passed" not in proc.stdout, proc.stdout

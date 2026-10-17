@@ -66,9 +66,8 @@ def _temp_dir() -> Path:
     return Path(raw)
 
 
-def dealt_ids() -> list[str]:
-    """This leg's dealt ids, from the environment and the certified selection."""
-    of, index = _whole_number(ENV_OF), _whole_number(ENV_INDEX)
+def selection_ids() -> list[str]:
+    """The certified selection: every id the gate certified, for every leg."""
     path = _temp_dir() / SELECTION_NAME
     try:
         ids = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -76,6 +75,13 @@ def dealt_ids() -> list[str]:
         raise CouldNotDeal(f"cannot read the certified selection {path}: {exc}") from exc
     if not ids:
         raise CouldNotDeal(f"the certified selection {path} is empty")
+    return ids
+
+
+def dealt_ids() -> list[str]:
+    """This leg's dealt ids, from the environment and the certified selection."""
+    of, index = _whole_number(ENV_OF), _whole_number(ENV_INDEX)
+    ids = selection_ids()
     mine = deal(ids, of, index)
     if not mine:
         raise CouldNotDeal(f"shard {index} of {of} was dealt none of the {len(ids)} selected tests")
@@ -99,18 +105,31 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # trylast: the `-m unit` deselection has already run, so `items` is what this
+    # run would execute. Three things can be true of an id, and only one is a quiet
+    # deselection: dealt to ANOTHER leg (deselected), dealt to this leg (kept), or
+    # in neither -- collected but never certified, which would vanish from the
+    # junit count if dropped here, so it is an error.
     try:
+        certified = set(selection_ids())
         mine = set(dealt_ids())
     except CouldNotDeal as exc:
         raise pytest.UsageError(f"shard-deselect: could not deal -- {exc}") from exc
+    uncertified = sorted(item.nodeid for item in items if item.nodeid not in certified)
+    if uncertified:
+        raise pytest.UsageError(
+            f"shard-deselect: {len(uncertified)} collected test(s) are not in the certified "
+            f"selection, so no leg was dealt them, first: {uncertified[0]}"
+        )
     kept = [item for item in items if item.nodeid in mine]
     missing = mine - {item.nodeid for item in kept}
     if missing:
         raise pytest.UsageError(
             f"shard-deselect: {len(missing)} dealt test(s) were not collected, first: {min(missing)}"
         )
-    dropped = [item for item in items if item.nodeid not in mine]
-    if dropped:
-        config.hook.pytest_deselected(items=dropped)
+    other_legs = [item for item in items if item.nodeid not in mine]
+    if other_legs:
+        config.hook.pytest_deselected(items=other_legs)
     items[:] = kept
