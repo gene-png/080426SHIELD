@@ -1676,7 +1676,7 @@ def zt_dashboard(
         tp = target_by_code.get(pc.pillar_code)
         cur_pct = pc.maturity_pct
         tgt_pct = tp.maturity_pct if tp is not None else None
-        gap = round(max(0.0, (tgt_pct or 0.0) - (cur_pct or 0.0)), 1)
+        gap = None if cur_pct is None else round(max(0.0, (tgt_pct or 0.0) - cur_pct), 1)
         weakest = [zt_capability_by_code(code).name for code in pc.weakest_capability_codes]
         pillars.append(
             ZtPillarDashboard(
@@ -1698,7 +1698,7 @@ def zt_dashboard(
     # same (`current_pct is not None`).
     largest = max(
         (p for p in pillars if p.current_pct is not None),
-        key=lambda p: p.gap_pct,
+        key=lambda p: p.gap_pct or 0.0,
         default=None,
     )
 

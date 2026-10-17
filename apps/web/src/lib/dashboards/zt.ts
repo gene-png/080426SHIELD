@@ -17,7 +17,7 @@ export interface ZtPillar {
   current_label: string;
   target_pct: number | null;
   target_label: string;
-  gap_pct: number;
+  gap_pct: number | null;
   weakest: string[];
 }
 
@@ -144,7 +144,8 @@ export function scoredNote(pillars: ZtPillar[]): string {
 
 /** Pillars ordered by the largest current→target gap first (focus ordering). */
 export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
-  return [...pillars].sort((a, b) => b.gap_pct - a.gap_pct);
+  // A pillar with nothing scored has no gap figure; it goes last (#1183).
+  return [...pillars].sort((a, b) => (b.gap_pct ?? -1) - (a.gap_pct ?? -1));
 }
 
 /**

@@ -59,7 +59,9 @@ function MaturityBar({
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {/* #700: the pillar's own scored count beside its percentage, as the
               CSF dashboard does per function. */}
-          {`+${pillar.gap_pct.toFixed(1)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
+          {pillar.gap_pct === null
+            ? `Not assessed · 0 of ${pillar.capability_count} scored`
+            : `+${pillar.gap_pct.toFixed(1)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
         </span>
       </div>
       <div

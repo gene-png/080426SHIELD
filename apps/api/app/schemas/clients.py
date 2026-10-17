@@ -400,7 +400,10 @@ class ZtPillarDashboard(BaseModel):
     current_label: str
     target_pct: float | None
     target_label: str
-    gap_pct: float  # max(0, target_pct - current_pct)
+    # max(0, target_pct - current_pct); None for a pillar with nothing scored,
+    # whose gap is unknown (stage 1 is 0%, #1183, so 0 or the whole target
+    # would read as a scored pillar's).
+    gap_pct: float | None
     weakest: list[str]  # lowest-scored capability NAMES (focus areas)
 
 
