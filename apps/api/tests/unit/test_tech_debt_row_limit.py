@@ -17,6 +17,7 @@ import pytest
 
 from app.ai.llm import LLMResponse
 from app.models.capability import CapabilityList
+from app.models.llm_call import LLMCall
 from app.tech_debt.parsers import MAX_ROWS, InventoryOverRowLimit, parse_inventory
 from tests.unit.test_tech_debt_routes import (  # noqa: F401  (fixture)
     _register,
@@ -106,6 +107,7 @@ def test_the_route_refuses_an_over_limit_file_with_a_typed_422(app_client) -> No
     assert calls["n"] == 0
     with TestSession() as db:
         assert db.query(CapabilityList).count() == 0
+        assert db.query(LLMCall).count() == 0
 
 
 def test_the_route_still_reads_a_file_at_the_limit(app_client) -> None:  # noqa: F811
