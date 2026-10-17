@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE } from "../helpers/ids";
+import { openSection } from "../helpers/sections";
 
 /**
  * Issue 2: an admin must be TOLD when AI will produce offline output, and be
@@ -150,6 +151,11 @@ test("admin: Run AI warns before producing offline output, then proceeds once ac
 
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/attack-coverage`);
+  // Run AI is in AI draft (#1377); the old URL lands on Overview.
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
+  ).toBeVisible({ timeout: 60_000 });
+  await openSection(page, "AI draft");
   const runAi = page.getByRole("button", { name: "Run AI", exact: true });
   await expect(runAi).toBeVisible({ timeout: 60_000 });
 

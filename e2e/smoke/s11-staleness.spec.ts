@@ -8,6 +8,7 @@ import {
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 
 /**
  * SMOKE_TEST.md section 11 (T8): the C3 "documents are stale" nudge.
@@ -60,7 +61,7 @@ async function openFreshDraft(
   // The header only renders once EnsureActiveClient has aligned the
   // active-client cookie to Atlas, so the proxy POST below is tenant-scoped.
   await expect(
-    page.getByRole("heading", { name: "MITRE ATT&CK Coverage" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
 
   // The service is ours and brand new, so there is no prior draft to discard —
@@ -104,14 +105,23 @@ test("Run AI raises the stale-documents nudge; finalising the deliverable clears
   test.slow();
   const attackServiceId = await openFreshDraft(page, request);
 
-  // A brand-new draft has never had an AI run, so the nudge is absent.
+  // A brand-new draft has never had an AI run, so the nudge is absent. The
+  // nudge is in Generate (#1377); wait for that section's Finalize button
+  // before judging absence.
+  await openSection(page, "Generate");
+  await expect(page.getByRole("button", { name: /Finalize/ })).toBeVisible({
+    timeout: 30000,
+  });
   await expect(page.getByText(NUDGE)).toHaveCount(0);
 
-  // Run AI changes scores, which sets documents_stale = true (C3).
+  // Run AI changes scores, which sets documents_stale = true (C3). Run AI is
+  // in AI draft.
+  await openSection(page, "AI draft");
   await runAi(page);
 
-  // Assert the persisted flag through a fresh load: the workspace now renders
-  // the regenerate nudge.
+  // Assert the persisted flag through a fresh load: Generate now renders the
+  // regenerate nudge.
+  await openSection(page, "Generate");
   await page.reload();
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 60000 });
   await expect(page.getByText(NUDGE)).toBeVisible({ timeout: 30000 });
