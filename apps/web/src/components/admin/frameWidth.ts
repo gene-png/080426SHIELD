@@ -23,6 +23,11 @@ export function isWorkspace(pathname: string): boolean {
  * the clients list). The client's rail is the page's left column, flush to the
  * edge under the top bar, so the shell leaves the page's own padding and cap
  * to the frame (`ClientFrameBody`) instead of applying them around the rail.
+ *
+ * The URL decides this here and the route structure decides it in the client
+ * layout; they agree while every page under `/admin/clients/<id>` is in that
+ * layout. A static page added beside `[clientId]` (say `clients/new`) would get
+ * this rule without the rail, so add it here at the same time.
  */
 export function isClientFramePage(pathname: string): boolean {
   return /^\/admin\/clients\/[^/]+(\/|$)/.test(pathname);
