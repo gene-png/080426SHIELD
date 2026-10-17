@@ -107,7 +107,9 @@ describe("IntakeWizard Step 3 for an account with no display_name (#1321)", () =
         fireEvent.blur(input(id));
       });
     }
-    const calls = vi.mocked(intakeClient.patchIntake).mock.calls.map((c) => c[0]);
+    const calls = vi
+      .mocked(intakeClient.patchIntake)
+      .mock.calls.map((c) => c[0]);
     // What must appear first: the blurs did save, so the check below is not
     // vacuous.
     expect(JSON.stringify(calls)).toContain("Own Title");
