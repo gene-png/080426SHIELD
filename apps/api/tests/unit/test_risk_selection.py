@@ -230,7 +230,17 @@ def test_a_sentinel_refuses_the_whole_register_before_any_lookup(sentinel) -> No
 #  publish reason or None, in_register or None for "no panel row")
 MATRIX_B = [
     ("C1", "attack", None, "included", True, "none", "n/a", "not_started", "input"),
-    ("C2", "attack", None, "included", True, "not RELEASED", "n/a", "not_released", "input"),
+    (
+        "C2",
+        "attack",
+        None,
+        "included",
+        True,
+        "not RELEASED",
+        "same record",
+        "not_released",
+        "input",
+    ),
     (
         "C3",
         "attack",
@@ -263,7 +273,7 @@ MATRIX_B = [
     ("C12", "attack", None, "unnamed", True, "RELEASED", "n/a", "changed", "input"),
     ("C13", "attack", None, "unnamed", False, "n/a", "n/a", None, None),
     ("C14", "csf", None, "included", True, "none", "n/a", "not_started", "input"),
-    ("C15", "csf", None, "included", True, "not RELEASED", "n/a", "not_released", "input"),
+    ("C15", "csf", None, "included", True, "not RELEASED", "same record", "not_released", "input"),
     (
         "C16",
         "csf",
@@ -316,7 +326,7 @@ MATRIX_B = [
         "included",
         True,
         "not RELEASED",
-        "n/a",
+        "same record",
         "not_released",
         "input",
     ),
@@ -364,7 +374,17 @@ MATRIX_B = [
     ("C43", "zt", "cisa_ztmm_2_0", "unnamed", True, "RELEASED", "n/a", "changed", "input"),
     ("C44", "zt", "cisa_ztmm_2_0", "unnamed", False, "n/a", "n/a", None, None),
     ("C45", "zt", "dod_ztra", "included", True, "none", "n/a", "not_started", "input"),
-    ("C46", "zt", "dod_ztra", "included", True, "not RELEASED", "n/a", "not_released", "input"),
+    (
+        "C46",
+        "zt",
+        "dod_ztra",
+        "included",
+        True,
+        "not RELEASED",
+        "same record",
+        "not_released",
+        "input",
+    ),
     (
         "C47",
         "zt",
@@ -406,7 +426,7 @@ MATRIX_B = [
         "provenance-only",
         True,
         "not RELEASED",
-        "n/a",
+        "same record",
         "not_released",
         "input",
     ),
@@ -441,6 +461,65 @@ MATRIX_B = [
     ("C70", "tech_debt", None, "unnamed", True, "not RELEASED", "n/a", "not_released", "input"),
     ("C71", "tech_debt", None, "unnamed", True, "RELEASED", "n/a", "changed", "input"),
     ("C72", "tech_debt", None, "unnamed", False, "n/a", "n/a", None, None),
+    # #1156: a recorded input whose CURRENT record is a different one (a
+    # revision draft opened after generate) is `changed`, before `not_released`.
+    # The rows above with "same record" are the not-moved half of the same
+    # question; these are the moved half, one per role that records an input.
+    (
+        "C73",
+        "attack",
+        None,
+        "included",
+        True,
+        "not RELEASED",
+        "moved, or not released at generate",
+        "changed",
+        "input",
+    ),
+    (
+        "C74",
+        "csf",
+        None,
+        "included",
+        True,
+        "not RELEASED",
+        "moved, or not released at generate",
+        "changed",
+        "input",
+    ),
+    (
+        "C75",
+        "zt",
+        "cisa_ztmm_2_0",
+        "included",
+        True,
+        "not RELEASED",
+        "moved, or not released at generate",
+        "changed",
+        "input",
+    ),
+    (
+        "C76",
+        "zt",
+        "dod_ztra",
+        "included",
+        True,
+        "not RELEASED",
+        "moved, or not released at generate",
+        "changed",
+        "input",
+    ),
+    (
+        "C77",
+        "tech_debt",
+        None,
+        "provenance-only",
+        True,
+        "not RELEASED",
+        "moved, or not released at generate",
+        "changed",
+        "input",
+    ),
 ]
 
 
@@ -487,7 +566,7 @@ def _world(row):
 
 
 def test_matrix_b_is_whole() -> None:
-    assert [r[0] for r in MATRIX_B] == [f"C{i}" for i in range(1, 73)]
+    assert [r[0] for r in MATRIX_B] == [f"C{i}" for i in range(1, 78)]
 
 
 @pytest.mark.parametrize("row", MATRIX_B, ids=[r[0] for r in MATRIX_B])

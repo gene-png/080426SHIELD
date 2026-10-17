@@ -85,7 +85,9 @@ from app.risk.engine import (
     tier_for,
 )
 from app.risk.inputs import (
+    DISCARD_DRAFT,
     INPUT_KINDS,
+    RELEASE_NEWER,
     SYNTHESIS_KINDS,
     Blocker,
     InputRecord,
@@ -732,12 +734,20 @@ def _gate(db: Session, client_id: uuid.UUID) -> RiskGateStatus:
     attack_computed_status_unreviewed = None
     finalized_csf = _finalized_for_synthesis(db, CsfAssessment, client_id) is not None
     finalized_zt = _finalized_for_synthesis(db, ZtAssessment, client_id) is not None
-    for label, present, finalized in (
-        ("the MITRE ATT&CK coverage mapping", has_attack, finalized_attack),
-        ("the CSF assessment", has_csf, finalized_csf),
-        ("the Zero Trust assessment", has_zt, finalized_zt),
+    # #1156: REPORTED from the records Generate READS (`sources`, i.e.
+    # `latest_record`), not from "any approved or released one exists". With a
+    # revision draft open (#1120), the released v1 still exists while Generate
+    # drafts from v2, and the old question listed nothing. The `finalized_*`
+    # booleans above keep feeding `synthesizable_missing`, unchanged: Generate
+    # does not refuse on it (#737), and the web gates only its banner on it.
+    for label, kind, present in (
+        ("the MITRE ATT&CK coverage mapping", "attack", has_attack),
+        ("the CSF assessment", "csf", has_csf),
+        ("the Zero Trust assessment", "zt", has_zt),
     ):
-        if present and not finalized:
+        reads_unfinished = any(src.kind == kind and src.status not in _FINALIZED for src in sources)
+        finalized = {"attack": finalized_attack, "csf": finalized_csf, "zt": finalized_zt}[kind]
+        if present and (reads_unfinished or not finalized):
             not_finalized.append(label)
 
     # The unlock rule restated over FINALIZED inputs. Same shape as `missing`
@@ -2932,6 +2942,34 @@ _SELECTION_NOT_RECORDED_MESSAGE = (
 )
 
 
+#: #1156 (advisor, #736 6225640724 item 5, verbatim): the refusal when an input
+#: the register drew on now has a newer DRAFT open.
+NEWER_DRAFT_OPEN = (
+    "This register can't be published while a newer draft is open. Discard that "
+    "draft, then publish again. Or release the draft, then generate a new version "
+    "before publishing."
+)
+#: #1156 review round 2 F1: a `changed` input whose newer record is unreleased
+#: and cannot be discarded to publish (`RELEASE_NEWER`). "Generate a new version"
+#: alone cannot publish (the new register would draw on that unreleased
+#: version), so the sentence names it and says to release it first. Approved
+#: verbatim (advisor, #736 6228351462 item 4).
+
+
+def _newer_version_waiting(waiting: list[str]) -> str:
+    if len(waiting) == 1:
+        return (
+            "This register can't be published while a newer version of an assessment "
+            "it draws on is waiting to be released: " + waiting[0] + ". Release that "
+            "version, then generate a new version before publishing."
+        )
+    return (
+        "This register can't be published while newer versions of assessments it "
+        "draws on are waiting to be released: " + "; ".join(waiting) + ". Release "
+        "those versions, then generate a new version before publishing."
+    )
+
+
 def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     """#737. One sentence per cause, naming each input. DRAFT copy."""
     if any(b.reason == "not_recorded" for b in blockers):
@@ -2956,7 +2994,34 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
             "This register cannot be published until every assessment it draws on is "
             "released: " + "; ".join(waiting) + "."
         )
-    changed = [_INPUT_LABELS.get(b.kind, b.kind) for b in blockers if b.reason == "changed"]
+    # #1156: which sentence a `changed` input gets is its `remedy`, decided in
+    # `risk.inputs.changed_remedy` (the table): the newer-draft sentence is
+    # approved verbatim (advisor, #736 6225640724 item 5) and offers "discard",
+    # so it is used only where discarding makes the register publishable.
+    # The unit is the REGISTER, not one input: "discard that draft, then
+    # publish again" is true only when every blocker is such a draft. Beside any
+    # other blocker, publishing after the discard is still refused, so the draft
+    # is told to be released instead (the waiting sentence). `publish_blockers`
+    # already demotes such a draft, so no current writer sends one beside another
+    # blocker: this guards a direct caller of this function.
+    only_discardable = bool(blockers) and all(
+        b.reason == "changed" and b.remedy == DISCARD_DRAFT for b in blockers
+    )
+    if only_discardable:
+        parts.append(NEWER_DRAFT_OPEN)
+    newer_waiting = [
+        f"{_INPUT_LABELS.get(b.kind, b.kind)} ({_STATE_WORDS[b.status or '']})"
+        for b in blockers
+        if b.reason == "changed"
+        and (b.remedy == RELEASE_NEWER or (b.remedy == DISCARD_DRAFT and not only_discardable))
+    ]
+    if newer_waiting:
+        parts.append(_newer_version_waiting(newer_waiting))
+    changed = [
+        _INPUT_LABELS.get(b.kind, b.kind)
+        for b in blockers
+        if b.reason == "changed" and b.remedy not in (DISCARD_DRAFT, RELEASE_NEWER)
+    ]
     if changed:
         parts.append(
             "An assessment this register draws on has changed since it was generated: "

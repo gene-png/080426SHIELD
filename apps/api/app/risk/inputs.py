@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, undefer_group
@@ -189,20 +189,28 @@ def engaged_services(db: Session, client_id: uuid.UUID) -> list[tuple[str, Servi
     return [(k, svc) for k in INPUT_KINDS for svc in _engaged_services(db, client_id, k)]
 
 
-def latest_record(db: Session, kind: str, service_id: uuid.UUID):
+def latest_record(
+    db: Session, kind: str, service_id: uuid.UUID, ignore_ids: frozenset[str] = frozenset()
+):
     """One engaged service's current record: its latest non-discarded
     assessment (or Tech Debt list), or None. Synthesis reads THIS too
-    (#876), so the record publish checks is the one findings came from."""
+    (#876), so the record publish checks is the one findings came from.
+
+    `ignore_ids` reads the service as if those records were discarded: the
+    counterfactual `publish_blockers` asks (#1156), never a state anything
+    else sees."""
     model = CapabilityList if kind == "tech_debt" else _ASSESSMENTS[kind]
+    query = select(model).where(model.service_id == service_id, model.status != "discarded")
+    if ignore_ids:
+        query = query.where(model.id.notin_([uuid.UUID(i) for i in ignore_ids]))
     return db.execute(
-        select(model)
-        .where(model.service_id == service_id, model.status != "discarded")
-        .order_by(model.version.desc(), model.created_at.desc())
-        .limit(1)
+        query.order_by(model.version.desc(), model.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
 
-def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
+def current_inputs(
+    db: Session, client_id: uuid.UUID, ignore_ids: frozenset[str] = frozenset()
+) -> list[InputRecord]:
     """The current record of every engaged service that has one.
 
     An engaged service with no record yet contributes nothing here; the gate
@@ -210,7 +218,7 @@ def current_inputs(db: Session, client_id: uuid.UUID) -> list[InputRecord]:
     """
     out: list[InputRecord] = []
     for kind, svc in engaged_services(db, client_id):
-        rec = latest_record(db, kind, svc.id)
+        rec = latest_record(db, kind, svc.id, ignore_ids)
         if rec is not None:
             out.append(
                 InputRecord(
@@ -232,22 +240,59 @@ class Blocker:
     kind: str
     reason: str  # "not_started" | "not_released" | "changed" | "not_recorded"
     status: str | None
+    #: For a `changed` blocker only: which remedy a person can follow to a
+    #: publishable register (`changed_remedy`). None reads as REGENERATE.
+    remedy: str | None = None
+    #: The draft record a DISCARD_DRAFT candidate would discard (not in the
+    #: API payload); `publish_blockers` reads it for the counterfactual.
+    draft_id: str | None = None
 
 
-def publish_blockers(
+DISCARD_DRAFT = "discard_draft"
+RELEASE_NEWER = "release_newer"
+REGENERATE = "regenerate"
+
+
+def changed_remedy(*, was_status: str | None, newest_status: str | None) -> str:
+    """What a `changed` input's newest record asks of a person (#1156). The
+    table is `tests/unit/test_risk_changed_remedy_table.py`.
+
+    * the newest record is released (or there is none): a new version draws on
+      it and can publish, REGENERATE;
+    * the register drew on RELEASED work and the newest record is a DRAFT:
+      DISCARD_DRAFT is a CANDIDATE only. Whether discarding really leaves a
+      publishable register is not decided here by listing cases; the caller
+      asks the real gate (`publish_blockers`, counterfactually);
+    * any other unreleased newest record: a new version would draw on it and be
+      refused, so RELEASE_NEWER (release it, then generate).
+
+    A register that drew on UNRELEASED work is never publishable as it stands,
+    so DISCARD_DRAFT is never a candidate for it."""
+    if newest_status not in ("draft", "submitted", "approved"):
+        return REGENERATE
+    if was_status == RELEASED and newest_status == "draft":
+        return DISCARD_DRAFT
+    return RELEASE_NEWER
+
+
+def _publish_blockers(
     db: Session,
     client_id: uuid.UUID,
     recorded: object,
     synthesized: object,
     *,
     selection: SelectionRead,
+    ignore_ids: frozenset[str] = frozenset(),
+    log_refusal: bool = True,
 ) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
 
     FIVE CHECKS, and none of them may pass by absence:
       * every engaged SERVICE has a current input (else `not_started`);
-      * every current input is RELEASED (else `not_released`);
+      * every current input is RELEASED (else `not_released`), unless it is
+        a newer record than the one the register drew on, which is `changed`
+        first (#1156: a revision draft opened after generate);
       * every current input is the one the register was generated from, at the
         same version and already released then (else `changed`). A register
         generated from a draft is therefore never publishable, even after the
@@ -296,7 +341,12 @@ def publish_blockers(
         _log.info("risk_publish_inputs_not_recorded", client_id=str(client_id))
         return [Blocker("register", "not_recorded", None)]
     then = {(r.get("kind"), r.get("service_id")): r for r in recorded}
-    now = {(r.kind, r.service_id): r for r in current_inputs(db, client_id)}
+    # The ordinary call is unchanged; only the counterfactual pass passes the
+    # records to ignore.
+    current = (
+        current_inputs(db, client_id, ignore_ids) if ignore_ids else current_inputs(db, client_id)
+    )
+    now = {(r.kind, r.service_id): r for r in current}
     engaged = engaged_services(db, client_id)
     roles = selection_roles(
         selection,
@@ -315,10 +365,27 @@ def publish_blockers(
         if r is None:
             blockers.append(Blocker(kind, "not_started", None))
             continue
+        was = then.get((kind, r.service_id))
+        # #1156: a newer record than the one this register drew on (a revision
+        # draft, #1120, or any newer version) is a CHANGED input, checked before
+        # `not_released`. Otherwise a register drawn from a released v1 was
+        # refused as "(draft)", naming a record it never read, and releasing
+        # that draft then met `changed` anyway. Regenerating is the remedy.
+        if was is not None and was.get("record_id") != r.record_id:
+            remedy = changed_remedy(was_status=was.get("status"), newest_status=r.status)
+            blockers.append(
+                Blocker(
+                    kind,
+                    "changed",
+                    r.status,
+                    remedy,
+                    r.record_id if remedy == DISCARD_DRAFT else None,
+                )
+            )
+            continue
         if r.status != RELEASED:
             blockers.append(Blocker(kind, "not_released", r.status))
             continue
-        was = then.get((kind, r.service_id))
         if (
             was is None
             or was.get("record_id") != r.record_id
@@ -355,10 +422,54 @@ def publish_blockers(
         for (kind, service_id), _was in then.items():
             if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
                 blockers.append(Blocker(str(kind), "not_recorded", None))
-    if blockers:
+    if blockers and log_refusal:
         _log.info(
             "risk_publish_inputs_blocked",
             client_id=str(client_id),
             blockers=[(b.kind, b.reason) for b in blockers],
         )
     return blockers
+
+
+def publish_blockers(
+    db: Session,
+    client_id: uuid.UUID,
+    recorded: object,
+    synthesized: object,
+    *,
+    selection: SelectionRead,
+) -> list[Blocker]:
+    """`_publish_blockers`, with each DISCARD_DRAFT candidate CHECKED against the
+    real gate (#1156). "Discard that draft, then publish again" is a promise
+    that the input gate then passes (publish still runs its own certifiable-inputs
+    and unrated-entries refusals after it), so it is kept only if re-running the very
+    same checks with every candidate draft removed returns NO blockers. A draft
+    beside any other blocker, a recorded record whose CSF Playbook fingerprint
+    has drifted, a service archived or newly engaged since generate: each fails
+    that re-run by the same code path that would refuse the publish, so none is
+    listed here. A failed candidate is told to release the draft instead."""
+    blockers = _publish_blockers(db, client_id, recorded, synthesized, selection=selection)
+    candidates = [b for b in blockers if b.remedy == DISCARD_DRAFT]
+    if not candidates:
+        return blockers
+    drafts = frozenset(b.draft_id for b in candidates if b.draft_id)
+    # log_refusal=False: this pass describes an imagined world, not a refusal.
+    kept = len(drafts) == len(candidates) and not _publish_blockers(
+        db,
+        client_id,
+        recorded,
+        synthesized,
+        selection=selection,
+        ignore_ids=drafts,
+        log_refusal=False,
+    )
+    names = [b.kind for b in candidates]
+    _log.info(
+        "risk_publish_discard_decision",
+        client_id=str(client_id),
+        kept=names if kept else [],
+        demoted=[] if kept else names,
+    )
+    if kept:
+        return blockers
+    return [replace(b, remedy=RELEASE_NEWER) if b.remedy == DISCARD_DRAFT else b for b in blockers]
