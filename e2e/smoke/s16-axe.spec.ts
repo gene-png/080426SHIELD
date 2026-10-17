@@ -172,7 +172,7 @@ test.describe("axe: admin surfaces", () => {
     const csfServiceId = await atlasServiceId(page, "nist_csf");
     await page.goto(`/admin/services/${csfServiceId}/csf`);
     await expect(
-      page.getByRole("heading", { name: "NIST CSF 2.0 Assessment" }),
+      page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
     ).toBeVisible({ timeout: 30000 });
     // Wait for the latest-assessment fetch to resolve (status pill) so the scan
     // runs against the populated workspace, not a loading skeleton.
