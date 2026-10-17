@@ -1477,7 +1477,7 @@ def _gather_findings(
         # stored target, while the loop below applies the stored target RAW
         # (the exemption recorded there). The two agree on every value the
         # writers store today (`patch_answer` 422s anything else), so the
-        # register discloses exactly the findings whose target an unrecorded
+        # register discloses exactly the rows whose target an unrecorded
         # origin set. A stored bool or out-of-range target -- no current writer
         # -- would be applied here and not disclosed; closing the raw read
         # closes that too.
@@ -1532,8 +1532,12 @@ def _gather_findings(
                         },
                     }
                 )
-                if r.capability_code in no_origin:
-                    unrecorded.append(r.capability_code)  # #1343
+            # #1343: recorded for every row whose applied target has no recorded
+            # origin, finding or not. A target that suppresses a finding (the
+            # capability is AT it) is as much "who set this" as one that
+            # raised one, and the ZT deliverable lists it either way.
+            if r.capability_code in no_origin:
+                unrecorded.append(r.capability_code)
         snap.cap_lowered[src.scope_key] = lowered
         snap.origin_unrecorded[src.scope_key] = unrecorded
         _record_drafted_from(snap, findings[start:], src)

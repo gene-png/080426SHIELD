@@ -6,7 +6,8 @@ two).
 stored before migration 0076, and some of those were set by earlier AI runs.
 Synthesis compares each capability with that target (`routes/risk.py`), so a
 finding can rest on a target nobody chose. `generate` records, per ZT source,
-the codes of the findings whose target is such a target, in
+the codes of the capabilities whose applied target is such a target (with a
+finding or without one), in
 `risk_registers.provenance["unrecorded_target_codes"]` (a sibling key, as #915's
 `capped_target_codes` is). This module is the ONE reader of that record and
 the ONE place the lines are built, called by the consultant's register
