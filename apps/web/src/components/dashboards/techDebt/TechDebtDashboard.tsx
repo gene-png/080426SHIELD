@@ -287,7 +287,14 @@ export function TechDebtDashboard({
         />
         <KpiCard
           label="Identified savings"
-          value={usdFull(data.identified_savings_usd)}
+          // #1094: "≥" ON the value when the savings are a floor, the marker
+          // the PDF, DOCX and plan card use. Only `true` reads as exact; a
+          // missing flag (an API older than the field) is a floor too.
+          value={
+            data.savings_cost_known === true
+              ? usdFull(data.identified_savings_usd)
+              : `≥ ${usdFull(data.identified_savings_usd)}`
+          }
           sub={
             data.savings_cost_known
               ? "From tools marked to cut"

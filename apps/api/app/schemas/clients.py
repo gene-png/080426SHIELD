@@ -377,7 +377,9 @@ class _AttackDraftHead(BaseModel):
     #: batches that failed, techniques a successful batch left out and the
     #: re-ask did not recover, and techniques asked again (#1047).
     batches_failed: int
-    omitted_count: int
+    #: None when the stored result has no `omitted_count` (a run stored before
+    #: #853): "not measured", never zero (#1337).
+    omitted_count: int | None
     reasked_count: int
 
 
