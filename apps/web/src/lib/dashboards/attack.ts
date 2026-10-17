@@ -186,7 +186,8 @@ export const CANNOT_BE_PREVENTED_SENTENCE =
 /**
  * #1384: the toggle on the collapsed "Techniques that cannot be prevented"
  * list. It names the count, because it is what shows in place of the rows.
- * PENDING: new copy, sent to the advisor verbatim; not approved yet.
+ * Copy approved verbatim by the advisor ("Show/Hide the N techniques", and the
+ * singular "Show/Hide the 1 technique").
  */
 export function cannotBePreventedToggle(n: number, open: boolean): string {
   const noun = n === 1 ? "technique" : "techniques";
