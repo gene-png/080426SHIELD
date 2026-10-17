@@ -220,7 +220,11 @@ def test_the_real_workflows_plan_the_python_and_audit_jobs_and_keep_e2e_on_githu
     # The spec: E2E and Demo stay on GitHub. The web job needs pnpm.
     for job in ("e2e", "demo", "web", "secret-scan"):
         assert jobs[("ci.yml", job)] == {"github"}, job
-    assert "github" not in jobs[("ci.yml", "python")]
+    # The Python check is two legs plus an aggregate (the aggregate reads
+    # `needs.python-shard.result`, so it exists only on GitHub); the legs run
+    # here, as the one leg of one that is dealt the whole suite.
+    assert jobs[("ci.yml", "python")] == {"github"}
+    assert "github" not in jobs[("ci.yml", "python-shard")]
     audit = [k for (w, _), k in jobs.items() if w == "audit-gate.yml"]
     assert audit and all("github" not in k for k in audit)
 

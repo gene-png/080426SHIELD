@@ -1,0 +1,12 @@
+{
+ "incident": "A leg dealt a test whose junit never reported it (a crashed worker's pending tests) must be a finding for that leg.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "--dir",
+  "{dir}",
+  "--of",
+  "2"
+ ],
+ "stdout_contains": "leg 1: selected but never reported: tests/unit/test_b.py::test_1"
+}

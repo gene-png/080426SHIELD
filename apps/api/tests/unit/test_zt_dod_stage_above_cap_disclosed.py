@@ -142,12 +142,12 @@ def test_nothing_is_disclosed_when_every_stage_is_reachable(app_client) -> None:
 # from `compute`:
 #
 #   overall average  = 2.00            (45 rows at 2)      -- uncapped: 91/45 = 2.02
-#   overall percent  = 2/3   -> 66.7   (DoD's top stage 3) -- uncapped: 2.02/3 -> 67.3
-#   User pillar      = 2.00, 66.7%     (9 rows at 2)       -- uncapped: 19/9 = 2.11 -> 70.3
+#   overall percent  = (2-1)/(3-1) -> 50.0 (#1183, floored) -- uncapped: (91/45 - 1)/2 -> 51.1
+#   User pillar      = 2.00, 50.0%     (9 rows at 2)       -- uncapped: 19/9 = 2.11 -> 55.5
 #   overall label    = "Target"        (stage 2)
 
 ALL_TWO_AVERAGE = 2.0
-ALL_TWO_PCT = 66.7
+ALL_TWO_PCT = 50.0  # #1183: (2 - 1) / (3 - 1)
 
 
 def test_the_score_endpoint_counts_it_at_the_maximum(app_client) -> None:  # noqa: F811

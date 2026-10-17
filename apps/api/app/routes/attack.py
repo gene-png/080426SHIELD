@@ -2859,6 +2859,12 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # and an exact-match frozenset beside it would be a second, laxer answer to
     # the same question. The field stays on the request because the preview
     # payload and its tests read it.
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads are done (the
+    # request above carries everything the run needs), so the read transaction
+    # ends here and no connection is held while the redaction child builds the
+    # hinted resolver below (#1380) or while the provider answers. Refuses
+    # loudly if anything was written.
+    end_read_transaction(db, where="attack.run_ai")
     # The client's legal name, so a tool named after the client resolves from the
     # placeholder the model was actually shown (#33 finding 5). `client_org_name`
     # is None for an UNNAMED org -- `legal_name` NULL, nobody has named it yet
@@ -2899,10 +2905,6 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
-    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
-    # done, so the read transaction ends here and no connection is held
-    # while the provider answers. Refuses loudly if anything was written.
-    end_read_transaction(db, where="attack.run_ai")
     batched = _mitre_map_batches(
         db,
         ctx.llm,

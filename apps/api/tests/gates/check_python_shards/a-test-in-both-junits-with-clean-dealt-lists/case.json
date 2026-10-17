@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL: the dealt lists partition the selection, but leg 2's run also reported one of leg 1's tests (a plugin that stopped deselecting). Each dealt list is clean, so only the junits-together check can make this red.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--dir",
+  "{dir}",
+  "--of",
+  "2"
+ ],
+ "stdout_contains": "all legs together: reported 2 times: tests/unit/test_a.py::test_0"
+}

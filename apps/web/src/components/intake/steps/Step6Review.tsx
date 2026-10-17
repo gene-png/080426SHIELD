@@ -17,7 +17,16 @@ import {
 import type { JSX } from "react";
 import { formatDateOnly, formatInstantUtc } from "@/lib/dates";
 import { listArtifacts, type ArtifactSummary } from "@/lib/intake/artifacts";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 import { isNamedOrg } from "@/lib/org-name";
+
+/** #1225 item 2, approved on #736 (6216024281): Step 6's sentence for an
+ *  upload list that did not load. Not Step 5's "Failed to load uploads.",
+ *  which reads as "your uploads failed", and it keeps the "you can still
+ *  submit" the empty state carries, true because Submit does not wait on this
+ *  list. */
+const LIST_FAILED =
+  "We couldn't load your uploaded documents. Your uploads are not affected, and you can still submit.";
 
 /** Human-readable summary of the client-set targets for a service, if any. */
 function targetSummary(
@@ -90,15 +99,27 @@ export function Step6Review({
   );
   // #1262: the client the wizard loaded, never the shared cookie.
   const clientId = c?.id;
+  // #1223: a failed list is NOT an empty one. Saying "No documents uploaded"
+  // over a failed read is a false statement about the client's own uploads,
+  // on the step that exists so they can confirm them.
+  const [listError, setListError] = React.useState<string | null>(null);
   React.useEffect(() => {
     let cancelled = false;
     listArtifacts(clientId)
       .then((res) => {
-        if (!cancelled) setArtifacts(res.items ?? []);
+        if (cancelled) return;
+        // A 200 with no item list is a failed load, never an empty one
+        // (review of 8a60a50a): `?? []` turned it into "No documents
+        // uploaded".
+        if (Array.isArray(res.items)) setArtifacts(res.items);
+        else setListError(LIST_FAILED);
       })
-      .catch(() => {
-        // Non-blocking: the list is confirmation, not a submit gate.
-        if (!cancelled) setArtifacts([]);
+      .catch((err) => {
+        // Non-blocking: the list is confirmation, not a submit gate. But say
+        // that it failed: the read rule (RR-2), then Step 6's own copy (#1225).
+        if (!cancelled) {
+          setListError(typedReadFailure(err) ?? LIST_FAILED);
+        }
       });
     return () => {
       cancelled = true;
@@ -154,7 +175,11 @@ export function Step6Review({
         >
           Uploaded evidence
         </h3>
-        {artifacts === null ? (
+        {listError ? (
+          <p className="mt-2 text-sm text-status-danger-fg" role="alert">
+            {listError}
+          </p>
+        ) : artifacts === null ? (
           <p className="mt-2 text-sm text-ink-tertiary">Loading…</p>
         ) : artifacts.length === 0 ? (
           <p className="mt-2 text-sm text-ink-tertiary">

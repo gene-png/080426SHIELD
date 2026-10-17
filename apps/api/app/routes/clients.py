@@ -104,6 +104,8 @@ from app.risk.engine import (
 )
 from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
+from app.risk.zt_target_origin import unrecorded_target_codes as risk_unrecorded_codes
+from app.risk.zt_target_origin import unrecorded_target_lines as risk_unrecorded_lines
 from app.routes.attack import client_retirement_index
 from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
@@ -1676,7 +1678,7 @@ def zt_dashboard(
         tp = target_by_code.get(pc.pillar_code)
         cur_pct = pc.maturity_pct
         tgt_pct = tp.maturity_pct if tp is not None else None
-        gap = round(max(0.0, (tgt_pct or 0.0) - (cur_pct or 0.0)), 1)
+        gap = None if cur_pct is None else round(max(0.0, (tgt_pct or 0.0) - cur_pct), 1)
         weakest = [zt_capability_by_code(code).name for code in pc.weakest_capability_codes]
         pillars.append(
             ZtPillarDashboard(
@@ -1693,7 +1695,14 @@ def zt_dashboard(
             )
         )
 
-    largest = max(pillars, key=lambda p: p.gap_pct, default=None)
+    # Stage 1 is 0% (#1183), so a pillar with nothing scored (null) must not be
+    # named the largest gap as if it sat at the lowest stage; CSF's guard is the
+    # same (`current_pct is not None`).
+    largest = max(
+        (p for p in pillars if p.current_pct is not None),
+        key=lambda p: p.gap_pct or 0.0,
+        default=None,
+    )
 
     # #1343: the same predicate the deliverable's gap rows use.
     unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))
@@ -2187,6 +2196,8 @@ def risk_dashboard(
         ],
         # #915: the same reader and sentence as the register and its files.
         zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        # #1343: the same reader and lines as the register and its files.
+        zt_unrecorded_target_notes=risk_unrecorded_lines(risk_unrecorded_codes(reg.provenance)),
         csf_source_note=risk_csf_source_note(reg.provenance),
         # #736 6104067136: the files' reader, so the screen and the files agree.
         csf_no_shared_row=risk_csf_no_shared_row(reg.provenance),

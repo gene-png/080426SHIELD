@@ -38,10 +38,10 @@ describe("zt dashboard transforms", () => {
     expect(r.target).toEqual([95, 90, 90]);
   });
 
-  it("radarData: null pct coerces to 0", () => {
+  it("radarData: null pct stays null (#1183: stage 1 is 0%, so 0 would read as scored)", () => {
     const r = radarData([pillar({ current_pct: null, target_pct: null })]);
-    expect(r.current).toEqual([0]);
-    expect(r.target).toEqual([0]);
+    expect(r.current).toEqual([null]);
+    expect(r.target).toEqual([null]);
   });
 
   it("pillarsByGap: largest gap first", () => {

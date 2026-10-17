@@ -119,8 +119,12 @@ test("admin: previews the dashboard BEFORE release; the client cannot see it unt
   await expect(
     page.getByRole("heading", { name: "Dashboard not available yet" }),
   ).toHaveCount(0, { timeout: 60_000 });
-  // Stage 2 of 4 -> 50%: deterministic engine output, not a placeholder.
-  await expect(page.getByText("50", { exact: false }).first()).toBeVisible();
+  // Stage 2 of 4 -> (2 - 1) / 3 = 33.3% (#1183, floored): deterministic engine
+  // output, not a placeholder. Asserted as the card prints it, label and
+  // figure together, not as "33.3" anywhere on the page.
+  await expect(
+    page.getByText("Initial · 33.3", { exact: true }).first(),
+  ).toBeVisible();
 
   // Client: still gated. The consultant-in-the-loop rule is unchanged.
   const clientCtx = await browser.newContext();

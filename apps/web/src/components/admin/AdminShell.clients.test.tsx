@@ -53,12 +53,8 @@ describe("AdminShell and the client frame", () => {
     );
   });
 
-  it.each([
-    "/admin/clients",
-    "/admin/clients/c-1",
-    "/admin/clients/c-1/services/tech-debt",
-    "/admin/clients/c-1/services/risk-register",
-  ])("keeps the readable cap on %s", (path) => {
+  // #1385: a client's own pages run edge to edge; the frame owns their cap.
+  it.each(["/admin/clients"])("keeps the readable cap on %s", (path) => {
     at(path);
     expect(screen.getByRole("main").className.split(/\s+/)).toContain(
       "max-w-6xl",

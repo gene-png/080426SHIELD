@@ -40,7 +40,7 @@ WHY IT RUNS PYTEST RATHER THAN READING MARKS. The question is what CI's
 selector selects, and only the selector can answer it: a mark can come from a
 module `pytestmark`, a class, a decorator, a conftest hook or a plugin. Reading
 source would be a second implementation of pytest's selection, free to drift.
-`CI_SELECTOR`, plus the non-selecting CI_RUN_OPTIONS, is pinned to ci.yml's
+`CI_SELECTOR`, plus CI_RUN_OPTIONS (whose only narrowing is the leg deal), is pinned to ci.yml's
 exact `run:` line by a test that parses the workflow and requires equality,
 not a substring -- a `-k` or `--deselect` appended in CI would otherwise
 narrow CI while this certified the wider set.
@@ -78,8 +78,9 @@ than producing a finding -- and that is now caught by the file check above,
 at the granularity of a FILE: a module that removes only some of its tests at
 collection time is not seen. A conftest hook that deselects individual items
 applies to BOTH collections, so it is invisible too. CI runs this selection
-over four xdist workers on one runner (`-n 4`, in CI_RUN_OPTIONS, which select
-nothing), in the step IMMEDIATELY after this one, with the same env,
+over four xdist workers on each leg's runner (`-n 4`, in CI_RUN_OPTIONS, whose
+only narrowing is the `-p scripts.shard_deselect` deal), in the step IMMEDIATELY
+after this one, with the same env,
 working-directory and shell (#544), so anything reaching one reaches the
 other. `--selected-out FILE` writes the set this run certified, and only on a
 clean verdict; `check_junit_counts.py` then holds the run to it, test by test,
@@ -106,12 +107,22 @@ import tempfile
 from pathlib import Path
 
 CI_SELECTOR = ("-m", "unit", "tests/unit")
-#: What CI's pytest step adds to CI_SELECTOR. None of it SELECTS: `-n 4` spreads
-#: the selected set over four workers (pytest-xdist), and `--junitxml` records
-#: each test's outcome for `check_junit_counts.py`. The step's `run` is pinned
-#: to exactly CI_RUN by test_ci_selection_gate.py.
-CI_RUN_OPTIONS = ("-n", "4", '--junitxml="$RUNNER_TEMP/pytest-unit.xml"')
-CI_RUN = f"pytest {' '.join(CI_SELECTOR + CI_RUN_OPTIONS)}"
+#: What CI's pytest step adds to CI_SELECTOR. `-n 4` spreads a leg's share over
+#: four workers (pytest-xdist), `--junitxml` records each test's outcome for
+#: `check_junit_counts.py`, and `-p scripts.shard_deselect` is the ONLY
+#: narrowing: it deals this leg its share of the set certified here and
+#: deselects exactly the other legs' ids (the aggregate, `check_python_shards.py`,
+#: holds the legs to one selection and to running it once). The step's `run` is
+#: pinned to exactly CI_RUN by test_ci_selection_gate.py. `python -m pytest`
+#: because a `-p` plugin is imported before pytest puts the project on sys.path.
+CI_RUN_OPTIONS = (
+    "-n",
+    "4",
+    "-p",
+    "scripts.shard_deselect",
+    '--junitxml="$RUNNER_TEMP/pytest-unit.xml"',
+)
+CI_RUN = f"python -m pytest {' '.join(CI_SELECTOR + CI_RUN_OPTIONS)}"
 _ALL = ("tests/unit",)
 
 _PROBE_NAME = "_ci_selection_probe"

@@ -22,13 +22,30 @@ permissions:
   contents: read
 
 jobs:
-  python:
-    name: Python (ruff + black + pytest + bandit)
+  # The required `Python (ruff + black + pytest + bandit)` check is the
+  # AGGREGATE job `python` further down. This is its two legs: each is its own
+  # runner and runs HALF of the certified unit selection under `-n 4`
+  # (`scripts/shard_deselect.py` deals it); leg 1 also runs every lint, gate,
+  # bandit and pip-audit step. The aggregate goes red unless both legs
+  # succeeded and `scripts/check_python_shards.py` finds that they certified
+  # one selection and ran every test in it exactly once.
+  python-shard:
+    name: Python (unit shard ${{ matrix.shard }}/${{ matrix.of }})
     runs-on: ubuntu-latest
-    # #739: without one, GitHub's 6-hour default lets a hung test hold this
-    # required check that long. The unit suite under `-n 4` measured 11-16 min
-    # on run 38802579958 (2026-10-15), and the steps around it about 2; 45 is
-    # well over twice that.
+    strategy:
+      # A red leg must not cancel the other: its junit says what else failed.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+        of: [2]
+    env:
+      SHIELD_SHARD_INDEX: ${{ matrix.shard }}
+      SHIELD_SHARD_OF: ${{ matrix.of }}
+    # #739: without one, GitHub's 6-hour default lets a hung test hold a
+    # required check that long. One leg runs half the unit suite under
+    # `-n 4` (the whole suite measured 11-16 min on run 38802579958,
+    # 2026-10-15), and the steps around it about 2; 45 is well over twice
+    # that, whichever way the deal falls.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -46,10 +63,12 @@ jobs:
           pip install bandit pip-audit
 
       - name: ruff check
+        if: matrix.shard == 1
         working-directory: apps/api
         run: ruff check .
 
       - name: black --check
+        if: matrix.shard == 1
         working-directory: apps/api
         run: black --check .
 
@@ -57,6 +76,7 @@ jobs:
       # two-second static pass, and a suite that is green for the wrong reason
       # should be caught before spending 13 minutes proving it is green.
       - name: test-integrity sweep
+        if: matrix.shard == 1
         working-directory: apps/api
         run: python -m scripts.check_test_integrity tests
 
@@ -65,6 +85,7 @@ jobs:
       # is what makes it hold, because the reflex survives the rule until the
       # rule has a gate.
       - name: disclosures reach a reader
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_disclosure_consumers.py
 
       # The audit-gate test module SKIPS itself when it cannot find
@@ -84,6 +105,7 @@ jobs:
       # `find_workflows_dir(...) is None`, from the same tests/unit directory.
       # Moving or removing this step un-guards all three (#1221).
       - name: the audit-gate tests must not skip on a full checkout
+        if: matrix.shard == 1
         working-directory: apps/api
         run: |
           python - <<'PY'
@@ -113,6 +135,7 @@ jobs:
       # not passing, and that cannot be asserted from inside the tree -- a test
       # that skips takes its own assertion with it.
       - name: the size-gate real-file test must not skip on a full checkout
+        if: matrix.shard == 1
         working-directory: apps/api
         run: |
           python - <<'PY'
@@ -143,6 +166,7 @@ jobs:
       # fixed those two, and one in this very comment -- caught by this gate on
       # its first run, before it had ever run in CI. Also a two-second pass.
       - name: control-character sweep
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_no_control_chars.py .
 
       # DELIVERY_PLAN's stated total vs the sum of its own rows. Two instances,
@@ -150,6 +174,7 @@ jobs:
       # the second inside a section headed "and the parts sum to it". Same
       # argument as the control-character sweep above: mechanise it.
       - name: plan totals sum
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_plan_totals.py DELIVERY_PLAN.md
 
       # CLAUDE.md reached 210,958 bytes against a 150,000-byte reader limit, so
@@ -159,6 +184,7 @@ jobs:
       # tool error rather than a red build. Same argument as the two sweeps
       # above: the rule existed and only a machine keeps it.
       - name: governance file fits in a reader
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_claude_md_size.py --require-canary CLAUDE.md
 
       # The image optimizer stays unmounted, AND nothing imports sharp directly.
@@ -212,6 +238,7 @@ jobs:
       # (#223): that registry is filed and unbuilt, so "gate it there" resolves to
       # "gate it never, for now". Fold this in when #223 is built.
       - name: image optimizer stays unmounted
+        if: matrix.shard == 1
         run: |
           # `-e` is ON whether or not it is written here: GitHub invokes this
           # step as `bash -e {0}`, and `set -uo pipefail` does not cancel it.
@@ -303,7 +330,7 @@ jobs:
           #   python - <<'PY'
           #   import yaml
           #   d = yaml.safe_load(open(".github/workflows/ci.yml"))
-          #   s = [x for x in d["jobs"]["python"]["steps"]
+          #   s = [x for x in d["jobs"]["python-shard"]["steps"]
           #        if x.get("name") == "image optimizer stays unmounted"]
           #   open("gate-step.sh", "w", newline="\n").write(s[0]["run"])
           #   PY
@@ -345,6 +372,7 @@ jobs:
       # this step is not optional decoration: delete it and `gates can fail`
       # goes red naming the gate it can no longer find a caller for.
       - name: shell gates
+        if: matrix.shard == 1
         run: |
           bash tests/gates/prettier_hook.sh
           bash tests/gates/web_install_guard.sh
@@ -392,6 +420,7 @@ jobs:
           bash tests/gates/prepush_hook_status.sh --self-test
 
       - name: gates can fail
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_gate_fixtures.py
 
       # An enumerated whitespace class in the single LLM egress path. Twice a
@@ -400,6 +429,7 @@ jobs:
       # comment explaining the first. A third instance was caught by this script
       # on its first run, in code written the same hour.
       - name: separator classes in the redactor
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_separator_classes.py apps/api/app/ai/redact.py
 
       # The gateable properties of the LEAVE-row oracle. The oracle itself is a
@@ -425,6 +455,7 @@ jobs:
       # defect CLAUDE.md records for comments and applies here for the same
       # reason: it is what a reader checks instead of reading the script.
       - name: LEAVE-row oracle registry and labels
+        if: matrix.shard == 1
         working-directory: apps/api
         run: python scripts/leave_row_oracle.py --check-registry
 
@@ -443,6 +474,7 @@ jobs:
       # oracle here is deliberately not done -- scoring a row needs judgement
       # and `CLAUDE.md` already decided that.
       - name: LEAVE-row oracle can still measure
+        if: matrix.shard == 1
         working-directory: apps/api
         run: python scripts/leave_row_oracle.py --check-anchors
 
@@ -453,6 +485,7 @@ jobs:
       # this file would be a second copy of the one in the gate, free to drift
       # from it, which is the shape several of this repo's gates were built for.
       - name: recalled counts (shared docs)
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_recalled_counts.py
 
       # The personal status files, REPORT ONLY, and only what is NEW.
@@ -490,6 +523,7 @@ jobs:
       # Python emits CRLF; CI is Linux and emits LF. Normalising both sides
       # keeps the diff about content rather than about whose machine wrote it.
       - name: recalled counts in personal status files (report only, delta)
+        if: matrix.shard == 1
         continue-on-error: true
         run: |
           set +e
@@ -551,44 +585,137 @@ jobs:
       # ratchet: a baselined test that now runs or no longer exists, and an
       # exemption for a variable now set or no longer read, are findings.
       - name: every e2e env gate is set or exempted (#540)
+        if: matrix.shard == 1
         run: python apps/api/scripts/check_e2e_env_gates.py
 
       # The gate WRITES the set it certified, and only on a clean verdict, and
       # pytest runs IMMEDIATELY after it in the same job, with the same env,
       # working-directory and shell (#544, pinned by test_ci_selection_gate.py),
       # so nothing can narrow one and not the other. Its run is exactly
-      # CI_SELECTOR, which is the selection, plus CI_RUN_OPTIONS, which select
-      # nothing: `-n 4` spreads the selection over four workers on this one
-      # runner (pytest-xdist), and `--junitxml` records one outcome per test.
+      # CI_SELECTOR, which is the selection, plus CI_RUN_OPTIONS: `-n 4` spreads
+      # a leg's share over four workers on its runner (pytest-xdist),
+      # `--junitxml` records one outcome per test, and `-p
+      # scripts.shard_deselect` is the ONLY narrowing -- it deals the certified
+      # selection by SHIELD_SHARD_INDEX / SHIELD_SHARD_OF and deselects exactly
+      # the other leg's ids. `python -m pytest`, not `pytest`, because a `-p`
+      # plugin is imported before pytest has put the project on sys.path.
       - name: every unit test is one CI runs (#540)
         working-directory: apps/api
         run: python -m scripts.check_ci_selection --selected-out "$RUNNER_TEMP/pytest-selection.txt"
 
       - name: pytest -m unit
         working-directory: apps/api
-        run: pytest -m unit tests/unit -n 4 --junitxml="$RUNNER_TEMP/pytest-unit.xml"
+        run: python -m pytest -m unit tests/unit -n 4 -p scripts.shard_deselect --junitxml="$RUNNER_TEMP/pytest-unit.xml"
 
       # A worker that crashes is replaced: xdist reports its running test as
       # failed and hands its pending tests to the others, so the summary line
-      # alone does not say which tests ran. So the run
-      # is checked against the certified set, test by test, from the junit XML
-      # rather than the summary line: every selected test reported exactly once,
-      # nothing reported that was not selected, and passed + skipped + xfailed
-      # equal to the selection. `always()` so the counts print on a red run too.
-      - name: every selected test ran exactly once
+      # alone does not say which tests ran. So the leg is checked against the
+      # ids it was DEALT (`pytest-dealt.txt`, written by the plugin), test by
+      # test, from the junit XML rather than the summary line: every dealt test
+      # reported exactly once, nothing else reported, and passed + skipped +
+      # xfailed equal to the share. `always()` so the counts print on a red run
+      # too. The aggregate holds the two legs to the whole selection.
+      - name: every dealt test ran exactly once
         if: always()
         working-directory: apps/api
-        run: python -m scripts.check_junit_counts --junit "$RUNNER_TEMP/pytest-unit.xml" --selected "$RUNNER_TEMP/pytest-selection.txt"
+        run: python -m scripts.check_junit_counts --junit "$RUNNER_TEMP/pytest-unit.xml" --selected "$RUNNER_TEMP/pytest-dealt.txt"
 
       - name: bandit
+        if: matrix.shard == 1
         run: bandit -q -c pyproject.toml -r apps/api/app
 
       # Work Order F: dependency audit. Surfaces advisories; Dependabot opens the
       # fix PRs, so this reports without blocking on a freshly-published CVE.
       - name: pip-audit
+        if: matrix.shard == 1
         working-directory: apps/api
         continue-on-error: true
         run: pip-audit
+
+      # What the aggregate reads, named for this leg. A leg that fails never
+      # reaches this step (no `always()`), and the aggregate is red on its
+      # result alone, so a missing record is never the only signal.
+      - name: Collect this leg's selection, dealt list and junit
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/leg"
+          cp "$RUNNER_TEMP/pytest-selection.txt" "$RUNNER_TEMP/leg/selection-$SHIELD_SHARD_INDEX.txt"
+          cp "$RUNNER_TEMP/pytest-dealt.txt" "$RUNNER_TEMP/leg/dealt-$SHIELD_SHARD_INDEX.txt"
+          cp "$RUNNER_TEMP/pytest-unit.xml" "$RUNNER_TEMP/leg/junit-$SHIELD_SHARD_INDEX.xml"
+
+      # #734: an upload the aggregate reads is retried, twice, because a
+      # transient upload error (ETIMEDOUT) turned a required check red on a
+      # green suite. Still fail closed: see test_ci_upload_retry.py.
+      - name: Upload this leg's record
+        id: upload-leg
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/leg
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this leg's record (retry 1, #734)
+        id: upload-leg-retry-1
+        if: steps.upload-leg.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/leg
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload this leg's record (retry 2, #734)
+        if: steps.upload-leg-retry-1.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/leg
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+  python:
+    # THE REQUIRED CHECK, by its exact name. `if: always()` so it runs when a
+    # leg failed or was skipped (a skipped required job reports success); it
+    # is red unless EVERY leg succeeded, including leg 1's lint and gates, and
+    # unless the legs certified one selection and together ran it once.
+    name: Python (ruff + black + pytest + bandit)
+    needs: [python-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every Python leg succeeded
+        env:
+          LEGS: ${{ needs.python-shard.result }}
+        run: |
+          echo "python legs: $LEGS"
+          if [ "$LEGS" != "success" ]; then
+            echo "::error::a Python leg did not succeed (failed, cancelled or skipped), so this required check is red"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: python-shard-*
+          path: ${{ runner.temp }}/legs
+          merge-multiple: true
+
+      # --of is the matrix's `of`; test_ci_python_shards.py pins the two together.
+      - name: The legs ran one certified selection, once
+        working-directory: apps/api
+        run: python -m scripts.check_python_shards --dir "$RUNNER_TEMP/legs" --of 2
 
   web:
     name: Web (prettier + eslint + typecheck + build)

@@ -5,7 +5,7 @@
 0076, and some of those were set by earlier AI runs. The consultant's
 questionnaire discloses it; the client outputs reuse the same approved
 sentence (#736 6225076633): the deliverable and the client dashboard here, and
-the Risk Register once its follow-up PR for #1343 lands (not yet on main).
+the Risk Register (`risk/zt_target_origin.py`).
 
 ONE predicate for the deliverable and the client ZT dashboard, so they
 cannot disagree about which targets are unrecorded. A target is listed when
@@ -18,9 +18,8 @@ target, which stays true.
 
 The Risk Register applies a stored per-capability target RAW
 (`routes/risk.py`), not through `capability_target_override`; the two agree
-on every value the writers store today. The register does not call this
-predicate yet; that follow-up PR for #1343 adds the call and says there how it
-uses it.
+on every value the writers store today. The register calls this predicate;
+`risk/zt_target_origin.py` says how it uses it.
 """
 
 from __future__ import annotations
