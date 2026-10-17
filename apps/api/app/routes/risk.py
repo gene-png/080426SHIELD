@@ -470,9 +470,9 @@ class _InputSnapshot:
     #: of the audit row's `targets`, not a key inside its entries, whose exact
     #: shape tests pin.
     cap_lowered: dict[str, list[str]] = dataclasses.field(default_factory=dict)
-    #: #1343: per ZT source (`scope_key`), the codes of the findings whose
-    #: target is a per-capability target with no recorded origin, in row
-    #: order; filled by `_gather_findings`, read by `risk/zt_target_origin.py`.
+    #: #1343: per ZT source (`scope_key`), the codes of the capabilities
+    #: whose applied target has no recorded origin (with a finding or not), in
+    #: row order; filled by `_gather_findings`, read by `risk/zt_target_origin.py`.
     origin_unrecorded: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     #: R10 (#736 6102665946): per CSF source (`scope_key`), its Playbook's
     #: `unscored_targeted` count; filled by `_gather_findings`, summed into
