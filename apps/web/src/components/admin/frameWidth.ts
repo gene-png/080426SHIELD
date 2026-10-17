@@ -6,10 +6,11 @@
 
 /**
  * #1050: a service workspace (`/admin/services/<id>/...`) carries wide
- * editable tables, so it runs full-width. List and form pages keep the
- * readable `max-w-6xl` cap. T6: a section of the client frame
+ * editable tables, so it runs full-width. T6: a section of the client frame
  * (`/admin/clients/<id>/services/<slug>/<section>`) wraps that workspace, so
- * it runs full-width too.
+ * it runs full-width too. Inside a client's frame the other pages keep the
+ * readable `max-w-6xl` cap (`ClientFrameBody`); #1385: a page with no client
+ * is capped by nothing.
  */
 export function isWorkspace(pathname: string): boolean {
   return (
