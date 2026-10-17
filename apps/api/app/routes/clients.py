@@ -1391,11 +1391,12 @@ def attack_dashboard_content(
         retirement_notes=retirement_notes,
         partial_reasons=partial_reasons,
         # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
-        # EVERY row the deliverable prints that credits such a tool, at any
+        # every row that credits such a tool AND HAS A STATUS (#1010), at any
         # status, NOT only rows credited as coverage like the home card's flag
         # (`_attack_uncovered_total`): C1 says the row's status "may count" the
-        # tool, which is true of a Gap row's judgement too, and it is the
-        # document's own sentence, so the two surfaces stay the same claim.
+        # tool, which is true of a Gap row's judgement too, and an unscored row
+        # has no status. It is the document's own sentence, so the two surfaces
+        # stay the same claim.
         subset_notes=attack_subset_sentences(deliverable_ctx),
         tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
     )
