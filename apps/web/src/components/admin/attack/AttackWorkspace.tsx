@@ -42,6 +42,12 @@ import type {
 } from "@/lib/attack/types";
 
 import { MessageThread } from "@/components/messages/MessageThread";
+import { InternalOnlyBand } from "@/components/service-shell/InternalOnlyBand";
+import {
+  SECTIONS,
+  type SectionKey,
+} from "@/components/service-shell/SectionBar";
+import { SectionHeader } from "@/components/service-shell/SectionHeader";
 import { StaleDocsNudge } from "@/components/admin/StaleDocsNudge";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { AiPreviewButton } from "@/components/admin/AiPreviewButton";
@@ -55,12 +61,22 @@ import { AttackAiInputsPanel } from "./AttackAiInputsPanel";
 import { AttackCitationAccounting } from "./AttackCitationAccounting";
 import { AttackComputedReviewPanel } from "./AttackComputedReviewPanel";
 import { AttackMappingDone } from "./AttackMappingDone";
-import { AttackDeliverableCard } from "./AttackDeliverableCard";
+import {
+  AttackDeliverableCard,
+  type AttackDeliverablePart,
+} from "./AttackDeliverableCard";
 import { AttackHeatmapCard } from "./AttackHeatmapCard";
 import { AttackMatrix } from "./AttackMatrix";
 import { AttackOutsideSubsetAlert } from "./AttackOutsideSubsetAlert";
 import { AttackScenarioPanel } from "./AttackScenarioPanel";
 import { AttackTechniquePanel } from "./AttackTechniquePanel";
+import {
+  ATTACK_NEEDS_ASSESSMENT,
+  ATTACK_SECTION_COPY,
+  ATTACK_SECTION_VISIBILITY,
+  showsAttackBlock,
+  type AttackBlock,
+} from "./attackSections";
 
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
@@ -73,7 +89,37 @@ import { AiSourceNote } from "@/components/AiSourceNote";
 export interface AttackWorkspaceProps {
   serviceId: string;
   serviceTitle: string;
+  /**
+   * #1377: the client frame's section. Only that section's blocks render
+   * (`ATTACK_BLOCK_SECTIONS`), under the shared section header. Absent, the
+   * whole page renders as before.
+   */
+  section?: SectionKey;
 }
+
+/**
+ * The four step descriptions, verbatim from the numbered steps. The whole page
+ * and each section show the same sentences, so a reword happens once.
+ */
+const STEP_DESCRIPTION = {
+  draft:
+    "Claude suggests a coverage status and the detection / prevention / response tooling for each technique, using only this client's approved Tech Debt capability list. It drafts; you decide. Locked rows are never touched.",
+  review:
+    "Click any cell to set its coverage status, cite the tooling that provides it, and record your rationale. This is the judgement the client is paying for — the AI draft is a starting point, not an answer. Lock a row to protect it from future AI runs.",
+  approve:
+    "Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step. Review each item with the client and confirm they agree before approving.",
+  generate:
+    "Renders the PDF and XLSX from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return.",
+} as const;
+
+/**
+ * #550 across sections: a section is a URL segment, so moving between sections
+ * remounts the workspace and a component flag is lost. A run whose outcome is
+ * unknown must keep Run AI off until a reload, as the copy says, so a SECTIONED
+ * workspace remembers it here (cleared by a reload, like the flag it replaces).
+ * The whole page is unchanged: it neither reads nor writes this.
+ */
+const outcomeUnknownServices = new Set<string>();
 
 function describeError(err: unknown): string {
   if (err instanceof AttackProxyError) {
@@ -155,6 +201,7 @@ const SUBSET_INPUTS: readonly (keyof AttackCoveragePatch)[] = [
 export function AttackWorkspace({
   serviceId,
   serviceTitle,
+  section,
 }: AttackWorkspaceProps): JSX.Element {
   const [catalog, setCatalog] = React.useState<AttackCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<AttackAssessment | null>(
@@ -205,7 +252,13 @@ export function AttackWorkspace({
   const [runBlocked, setRunBlocked] = React.useState<string | null>(null);
   // #550: set once a run's outcome is unknown, never cleared. A reload clears
   // it, which the copy says; nothing on this page can know the run finished.
-  const [runOutcomeUnknown, setRunOutcomeUnknown] = React.useState(false);
+  const [runOutcomeUnknown, setRunOutcomeUnknownState] = React.useState(
+    () => section !== undefined && outcomeUnknownServices.has(serviceId),
+  );
+  function setRunOutcomeUnknown(value: true): void {
+    if (section !== undefined) outcomeUnknownServices.add(serviceId);
+    setRunOutcomeUnknownState(value);
+  }
   const [selectedCode, setSelectedCode] = React.useState<string | null>(null);
   const [showSubs, setShowSubs] = React.useState(false);
 
@@ -779,89 +832,78 @@ export function AttackWorkspace({
       0)
     : 0;
 
-  return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-            MITRE ATT&amp;CK Coverage
-          </p>
-          <h1 className="text-3xl font-semibold text-ink-primary">
-            {serviceTitle}
-          </h1>
-          <p className="max-w-prose text-sm text-ink-secondary">
-            Walk the Enterprise matrix and set defensive coverage status per
-            technique. The heatmap updates live; cells that show as Gap drive
-            the deliverable&apos;s remediation priorities.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {assessment ? (
-            <StatusPill
-              tone={
-                assessment.status === "approved" ||
-                assessment.status === "released"
-                  ? "success"
-                  : "info"
-              }
-              withDot
-            >
-              {assessment.status === "draft"
-                ? `Draft v${assessment.version}`
-                : assessment.status === "approved"
-                  ? `Approved v${assessment.version}`
-                  : `Released v${assessment.version}`}
-            </StatusPill>
-          ) : (
-            <StatusPill tone="neutral" withDot>
-              No assessment yet
-            </StatusPill>
-          )}
-          {assessment ? null : (
-            <button
-              type="button"
-              onClick={() => void onCreateAssessment()}
-              disabled={busy !== null || !catalog}
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busy === "create" ? "Creating…" : "Start assessment"}
-            </button>
-          )}
-          {assessment ? (
-            <DiscardDraftButton
-              status={assessment.status}
-              destructionSummary={discardSummary}
-              onConfirm={onDiscard}
-              // #645: NOT locked by a run. D-031: a discard racing a run
-              // wins, and the run then ends without applying anything.
-              disabled={busy !== null && busy !== "run"}
-            />
-          ) : null}
-          {assessment ? (
-            <StartRevisionButton
-              status={assessment.status}
-              version={assessment.version}
-              onStart={onStartRevision}
-              disabled={busy !== null}
-            />
-          ) : null}
-        </div>
-      </header>
+  // #1377: every block once, as an element. The whole page (no `section`)
+  // composes them exactly as before; a section composes only its own
+  // (`ATTACK_BLOCK_SECTIONS`).
+  const statusPill = assessment ? (
+    <StatusPill
+      tone={
+        assessment.status === "approved" || assessment.status === "released"
+          ? "success"
+          : "info"
+      }
+      withDot
+    >
+      {assessment.status === "draft"
+        ? `Draft v${assessment.version}`
+        : assessment.status === "approved"
+          ? `Approved v${assessment.version}`
+          : `Released v${assessment.version}`}
+    </StatusPill>
+  ) : (
+    <StatusPill tone="neutral" withDot>
+      No assessment yet
+    </StatusPill>
+  );
 
+  const lifecycle = (
+    <>
+      {assessment ? null : (
+        <button
+          type="button"
+          onClick={() => void onCreateAssessment()}
+          disabled={busy !== null || !catalog}
+          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy === "create" ? "Creating…" : "Start assessment"}
+        </button>
+      )}
       {assessment ? (
-        <RevisionBanner
+        <DiscardDraftButton
           status={assessment.status}
-          revision={assessment.revision}
+          destructionSummary={discardSummary}
+          onConfirm={onDiscard}
+          // #645: NOT locked by a run. D-031: a discard racing a run
+          // wins, and the run then ends without applying anything.
+          disabled={busy !== null && busy !== "run"}
         />
       ) : null}
-      {stagesPhase === "ready" && serviceStages ? (
-        <ProgressStages
-          stages={serviceStages.stages}
-          kind={serviceStages.kind}
-          version={serviceStages.version}
+      {assessment ? (
+        <StartRevisionButton
+          status={assessment.status}
+          version={assessment.version}
+          onStart={onStartRevision}
+          disabled={busy !== null}
         />
       ) : null}
+    </>
+  );
 
+  const revisionBanner = assessment ? (
+    <RevisionBanner status={assessment.status} revision={assessment.revision} />
+  ) : null;
+
+  const progressStages =
+    stagesPhase === "ready" && serviceStages ? (
+      <ProgressStages
+        stages={serviceStages.stages}
+        kind={serviceStages.kind}
+        version={serviceStages.version}
+      />
+    ) : null;
+
+  const failures = (
+    <>
       {refreshMessages.length > 0 ? (
         <div
           className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
@@ -903,12 +945,428 @@ export function AttackWorkspace({
           </CardBody>
         </Card>
       ) : null}
+    </>
+  );
+
+  // Built here, in the component body, and not inside `withAssessment`: its
+  // handlers reach the write-tracking ref, and the lint rule for refs accepts
+  // that only in JSX written in the component itself.
+  const scoring =
+    assessment && catalog ? (
+      assessment.catalog_current !== true ? (
+        // #556: the rows are keyed by technique ID, and an ID can mean a
+        // different technique in the current catalog (T1558 and T1649
+        // swapped names in the list this replaced). Drawing them into the
+        // current matrix would relabel answers by ID (D-091), and codes the
+        // catalog no longer has would silently vanish from the grid.
+        <p
+          role="status"
+          data-testid="attack-stale-catalog"
+          className="rounded-md border border-status-warning-fg/40 bg-surface-sunken p-3 text-sm text-status-warning-fg"
+        >
+          {`This assessment was scored against ${
+            assessment.catalog_version
+              ? `ATT&CK v${assessment.catalog_version}`
+              : "an ATT&CK catalog that was never recorded"
+          }, not the current one. Its ${assessment.coverage.length} rows are not shown against the current technique names, because a technique ID can name a different technique in the current catalog.`}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <AttackOutsideSubsetAlert assessment={assessment} phase="draft" />
+          <AttackTechniquePanel
+            technique={selectedTechnique}
+            subTechniqueCount={selectedSubTechniqueCount}
+            coverage={selectedCoverage}
+            coverageDefinitions={catalog.coverage_definitions}
+            reasonCodes={catalog.reason_codes}
+            toolRetirement={assessment.tool_retirement}
+            readOnly={readOnly || runInProgress}
+            onPatch={(patch) => {
+              if (!selectedCoverage) return;
+              return onPatch(selectedCoverage.id, patch);
+            }}
+            onConfirmCitations={() => {
+              if (!selectedCoverage) return;
+              return onConfirmCitations(selectedCoverage.id);
+            }}
+          />
+          <AttackMatrix
+            catalog={catalog}
+            coverageByCode={coverageByCode}
+            heatmapByTactic={heatmapByTactic}
+            onSelectTechnique={(code) => setSelectedCode(code)}
+            selectedCode={selectedCode}
+            showSubTechniques={showSubs}
+            onToggleSubTechniques={setShowSubs}
+          />
+        </div>
+      )
+    ) : null;
+
+  // Blocks that exist only with an assessment and a catalog.
+  const withAssessment = (a: AttackAssessment, c: AttackCatalog) => {
+    const runAi = (
+      <>
+        {/* Issue 2: warn before producing canned output when no key is
+            loaded. Passes straight through when AI is live. */}
+        <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+          {({ onClick, statusUnknown }) => (
+            <div>
+              <button
+                type="button"
+                onClick={onClick}
+                disabled={
+                  // #645: an unreadable AI status fails closed.
+                  statusUnknown ||
+                  busy !== null ||
+                  runInProgress ||
+                  readOnly ||
+                  runOutcomeUnknown ||
+                  // #556: the API refuses it; the step says why.
+                  a.catalog_current !== true
+                }
+                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busy === "run" || runInProgress ? "Running…" : "Run AI"}
+              </button>
+            </div>
+          )}
+        </RunAiGuard>
+        {runOutcomeUnknown ? (
+          <p className="text-sm text-status-warning-fg" role="alert">
+            {RUN_OUTCOME_UNKNOWN}
+          </p>
+        ) : null}
+      </>
+    );
+    const aiPreview = (
+      <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
+    );
+    // Beside the preview, not a second surface. The preview answers "what will
+    // be sent?" (redacted); this answers "what will NOT be sent, and where did
+    // the rest come from?" -- the question nothing on this page answered, and
+    // the one behind a run that reports a filtered-out tool as a gap.
+    // Read-only and not rate-limited, so it loads on mount.
+    const aiInputs = <AttackAiInputsPanel serviceId={serviceId} />;
+    const runResultBlock = (
+      <>
+        <AiRunStatus run={aiRun} />
+        {/* #646: the assessment's AI source, from the derivation the
+            deliverable and the client dashboard call. */}
+        <AiSourceNote source={a.ai_source} />
+        <LastRunNote run={aiRun.lastCompleted} />
+        {/* #1182: what the run covered. A run stored without an applied
+            count keeps the line it was shown with. */}
+        {runResult && aiRun.lastCompleted?.applied_count != null ? (
+          <AttackMappingDone
+            toolsAvailable={runResult.tools_available}
+            techniquesMapped={aiRun.lastCompleted.applied_count}
+            batchesFailed={
+              (runResult.batches_failed ?? 0) +
+              (runResult.reask_batches_failed ?? 0)
+            }
+            techniquesAsked={runResult.techniques_asked}
+            catalog={c.techniques}
+          />
+        ) : runResult ? (
+          <p className="text-sm text-ink-secondary" aria-live="polite">
+            Updated{" "}
+            <span className="font-semibold text-ink-primary">
+              {runResult.changed.length}
+            </span>{" "}
+            field
+            {runResult.changed.length === 1 ? "" : "s"} across{" "}
+            {new Set(runResult.changed.map((ch) => ch.technique_code)).size}{" "}
+            technique
+            {new Set(runResult.changed.map((ch) => ch.technique_code)).size ===
+            1
+              ? ""
+              : "s"}
+            .{" "}
+            {`${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
+          </p>
+        ) : null}
+        {runResult ? <AttackCitationAccounting result={runResult} /> : null}
+      </>
+    );
+    const runBlockedNote = runBlocked ? (
+      <p
+        className="text-sm text-status-warning-fg"
+        role="status"
+        data-testid="attack-run-blocked"
+      >
+        {runBlocked}
+      </p>
+    ) : null;
+    const computedReview = (
+      <AttackComputedReviewPanel
+        assessment={a}
+        busy={busy !== null || runInProgress}
+        onReview={onReview}
+      />
+    );
+    const approveButton = (
+      <button
+        type="button"
+        onClick={() => void onApprove()}
+        disabled={
+          busy !== null ||
+          runInProgress ||
+          a.status !== "draft" ||
+          scoredCount === 0 ||
+          a.catalog_current !== true
+        }
+        className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {a.status === "approved"
+          ? "Approved"
+          : a.status === "released"
+            ? "Released"
+            : busy === "approve"
+              ? "Approving…"
+              : "Approve"}
+      </button>
+    );
+    const staleDocs = <StaleDocsNudge stale={a.documents_stale} />;
+    const outsideSubsetApproved = (
+      <AttackOutsideSubsetAlert assessment={a} phase="approved" />
+    );
+    const deliverableCard = (part?: AttackDeliverablePart) => (
+      <AttackDeliverableCard
+        serviceId={serviceId}
+        assessmentStatus={a.status}
+        deliverable={deliverable}
+        onChange={setDeliverable}
+        catalogStale={a.catalog_current !== true}
+        part={part}
+      />
+    );
+    return {
+      runAi,
+      aiPreview,
+      aiInputs,
+      runResultBlock,
+      runBlockedNote,
+      scoring,
+      computedReview,
+      approveButton,
+      staleDocs,
+      outsideSubsetApproved,
+      deliverableCard,
+    };
+  };
+
+  // #556: the API refuses these on another catalog; the step says why.
+  const runBlockedReason = (a: AttackAssessment): string | null =>
+    a.catalog_current !== true
+      ? "This assessment was scored against a different ATT&CK catalog than the current one, so the AI cannot draft over it."
+      : null;
+  // `!== true` on purpose: an absent field reads as NOT current -- missing
+  // data defaults to unconfirmed, never to confirmed.
+  const approveBlockedReason = (
+    a: AttackAssessment,
+    nothingScored: string,
+  ): string | null =>
+    a.catalog_current !== true
+      ? "This assessment was scored against a different ATT&CK catalog than the current one, so it cannot be approved."
+      : scoredCount === 0
+        ? nothingScored
+        : null;
+  const generateBlockedReason = (
+    a: AttackAssessment,
+    draft: string,
+  ): string | null =>
+    a.catalog_current !== true
+      ? "This assessment was scored against a different ATT&CK catalog than the current one, so no deliverable can be generated or released from it."
+      : a.status === "draft"
+        ? draft
+        : null;
+
+  /**
+   * #1377: one section of the client frame. The section header replaces the
+   * old page title and the numbered steps; the step descriptions that still
+   * hold stay, verbatim, so nothing they said is lost.
+   */
+  function sectioned(sec: SectionKey): JSX.Element {
+    const label = SECTIONS.find((s) => s.key === sec)?.label;
+    if (!label) throw new Error(`AttackWorkspace: no section "${sec}"`);
+    const header = ATTACK_SECTION_COPY.header[sec];
+    const shows = (block: AttackBlock): boolean => showsAttackBlock(sec, block);
+    const release =
+      sec === "approve-and-release" && deliverable?.released_at
+        ? { version: deliverable.version, releasedAt: deliverable.released_at }
+        : undefined;
+    const b =
+      assessment && catalog ? withAssessment(assessment, catalog) : null;
+    const draftBlocked = assessment ? runBlockedReason(assessment) : null;
+    const approveBlocked = assessment
+      ? approveBlockedReason(
+          assessment,
+          ATTACK_SECTION_COPY.approveBlockedNothingScored,
+        )
+      : null;
+    const generateBlocked = assessment
+      ? generateBlockedReason(
+          assessment,
+          ATTACK_SECTION_COPY.generateBlockedDraft,
+        )
+      : null;
+    return (
+      <div className="flex flex-col gap-6" data-attack-section={sec}>
+        <SectionHeader
+          section={sec}
+          title={label}
+          purpose={header.purpose}
+          canDo={header.canDo}
+          visibility={release ? "released" : ATTACK_SECTION_VISIBILITY[sec]}
+          release={release}
+        />
+        {shows("assessmentStatus") ? (
+          <div className="flex flex-wrap items-center gap-2">{statusPill}</div>
+        ) : null}
+        {shows("lifecycle") ? (
+          <div className="flex flex-wrap items-center gap-2">{lifecycle}</div>
+        ) : null}
+        {shows("revisionBanner") ? revisionBanner : null}
+        {shows("progressStages") ? progressStages : null}
+        {shows("failures") ? failures : null}
+        {shows("recommendationsEmpty") ? (
+          <p className="text-sm text-ink-secondary">
+            {ATTACK_SECTION_COPY.recommendationsEmpty}
+          </p>
+        ) : null}
+        {!catalog && sec !== "recommendations" ? (
+          <p className="text-sm text-ink-tertiary" aria-live="polite">
+            Loading ATT&amp;CK matrix…
+          </p>
+        ) : null}
+        {catalog && !assessment && shows("noAssessment") ? (
+          <EmptyState
+            title="No coverage assessment yet"
+            description="Click 'Start assessment' to pre-seed an unscored coverage row for every technique in the Enterprise matrix."
+          />
+        ) : null}
+        {catalog && !assessment && ATTACK_NEEDS_ASSESSMENT.includes(sec) ? (
+          <p className="text-sm text-ink-secondary">
+            {ATTACK_SECTION_COPY.noAssessment}
+          </p>
+        ) : null}
+        {assessment && b ? (
+          <>
+            {shows("aiInputs") ? b.aiInputs : null}
+            {shows("runAi") ? (
+              <>
+                <p className="max-w-prose text-sm text-ink-secondary">
+                  {STEP_DESCRIPTION.draft}
+                </p>
+                {draftBlocked ? (
+                  <p className="text-sm text-ink-tertiary" role="note">
+                    {draftBlocked}
+                  </p>
+                ) : null}
+                <div className="flex flex-col gap-3">
+                  {b.runAi}
+                  {shows("aiPreview") ? b.aiPreview : null}
+                  {shows("runResult") ? b.runResultBlock : null}
+                  {shows("runBlocked") ? b.runBlockedNote : null}
+                </div>
+              </>
+            ) : null}
+            {shows("scoring") ? (
+              <>
+                <p className="max-w-prose text-sm text-ink-secondary">
+                  {STEP_DESCRIPTION.review}
+                </p>
+                {b.scoring}
+              </>
+            ) : null}
+            {shows("computedReview") ? b.computedReview : null}
+            {shows("approve") ? (
+              <>
+                <p className="max-w-prose text-sm text-ink-secondary">
+                  {STEP_DESCRIPTION.approve}
+                </p>
+                {approveBlocked ? (
+                  <p className="text-sm text-ink-tertiary" role="note">
+                    {approveBlocked}
+                  </p>
+                ) : null}
+                {b.approveButton}
+              </>
+            ) : null}
+            {shows("heatmap") ? <AttackHeatmapCard heatmap={heatmap} /> : null}
+            {shows("whatIf") ? (
+              <InternalOnlyBand>
+                {/* #802: a what-if against the last confirmed assessment.
+                    Reads and writes only its own records. */}
+                <AttackScenarioPanel serviceId={serviceId} />
+              </InternalOnlyBand>
+            ) : null}
+            {shows("deliverableGenerate") ? (
+              <>
+                <p className="max-w-prose text-sm text-ink-secondary">
+                  {STEP_DESCRIPTION.generate}
+                </p>
+                {generateBlocked ? (
+                  <p className="text-sm text-ink-tertiary" role="note">
+                    {generateBlocked}
+                  </p>
+                ) : null}
+                {shows("staleDocs") ? b.staleDocs : null}
+                {shows("outsideSubsetApproved")
+                  ? b.outsideSubsetApproved
+                  : null}
+                {b.deliverableCard("generate")}
+              </>
+            ) : null}
+            {shows("deliverablePreview") ? b.deliverableCard("preview") : null}
+            {shows("deliverableRelease") ? b.deliverableCard("release") : null}
+          </>
+        ) : null}
+        {shows("messages") ? <MessageThread serviceId={serviceId} /> : null}
+      </div>
+    );
+  }
+
+  if (section !== undefined) {
+    return sectioned(section);
+  }
+
+  const whole =
+    assessment && catalog ? withAssessment(assessment, catalog) : null;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+            MITRE ATT&amp;CK Coverage
+          </p>
+          <h1 className="text-3xl font-semibold text-ink-primary">
+            {serviceTitle}
+          </h1>
+          <p className="max-w-prose text-sm text-ink-secondary">
+            Walk the Enterprise matrix and set defensive coverage status per
+            technique. The heatmap updates live; cells that show as Gap drive
+            the deliverable&apos;s remediation priorities.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {statusPill}
+          {lifecycle}
+        </div>
+      </header>
+
+      {revisionBanner}
+      {progressStages}
+
+      {failures}
 
       {!catalog ? (
         <p className="text-sm text-ink-tertiary" aria-live="polite">
           Loading ATT&amp;CK matrix…
         </p>
-      ) : !assessment ? (
+      ) : !assessment || !whole ? (
         <EmptyState
           title="No coverage assessment yet"
           description="Click 'Start assessment' to pre-seed an unscored coverage row for every technique in the Enterprise matrix."
@@ -924,163 +1382,26 @@ export function AttackWorkspace({
           <WorkflowStep
             number={1}
             title="Draft the mapping with AI"
-            description="Claude suggests a coverage status and the detection / prevention / response tooling for each technique, using only this client's approved Tech Debt capability list. It drafts; you decide. Locked rows are never touched."
+            description={STEP_DESCRIPTION.draft}
             done={runResult !== null || scoredCount > 0}
-            blockedReason={
-              assessment.catalog_current !== true
-                ? "This assessment was scored against a different ATT&CK catalog than the current one, so the AI cannot draft over it."
-                : null
-            }
+            blockedReason={runBlockedReason(assessment)}
           >
             <div className="flex flex-col gap-3">
-              {/* Issue 2: warn before producing canned output when no key is
-                  loaded. Passes straight through when AI is live. */}
-              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick, statusUnknown }) => (
-                  <div>
-                    <button
-                      type="button"
-                      onClick={onClick}
-                      disabled={
-                        // #645: an unreadable AI status fails closed.
-                        statusUnknown ||
-                        busy !== null ||
-                        runInProgress ||
-                        readOnly ||
-                        runOutcomeUnknown ||
-                        // #556: the API refuses it; the step says why.
-                        assessment.catalog_current !== true
-                      }
-                      className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {busy === "run" || runInProgress ? "Running…" : "Run AI"}
-                    </button>
-                  </div>
-                )}
-              </RunAiGuard>
-              {runOutcomeUnknown ? (
-                <p className="text-sm text-status-warning-fg" role="alert">
-                  {RUN_OUTCOME_UNKNOWN}
-                </p>
-              ) : null}
-              <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
-              {/* Beside the preview, not a second surface. The preview
-                  answers "what will be sent?" (redacted); this answers
-                  "what will NOT be sent, and where did the rest come
-                  from?" -- the question nothing on this page answered, and
-                  the one behind a run that reports a filtered-out tool as a
-                  gap. Read-only and not rate-limited, so it loads on mount. */}
-              <AttackAiInputsPanel serviceId={serviceId} />
-              <AiRunStatus run={aiRun} />
-              {/* #646: the assessment's AI source, from the derivation the
-                  deliverable and the client dashboard call. */}
-              {assessment ? (
-                <AiSourceNote source={assessment.ai_source} />
-              ) : null}
-              <LastRunNote run={aiRun.lastCompleted} />
-              {/* #1182: what the run covered. A run stored without an applied
-                  count keeps the line it was shown with. */}
-              {runResult && aiRun.lastCompleted?.applied_count != null ? (
-                <AttackMappingDone
-                  toolsAvailable={runResult.tools_available}
-                  techniquesMapped={aiRun.lastCompleted.applied_count}
-                  batchesFailed={
-                    (runResult.batches_failed ?? 0) +
-                    (runResult.reask_batches_failed ?? 0)
-                  }
-                  techniquesAsked={runResult.techniques_asked}
-                  catalog={catalog.techniques}
-                />
-              ) : runResult ? (
-                <p className="text-sm text-ink-secondary" aria-live="polite">
-                  Updated{" "}
-                  <span className="font-semibold text-ink-primary">
-                    {runResult.changed.length}
-                  </span>{" "}
-                  field
-                  {runResult.changed.length === 1 ? "" : "s"} across{" "}
-                  {new Set(runResult.changed.map((c) => c.technique_code)).size}{" "}
-                  technique
-                  {new Set(runResult.changed.map((c) => c.technique_code))
-                    .size === 1
-                    ? ""
-                    : "s"}
-                  .{" "}
-                  {`${runResult.tools_available} tool${runResult.tools_available === 1 ? "" : "s"} available for mapping.`}
-                </p>
-              ) : null}
-              {runResult ? (
-                <AttackCitationAccounting result={runResult} />
-              ) : null}
-              {runBlocked ? (
-                <p
-                  className="text-sm text-status-warning-fg"
-                  role="status"
-                  data-testid="attack-run-blocked"
-                >
-                  {runBlocked}
-                </p>
-              ) : null}
+              {whole.runAi}
+              {whole.aiPreview}
+              {whole.aiInputs}
+              {whole.runResultBlock}
+              {whole.runBlockedNote}
             </div>
           </WorkflowStep>
 
           <WorkflowStep
             number={2}
             title="Review every technique and adjust"
-            description="Click any cell to set its coverage status, cite the tooling that provides it, and record your rationale. This is the judgement the client is paying for — the AI draft is a starting point, not an answer. Lock a row to protect it from future AI runs."
+            description={STEP_DESCRIPTION.review}
             done={assessment.status !== "draft"}
           >
-            {assessment.catalog_current !== true ? (
-              // #556: the rows are keyed by technique ID, and an ID can mean a
-              // different technique in the current catalog (T1558 and T1649
-              // swapped names in the list this replaced). Drawing them into the
-              // current matrix would relabel answers by ID (D-091), and codes the
-              // catalog no longer has would silently vanish from the grid.
-              <p
-                role="status"
-                data-testid="attack-stale-catalog"
-                className="rounded-md border border-status-warning-fg/40 bg-surface-sunken p-3 text-sm text-status-warning-fg"
-              >
-                {`This assessment was scored against ${
-                  assessment.catalog_version
-                    ? `ATT&CK v${assessment.catalog_version}`
-                    : "an ATT&CK catalog that was never recorded"
-                }, not the current one. Its ${assessment.coverage.length} rows are not shown against the current technique names, because a technique ID can name a different technique in the current catalog.`}
-              </p>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <AttackOutsideSubsetAlert
-                  assessment={assessment}
-                  phase="draft"
-                />
-                <AttackTechniquePanel
-                  technique={selectedTechnique}
-                  subTechniqueCount={selectedSubTechniqueCount}
-                  coverage={selectedCoverage}
-                  coverageDefinitions={catalog.coverage_definitions}
-                  reasonCodes={catalog.reason_codes}
-                  toolRetirement={assessment.tool_retirement}
-                  readOnly={readOnly || runInProgress}
-                  onPatch={(patch) => {
-                    if (!selectedCoverage) return;
-                    return onPatch(selectedCoverage.id, patch);
-                  }}
-                  onConfirmCitations={() => {
-                    if (!selectedCoverage) return;
-                    return onConfirmCitations(selectedCoverage.id);
-                  }}
-                />
-                <AttackMatrix
-                  catalog={catalog}
-                  coverageByCode={coverageByCode}
-                  heatmapByTactic={heatmapByTactic}
-                  onSelectTechnique={(code) => setSelectedCode(code)}
-                  selectedCode={selectedCode}
-                  showSubTechniques={showSubs}
-                  onToggleSubTechniques={setShowSubs}
-                />
-              </div>
-            )}
+            {whole.scoring}
           </WorkflowStep>
 
           <WorkflowStep
@@ -1088,75 +1409,32 @@ export function AttackWorkspace({
             title="Approve the assessment"
             // #1179: Gene's sentence (2026-10-15 test-run item 11), after the
             // current text, which is unchanged.
-            description="Locks the coverage matrix so the deliverable is generated from a fixed set of scores. Approving does not release anything to the client — that is the last step. Review each item with the client and confirm they agree before approving."
+            description={STEP_DESCRIPTION.approve}
             done={assessment.status !== "draft"}
-            blockedReason={
-              // #556: the API refuses to approve an assessment scored against
-              // another ATT&CK catalog; say so here instead of offering a button
-              // whose only outcome is that refusal. `!== true` on purpose: an
-              // absent field reads as NOT current -- missing data defaults to
-              // unconfirmed, never to confirmed.
-              assessment.catalog_current !== true
-                ? "This assessment was scored against a different ATT&CK catalog than the current one, so it cannot be approved."
-                : scoredCount === 0
-                  ? "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first."
-                  : null
-            }
+            blockedReason={approveBlockedReason(
+              assessment,
+              "Nothing has been scored yet. Run the AI draft or score techniques by hand in step 2 first.",
+            )}
           >
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={
-                busy !== null ||
-                runInProgress ||
-                assessment.status !== "draft" ||
-                scoredCount === 0 ||
-                assessment.catalog_current !== true
-              }
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : "Approve"}
-            </button>
+            {whole.approveButton}
           </WorkflowStep>
 
           <WorkflowStep
             number={4}
             title="Generate and release the deliverable"
-            description="Renders the PDF and XLSX from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
-            blockedReason={
-              assessment.catalog_current !== true
-                ? "This assessment was scored against a different ATT&CK catalog than the current one, so no deliverable can be generated or released from it."
-                : assessment.status === "draft"
-                  ? "Approve the assessment in step 3 before generating a deliverable from it."
-                  : null
-            }
+            description={STEP_DESCRIPTION.generate}
+            blockedReason={generateBlockedReason(
+              assessment,
+              "Approve the assessment in step 3 before generating a deliverable from it.",
+            )}
           >
             <div className="flex flex-col gap-3">
               {/* #554 R3: the release gate's review queue, named by the release
                   refusal, so it sits in the step where that refusal is met. */}
-              <AttackComputedReviewPanel
-                assessment={assessment}
-                busy={busy !== null || runInProgress}
-                onReview={onReview}
-              />
-              <StaleDocsNudge stale={assessment.documents_stale} />
-              <AttackOutsideSubsetAlert
-                assessment={assessment}
-                phase="approved"
-              />
-              <AttackDeliverableCard
-                serviceId={serviceId}
-                assessmentStatus={assessment.status}
-                deliverable={deliverable}
-                onChange={setDeliverable}
-                catalogStale={assessment.catalog_current !== true}
-              />
+              {whole.computedReview}
+              {whole.staleDocs}
+              {whole.outsideSubsetApproved}
+              {whole.deliverableCard()}
             </div>
           </WorkflowStep>
 

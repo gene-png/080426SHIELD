@@ -8,6 +8,7 @@ import {
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 
 /**
  * SMOKE_TEST.md section 5 (T6): the MITRE ATT&CK Coverage admin workspace.
@@ -69,7 +70,7 @@ async function openFreshDraft(
   // The header only renders once EnsureActiveClient has set the active-client
   // cookie to Atlas, so the proxy POST below is correctly tenant-scoped.
   await expect(
-    page.getByRole("heading", { name: "MITRE ATT&CK Coverage" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
 
   const created = await page.request.post(
@@ -139,12 +140,16 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   test.slow();
   await openFreshDraft(page, request);
 
-  // Matrix + coverage-rollup heatmap both render.
+  // Matrix (Review) + coverage-rollup heatmap (Analysis) both render.
+  await openSection(page, "Review");
   await expect(
     page.getByRole("heading", { name: "ATT&CK matrix" }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Analysis");
   await expect(page.getByText("Coverage rollup")).toBeVisible();
 
+  // Run AI is in AI draft (#1377).
+  await openSection(page, "AI draft");
   const runBody = await runAi(page);
   expect(runBody.changed.length).toBeGreaterThan(0);
   expect(runBody.tools_available).toBeGreaterThan(0);
@@ -181,6 +186,7 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   // loaded next-dev server.
   await page.reload();
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 60000 });
+  await openSection(page, "Review");
   await selectTechnique(page, targetCode);
 
   await expect(page.getByText("Detection", { exact: true })).toBeVisible({
@@ -208,6 +214,8 @@ test("a locked technique is untouched by Run AI and absent from the what-changed
   const LOCK_CODE = "T1190";
 
   // Select the technique, set a known status (Gap), and lock it BEFORE Run AI.
+  // The matrix and the technique panel are in Review (#1377).
+  await openSection(page, "Review");
   await selectTechnique(page, LOCK_CODE);
 
   const statusGroup = page.getByRole("radiogroup", { name: "Coverage status" });
@@ -232,7 +240,9 @@ test("a locked technique is untouched by Run AI and absent from the what-changed
   await page.getByRole("checkbox", { name: /Lock this technique/ }).check();
   await lockPatched;
 
-  // Run AI: unlocked rows change; the locked row must be skipped.
+  // Run AI: unlocked rows change; the locked row must be skipped. It is in
+  // AI draft (#1377).
+  await openSection(page, "AI draft");
   const runBody = await runAi(page);
 
   // Other (unlocked) techniques were updated...

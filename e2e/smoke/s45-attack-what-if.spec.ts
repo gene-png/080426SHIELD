@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { acknowledgeOfflineAi } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -79,6 +80,11 @@ test("an admin starts and discards an ATT&CK what-if against a confirmed assessm
 
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/attack-coverage`);
+  // The what-if is in Analysis (#1377); the old URL lands on Overview.
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
+  ).toBeVisible({ timeout: 60_000 });
+  await openSection(page, "Analysis");
 
   const panel = page.getByTestId("attack-scenario-panel");
   await expect(
