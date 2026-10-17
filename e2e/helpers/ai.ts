@@ -180,7 +180,7 @@ export async function extractAfterUpload(
   }
   const { id } = (await upload.json()) as { id: string };
   const row = page.locator("li").filter({
-    has: page.locator(`a[href="/api/proxy/artifacts/${id}/download"]`),
+    has: page.locator(`a[href^="/api/proxy/artifacts/${id}/download"]`),
   });
   const button = row.getByRole("button", { name: "Extract from this" });
   const first = await Promise.race([
