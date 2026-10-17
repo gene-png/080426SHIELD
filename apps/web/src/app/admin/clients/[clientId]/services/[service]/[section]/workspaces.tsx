@@ -57,11 +57,13 @@ function Workspace({
     case "nist_csf":
       return <CsfWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />;
     case "zero_trust_cisa":
+      // #1379: Zero Trust is split; each section shows only its own blocks.
       return (
         <ZtWorkspace
           serviceId={serviceId}
           framework="cisa_ztmm_2_0"
           serviceTitle={serviceTitle}
+          section={section}
         />
       );
     case "zero_trust_dod":
@@ -70,6 +72,7 @@ function Workspace({
           serviceId={serviceId}
           framework="dod_ztra"
           serviceTitle={serviceTitle}
+          section={section}
         />
       );
   }
