@@ -106,9 +106,14 @@ test("client views a released MITRE ATT&CK coverage dashboard", async ({
   await expect(page.getByText("Blind spots", { exact: true })).toBeVisible();
 
   // Sections + the uncovered technique cards (3 gaps seeded).
-  // #1324: exact, since the chart's note quotes this title too.
+  // #1324: a heading query. The chart's note quotes this title in a paragraph,
+  // and the heading's own text carries the "n uncovered" pill, so a text
+  // locator matches the note or nothing; the <h2> alone matches this.
   await expect(
-    page.getByText("What you're blind to today", { exact: true }),
+    page.getByRole("heading", {
+      level: 2,
+      name: /^What you're blind to today/,
+    }),
   ).toBeVisible();
   await expect(page.getByText("Per-technique coverage matrix")).toBeVisible();
   await expect(page.getByPlaceholder(/Search technique/i)).toBeVisible();
