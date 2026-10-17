@@ -39,6 +39,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream mfa/verify call");
+    return upstreamOutcomeUnknown(err, "Upstream mfa/verify call", "POST");
   }
 }

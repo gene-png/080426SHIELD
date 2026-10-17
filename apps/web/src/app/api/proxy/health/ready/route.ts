@@ -28,6 +28,6 @@ export async function GET(): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream readiness call");
+    return upstreamOutcomeUnknown(err, "Upstream readiness call", "GET");
   }
 }

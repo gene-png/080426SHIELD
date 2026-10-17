@@ -62,7 +62,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream ATT&CK call");
+    return upstreamOutcomeUnknown(err, "Upstream ATT&CK call", init.method);
   }
 }
 

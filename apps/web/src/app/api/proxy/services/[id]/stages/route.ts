@@ -45,6 +45,6 @@ export async function GET(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream stages call");
+    return upstreamOutcomeUnknown(err, "Upstream stages call", "GET");
   }
 }

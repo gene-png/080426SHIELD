@@ -61,6 +61,13 @@ export interface ZtDashboardData {
    */
   unusable_target_codes: string[];
   /**
+   * #1343: capabilities whose APPLIED per-capability target has no recorded
+   * origin (stored before migration 0076; some set by earlier AI runs), from
+   * the predicate the deliverable uses (`zt/target_origin.py`). Optional:
+   * absent reads as none, never as a fault.
+   */
+  unrecorded_target_codes?: string[];
+  /**
    * #839: the API's own sentences (approved copy C1/C2) for each DoD
    * capability whose target was capped at its highest level, or that cannot
    * score the target level. Rendered as given, never rebuilt here.
@@ -136,6 +143,23 @@ export function scoredNote(pillars: ZtPillar[]): string {
 /** Pillars ordered by the largest current→target gap first (focus ordering). */
 export function pillarsByGap(pillars: ZtPillar[]): ZtPillar[] {
   return [...pillars].sort((a, b) => b.gap_pct - a.gap_pct);
+}
+
+/**
+ * #1343: the approved sentence (#736 6220094031 item 5), the one the API's
+ * `zt/target_origin.py` and the consultant's `ZtQuestionnaire.tsx` carry.
+ */
+const TARGET_ORIGIN_NOT_RECORDED =
+  "Who set this target is not recorded. An earlier AI run may have set it.";
+
+/**
+ * One line per code, `{code}: <sentence>`, as the deliverable prints them
+ * (placement approved at #736 6225462107). Empty when none.
+ */
+export function unrecordedTargetLines(data: ZtDashboardData): string[] {
+  return (data.unrecorded_target_codes ?? []).map(
+    (code) => `${code}: ${TARGET_ORIGIN_NOT_RECORDED}`,
+  );
 }
 
 /**

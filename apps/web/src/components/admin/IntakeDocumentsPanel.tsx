@@ -12,6 +12,7 @@ import {
 } from "@shield/design-system";
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
+import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -62,8 +63,9 @@ export interface IntakeDocumentsPanelProps {
  * (during intake or otherwise) and a consultant's (the Tech Debt Dropzone posts
  * to the same upload route as the admin, #1054), so the consultant can review
  * them and extract a capability list straight from an inventory without
- * re-uploading. Relies on the active tenant being aligned to this service's
- * client (EnsureActiveClient) so the artifacts list is scoped correctly.
+ * re-uploading. Inside a workspace the list and its Download links name the
+ * client EnsureActiveClient resolved for it (#1129), never the shared cookie;
+ * outside one they fall back to the cookie.
  */
 export function IntakeDocumentsPanel({
   onExtract,
@@ -74,13 +76,16 @@ export function IntakeDocumentsPanel({
   inSection = false,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
+  // #1129: this workspace's own client, never the shared cookie, which
+  // another tab may have rewritten since this page mounted.
+  const workspaceClientId = useWorkspaceClientId();
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
     // No synchronous setError(null) here — react-hooks v6 set-state-in-effect
     // flags it. A stale error clears on the next successful load instead.
-    listArtifacts()
+    listArtifacts(workspaceClientId ?? undefined)
       .then((res) => {
         if (cancelled) return;
         setDocs(res.items.filter((a) => a.origin === "client_upload"));
@@ -96,7 +101,7 @@ export function IntakeDocumentsPanel({
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, workspaceClientId]);
 
   const draftSource =
     docs?.find((a) => a.id === draftSourceId && draftSourceId !== null) ?? null;
@@ -161,7 +166,13 @@ export function IntakeDocumentsPanel({
                       <StatusPill tone="info">Current draft</StatusPill>
                     ) : null}
                     <a
-                      href={`/api/proxy/artifacts/${a.id}/download`}
+                      // #1129: the workspace's client, as the list uses,
+                      // so a cookie another tab rewrote cannot 404 it.
+                      href={
+                        workspaceClientId
+                          ? `/api/proxy/artifacts/${a.id}/download?client_id=${encodeURIComponent(workspaceClientId)}`
+                          : `/api/proxy/artifacts/${a.id}/download`
+                      }
                       className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-ink-primary hover:bg-surface-sunken"
                     >
                       Download

@@ -167,9 +167,34 @@ test("CSF answers persist across save-and-exit, and submit moves the status", as
     );
   }
 
+  // #1171: Submit waits until every function has at least one answer (Gene's
+  // lock, #736 6216024281). Step through the remaining functions with Next and
+  // answer one outcome in each.
+  for (;;) {
+    const nextFn = page.getByRole("button", { name: /^Next: .* →$/ });
+    if ((await nextFn.count()) === 0) break;
+    await nextFn.click();
+    const saved = page.waitForResponse(
+      (r) =>
+        r.url().includes("/csf/self-assessment/answers/") &&
+        r.request().method() === "PATCH" &&
+        r.ok(),
+    );
+    await page
+      .getByRole("radiogroup")
+      .first()
+      .getByRole("radio")
+      .first()
+      .click();
+    await saved;
+  }
+
   // Submit for review moves the assessment out of draft. Most outcomes are
   // still blank here, so Submit first warns about them (#1173), and the
   // client submits anyway.
+  await expect(
+    page.getByRole("button", { name: "Submit for review" }),
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Submit for review" }).click();
   await page.getByRole("button", { name: "Submit anyway" }).click();
   await expect(page.getByText("Self-assessment submitted")).toBeVisible({
