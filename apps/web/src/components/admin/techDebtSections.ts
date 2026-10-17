@@ -189,7 +189,11 @@ export const TD_SECTION_COPY = {
     recommendations: {
       purpose:
         "This service's recommendations, for the conversation with the client.",
-      canDo: ["See the recommendations, once they are built"],
+      // Approved verbatim on #736 (6229792065). It names no control, so it
+      // promises none: nothing in this section can be done yet.
+      canDo: [
+        "Nothing to do yet: this section is empty until recommendations are built.",
+      ],
     },
   } satisfies Record<SectionKey, { purpose: string; canDo: readonly string[] }>,
   /** The empty list, in a section: the upload is in Inputs, not "above". */

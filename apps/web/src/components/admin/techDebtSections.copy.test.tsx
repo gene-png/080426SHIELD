@@ -102,3 +102,15 @@ describe("the result card's outcome lines, in the singular (#1376)", () => {
     expect(someLeftOut(4, 5)).toBe("4 of 5 uploaded rows are in the list.");
   });
 });
+
+/**
+ * The Recommendations section has no control today, so its one "can do" line
+ * promises none (advisor, #736 6229792065).
+ */
+describe("the Recommendations section's bullet (#1376)", () => {
+  it("says there is nothing to do yet, naming no control", () => {
+    expect(TD_SECTION_COPY.header.recommendations.canDo).toEqual([
+      "Nothing to do yet: this section is empty until recommendations are built.",
+    ]);
+  });
+});
