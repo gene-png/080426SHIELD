@@ -386,8 +386,8 @@ jobs:
           printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
           if grep -qE '^Literal-only-test-edits: yes[[:space:]]*$' "$RUNNER_TEMP/pr-body.md"; then
             : # declared in the exact form: run the checker below
-          elif grep -qiE '^[[:space:]>*_`-]*(Literal-only-test-edits)' "$RUNNER_TEMP/pr-body.md"; then
-            echo "::error::the PR body has a line starting with Literal-only-test-edits that is not exactly 'Literal-only-test-edits: yes', so the declaration is not honoured. Fix the line; this check is not skipped silently."
+          elif grep -qiE '^[^[:alpha:]]*(\[[ xX]\][^[:alpha:]]*)?literal[-_ ]?only[-_ ]?test[-_ ]?edits?' "$RUNNER_TEMP/pr-body.md"; then
+            echo "::error::the PR body has a line that looks like a Literal-only-test-edits declaration but is not exactly 'Literal-only-test-edits: yes', so it is not honoured. Fix the line; this check is not skipped silently."
             exit 2
           else
             echo "NOT RUN: the PR body has no 'Literal-only-test-edits: yes' line, so this check says nothing about this PR."

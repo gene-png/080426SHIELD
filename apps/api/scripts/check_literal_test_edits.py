@@ -36,6 +36,9 @@ Only if the streams match are the changed literals judged one by one:
     * a number must stay a number and a string a string (None, True, a name or
       another kind in a literal's place changes the token kind, refused above).
 
+PYTHON VERSION. This relies on 3.12 tokenising an f-string into parts (before that, code inside
+one is blanked as a literal). The project pins requires-python >= 3.12, which ruff enforces here.
+
 SCOPE, stated plainly. Only Python test files are machine-checkable here. A
 changed test file that is not Python (a vitest or Playwright spec, a fixture's
 JSON) is REFUSED as "not machine-checkable": it still goes to the advisor. A
@@ -70,9 +73,10 @@ _TEST_PATH = re.compile(
 #: literal-only test edit can switch tests off without touching a test file, so the
 #: pre-approval does not cover it.
 _DECIDES_TESTS = re.compile(
-    r"(^|/)(pyproject\.toml|pytest\.ini|setup\.cfg|tox\.ini|conftest\.py|"
+    r"(^|/)(pyproject\.toml|package\.json|pytest\.ini|setup\.cfg|tox\.ini|conftest\.py|"
     r"(vitest|playwright)(\.setup|\.config)[^/]*)$"
-    r"|^\.github/workflows/|^apps/api/scripts/(check_|shard_|preflight|mutation|leave_row)"
+    r"|^\.github/workflows/|^tests/gates/|^scripts/"
+    r"|^apps/api/scripts/(check_|shard_|preflight|mutation|leave_row)"
 )
 #: A line of its own in the PR body. Digits only, long enough to be a comment id.
 _CITATION = re.compile(r"^Approved-behavior-comment:[ \t]*(\d{7,})[ \t]*$", re.MULTILINE)
@@ -200,7 +204,9 @@ def _is_expected_value(tok: tokenize.TokenInfo, source: str, spans) -> bool:
     """Is this literal token inside an expected-value span and outside any f-string expression?"""
     safe, unsafe = spans
     row, col = tok.start
-    line = source.splitlines()[row - 1]
+    # split on newline ONLY: str.splitlines also splits on form feeds and U+2028, which
+    # the tokenizer and ast do not, and would pick the wrong line.
+    line = source.split("\n")[row - 1]
     point = (row, len(line[:col].encode("utf-8")))
     return any(_inside(point, sp) for sp in safe) and not any(_inside(point, sp) for sp in unsafe)
 

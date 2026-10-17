@@ -140,6 +140,17 @@ def test_a_file_that_is_not_a_test_is_the_behaviour_change_and_is_not_judged(
         ".github/workflows/ci.yml",
         "apps/api/scripts/check_plan_totals.py",
         "apps/api/scripts/shard_deselect.py",
+        "apps/api/scripts/preflight_plan.py",
+        "apps/api/scripts/mutation_sweep.py",
+        "apps/api/scripts/leave_row_oracle.py",
+        "apps/web/package.json",
+        "package.json",
+        "tests/gates/prettier_hook.sh",
+        "scripts/red-on-revert.sh",
+        "apps/api/setup.cfg",
+        "apps/api/tox.ini",
+        "apps/api/conftest.py",
+        "apps/web/vitest.setup.ts",
     ],
 )
 def test_a_file_that_decides_what_tests_run_is_refused(tmp_path, capsys, path) -> None:
@@ -601,15 +612,54 @@ def test_a_prose_mention_in_the_middle_of_a_line_is_not_a_declaration(tmp_path) 
         "> Literal-only-test-edits: yes",
         "Literal-only-test-edits : yes",
         "Literal-only-test-edit: yes",
+        "1. Literal-only-test-edits: yes",
+        "- [x] Literal-only-test-edits: yes",
+        "| Literal-only-test-edits | yes |",
+        "Literal only test edits: yes",
+        "Literal_only_test_edits: yes",
     ],
 )
 def test_a_near_miss_declaration_fails_the_job_and_never_greens_silently(tmp_path, line) -> None:
     # The first version exited 0 "NOT RUN" for all of these: a green check named for the
     # checker that never ran, over a PR whose author believed they had declared.
     proc = _run_step(tmp_path, f"Body\n{line}\n")
-    if line.startswith("Literal-only-test-edit:"):
-        # A misspelt name is not recognised as a mention at all; it is honestly NOT RUN.
-        assert proc.returncode == 0 and "NOT RUN" in proc.stdout, proc.stdout
-        return
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "CHECKER-RAN" not in proc.stdout and "NOT RUN" not in proc.stdout
+
+
+# --- review round 2 --------------------------------------------------------------------
+
+
+def test_a_non_ascii_character_before_a_literal_does_not_shift_the_judgement(
+    tmp_path, capsys
+) -> None:
+    # ast columns are UTF-8 BYTES and tokenize columns are characters; the `1` below sits
+    # inside the string's BYTE span if the columns are compared unconverted.
+    old = 'def test_x():\n    assert "' + "é" * 10 + '" == f(1)\n'
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: old.replace("f(1)", "f(2)")}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out, out
+
+
+def test_an_expected_value_after_non_ascii_text_is_still_an_expected_value(
+    tmp_path, capsys
+) -> None:
+    old = 'def test_x():\n    assert f("é") == "a"\n'
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: old.replace('"a"', '"b"')}, capsys)
+    assert code == 0, out
+
+
+def test_a_form_feed_in_a_comment_does_not_move_the_line_a_literal_is_judged_against(
+    tmp_path, capsys
+) -> None:
+    # str.splitlines splits on a form feed and the tokenizer does not: the call argument below
+    # would be judged against the comment line and pass.
+    old = (
+        "def test_x():\n    # a"
+        + chr(12)
+        + "x" * 20
+        + '\n    assert "expected-output-string" == run(limit=10)\n'
+    )
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: old.replace("10", "0")}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out, out
