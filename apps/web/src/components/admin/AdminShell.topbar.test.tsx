@@ -119,11 +119,11 @@ describe("a client's page runs edge to edge, the frame owns its padding (#1385)"
   });
 
   it.each(["/admin/clients", "/admin/queue", "/admin/audit"])(
-    "%s: no client, so main keeps its padding and the readable cap",
+    "%s: no client, so main keeps its padding and runs full-width",
     (path) => {
       at(path);
       const classes = screen.getByRole("main").className.split(/\s+/);
-      expect(classes).toContain("max-w-6xl");
+      expect(classes).not.toContain("max-w-6xl");
       expect(classes).toContain("px-6");
     },
   );

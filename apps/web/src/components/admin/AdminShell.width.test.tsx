@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * #1050: the shell capped every admin page at `max-w-6xl`, so a service
  * workspace's wide tables (Tech Debt step 2) scrolled sideways. Workspaces
- * under `/admin/services/<id>/...` run full-width; list and form pages keep
- * the readable cap.
+ * under `/admin/services/<id>/...` run full-width. #1385 (Gene's spec): a page
+ * with no client uses the full width too, so no admin page is capped by the
+ * shell; it keeps its padding.
  */
 
 let pathname = "/admin/queue";
@@ -56,7 +57,10 @@ describe("AdminShell main width", () => {
     "/admin/audit",
     "/admin/risk-register",
     "/admin/services",
-  ])("keeps the readable cap on %s", (path) => {
-    expect(mainClasses(path)).toContain("max-w-6xl");
+  ])("runs %s full-width, with its padding", (path) => {
+    const classes = mainClasses(path);
+    expect(classes).not.toContain("max-w-6xl");
+    expect(classes).toContain("px-6");
+    expect(classes).toContain("w-full");
   });
 });
