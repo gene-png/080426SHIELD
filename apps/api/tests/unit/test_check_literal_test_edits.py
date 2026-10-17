@@ -317,9 +317,12 @@ def test_a_missing_tree_is_could_not_look(tmp_path, capsys) -> None:
 # --- the git mode, against a real repository ------------------------------------------
 
 
+_GIT = shutil.which("git") or "git"  # resolved once, so the argv below is not a partial path
+
+
 def _git(repo: Path, *args: str) -> str:
-    proc = subprocess.run(  # noqa: S603, S607 - fixed argv, git from PATH, a throwaway repository
-        ["git", "-C", str(repo), "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+    proc = subprocess.run(  # noqa: S603 - fixed argv, a throwaway repository
+        [_GIT, "-C", str(repo), "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
         capture_output=True,
         text=True,
         check=True,
