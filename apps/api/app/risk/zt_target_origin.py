@@ -30,7 +30,7 @@ UNRECORDED_TARGET_KEY = "unrecorded_target_codes"
 
 
 def unrecorded_target_codes(stored: object) -> dict[str, list[str]] | None:
-    """Per ZT source, the finding codes whose target has no recorded origin;
+    """Per ZT source, the capability codes whose applied target has no recorded origin;
     None when the register records nothing.
 
     Three states, kept apart as #915's reader keeps them: NO KEY is a register

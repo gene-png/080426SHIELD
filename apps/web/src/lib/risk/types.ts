@@ -461,7 +461,7 @@ export interface RiskRegister {
   /** #915 (S3): the API's own sentence built from it, rendered as given. */
   zt_capped_target_note?: string | null;
   /**
-   * #1343: per ZT source, the finding codes whose target has no recorded
+   * #1343: per ZT source, the capability codes whose applied target has no recorded
    * origin. Null when not recorded.
    */
   unrecorded_target_codes?: Record<string, string[]> | null;

@@ -346,7 +346,7 @@ export function RiskDashboard({
         </p>
       ) : null}
       {/* #1343: the API's own lines (`risk/zt_target_origin.py`), one per ZT
-          finding whose target has no recorded origin, beside the cap note, as
+          capability whose applied target has no recorded origin, beside the cap note, as
           the register's files print them. */}
       {data.zt_unrecorded_target_notes?.length ? (
         <ul

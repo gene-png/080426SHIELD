@@ -1371,7 +1371,7 @@ function RiskRegisterBody({
             </p>
           ) : null}
           {/* #1343: the API's own lines (`risk/zt_target_origin.py`), one per
-              ZT finding whose target has no recorded origin, beside the cap
+              ZT capability whose applied target has no recorded origin, beside the cap
               note, as the files print them. */}
           {register.zt_unrecorded_target_notes?.length ? (
             <ul

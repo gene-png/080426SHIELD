@@ -1,4 +1,4 @@
-"""#1343, the Risk Register third: a ZT finding whose target is a
+"""#1343, the Risk Register third: a ZT capability whose target is a
 per-capability target with no recorded origin says so, with the approved
 sentence (#736 6220094031 item 5) in the approved form (6225462107):
 `{code}: <sentence>`, one line per code.
@@ -122,6 +122,9 @@ def test_every_published_file_and_the_client_dashboard_state_it(app_client) -> N
     pub = c.post(f"/risk/clients/{cid}/register/publish", headers=h)
     assert pub.status_code in (200, 201), pub.text
     pdf, docx, summary = _files(c, h, pub.json())
+    # Positive control for the suppressed-finding test below: with maturity 1 the
+    # ZT finding IS in the PDF, so that test's absence check can fail.
+    assert f"ZT {code}: stage" in pdf
     assert line in pdf
     assert line in docx
     assert line in summary

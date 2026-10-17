@@ -2747,7 +2747,7 @@ def generate(
         # client dashboard and the three files. A sibling key, so the pinned
         # key sets of `targets` are unchanged.
         _prov_with_count[ZT_CAPPED_TARGET_KEY] = snap.cap_lowered
-        # #1343: per ZT source, the findings whose target's origin is not
+        # #1343: per ZT source, the capabilities whose applied target's origin is not
         # recorded, read back by `risk/zt_target_origin.py` for the register,
         # the client dashboard and the three files. A sibling key, as #915's.
         _prov_with_count[ZT_UNRECORDED_TARGET_KEY] = snap.origin_unrecorded

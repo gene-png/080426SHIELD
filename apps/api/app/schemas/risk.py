@@ -630,7 +630,7 @@ class RiskRegisterResponse(BaseModel):
     capped_target_codes: dict[str, list[str]] | None = None
     #: #915 (S3): the approved sentence built from it, rendered as given.
     zt_capped_target_note: str | None = None
-    #: #1343: per ZT source, the finding codes whose target has no recorded
+    #: #1343: per ZT source, the capability codes whose applied target has no recorded
     #: origin (`risk/zt_target_origin.py`). None when the register records
     #: nothing, which is not "none" (an empty list).
     unrecorded_target_codes: dict[str, list[str]] | None = None

@@ -10,7 +10,7 @@ import type { RiskEntry, RiskGate, RiskRegister } from "@/lib/risk/types";
 import { RiskRegisterDashboard } from "./RiskRegisterDashboard";
 
 /**
- * #1343: the consultant's register states each ZT finding whose target has no
+ * #1343: the consultant's register states each ZT capability whose applied target has no
  * recorded origin, in the API's own lines (`zt_unrecorded_target_notes`),
  * rendered as given. The sentence is approved verbatim at #736 comment
  * 6220094031 item 5, in the `{code}: ` form approved at 6225462107; quoted

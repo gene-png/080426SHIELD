@@ -7,7 +7,7 @@ import { RiskDashboard } from "./RiskDashboard";
 import type { RiskDashboardData } from "@/lib/dashboards/risk";
 
 /**
- * #1343: the client's Risk dashboard states each ZT finding whose target has
+ * #1343: the client's Risk dashboard states each ZT capability whose applied target has
  * no recorded origin, in the API's own lines (`risk/zt_target_origin.py`),
  * rendered as given. The sentence is approved verbatim at #736 comment
  * 6220094031 item 5, in the `{code}: ` form approved at 6225462107; quoted

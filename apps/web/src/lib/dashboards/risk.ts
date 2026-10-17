@@ -86,7 +86,7 @@ export interface RiskDashboardData {
   zt_capped_target_note?: string | null;
   /**
    * #1343: the API's own lines (`risk/zt_target_origin.py`), one per ZT
-   * finding whose target has no recorded origin, rendered as given. Absent or
+   * capability whose applied target has no recorded origin, rendered as given. Absent or
    * empty when none.
    */
   zt_unrecorded_target_notes?: string[];
