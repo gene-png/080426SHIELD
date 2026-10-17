@@ -99,6 +99,13 @@ export function ZtSelfAssessment({
   // #1173: Submit with blanks shows the warning instead of submitting.
   const [blankWarning, setBlankWarning] = React.useState(false);
   const pillarRef = React.useRef<HTMLElement>(null);
+  // Bumped by the warning's "Go to" only: the pillar section takes focus once
+  // it has rendered as the chosen pillar (#1191), so its accessible name is
+  // the new pillar's when focus lands, never the previous one's.
+  const [focusRequest, setFocusRequest] = React.useState(0);
+  React.useEffect(() => {
+    if (focusRequest > 0) pillarRef.current?.focus();
+  }, [focusRequest]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -325,8 +332,9 @@ export function ZtSelfAssessment({
       block: "start",
     });
     // #1191: scrolling alone leaves focus on the button just pressed, so the
-    // next Tab lands on "Submit anyway". Focus the pillar's section instead.
-    pillarRef.current?.focus();
+    // next Tab lands on "Submit anyway". Focus the pillar's section instead,
+    // after the render (the effect above).
+    setFocusRequest((n) => n + 1);
   }
 
   return (
