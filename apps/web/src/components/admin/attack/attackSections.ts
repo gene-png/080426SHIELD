@@ -71,7 +71,10 @@ export const ATTACK_BLOCK_SECTIONS: Record<AttackBlock, readonly SectionKey[]> =
     runResult: ["ai-draft"],
     runBlocked: ["ai-draft"],
     scoring: ["review"],
-    computedReview: ["review"],
+    // In TWO sections on purpose: the release refusal sends the consultant to
+    // this panel, so it must be where that refusal is met (Approve and
+    // release) as well as where the statuses are reviewed (Review).
+    computedReview: ["review", "approve-and-release"],
     approve: ["review"],
     staleDocs: ["generate"],
     outsideSubsetApproved: ["generate"],

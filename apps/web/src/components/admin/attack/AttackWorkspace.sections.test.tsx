@@ -218,7 +218,7 @@ const EXPECTED: Record<SectionKey, readonly string[]> = {
   analysis: ["heatmap", "what-if"],
   generate: ["stale-docs", "subset-approved", "deliverable-generate"],
   "quality-check": ["deliverable-preview"],
-  "approve-and-release": ["deliverable-release"],
+  "approve-and-release": ["computed-review", "deliverable-release"],
   recommendations: [],
 };
 
@@ -258,9 +258,19 @@ describe("each ATT&CK section shows only its own blocks (#1377)", () => {
     expect(MARKERS.filter((m) => !covered.has(m))).toEqual([]);
   });
 
-  it("no block is in two sections", () => {
-    const all = Object.values(EXPECTED).flat();
+  it("no block is in two sections, except the one listed", () => {
+    // The release refusal sends the consultant to the computed status review
+    // panel, so it is in Review and in Approve and release.
+    const SHARED = ["computed-review"];
+    const all = Object.values(EXPECTED)
+      .flat()
+      .filter((m) => !SHARED.includes(m));
     expect(all.length).toBe(new Set(all).size);
+    const holders = Object.entries(EXPECTED)
+      .filter(([, shown]) => shown.includes("computed-review"))
+      .map(([section]) => section)
+      .sort();
+    expect(holders).toEqual(["approve-and-release", "review"]);
   });
 });
 
