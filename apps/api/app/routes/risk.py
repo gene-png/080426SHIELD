@@ -2998,12 +2998,20 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     # `risk.inputs.changed_remedy` (the table): the newer-draft sentence is
     # approved verbatim (advisor, #736 6225640724 item 5) and offers "discard",
     # so it is used only where discarding makes the register publishable.
-    if any(b.reason == "changed" and b.remedy == DISCARD_DRAFT for b in blockers):
+    # The unit is the REGISTER, not one input: "discard that draft, then
+    # publish again" is true only when every blocker is such a draft. Beside any
+    # other blocker, publishing after the discard is still refused, so the draft
+    # is told to be released instead (the waiting sentence).
+    only_discardable = bool(blockers) and all(
+        b.reason == "changed" and b.remedy == DISCARD_DRAFT for b in blockers
+    )
+    if only_discardable:
         parts.append(NEWER_DRAFT_OPEN)
     newer_waiting = [
         f"{_INPUT_LABELS.get(b.kind, b.kind)} ({_STATE_WORDS[b.status or '']})"
         for b in blockers
-        if b.reason == "changed" and b.remedy == RELEASE_NEWER
+        if b.reason == "changed"
+        and (b.remedy == RELEASE_NEWER or (b.remedy == DISCARD_DRAFT and not only_discardable))
     ]
     if newer_waiting:
         parts.append(_newer_version_waiting(newer_waiting))

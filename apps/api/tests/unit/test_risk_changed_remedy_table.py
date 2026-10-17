@@ -186,3 +186,100 @@ def test_unreleased_at_generate_with_a_revision_draft_is_not_told_to_discard_it(
     message = r.json()["error"]["message"]
     assert message == _WAITING.format(state="in progress (draft)"), message
     assert "Discard" not in message, message
+
+
+# The unit of the specification is the REGISTER: the whole set of blockers.
+# "Discard that draft, then publish again" is true only when EVERY blocker is a
+# discardable draft; beside any other blocker the publish after the discard is
+# still refused, so the draft reads as "waiting to be released".
+_DRAFT_OVER_RELEASED = Blocker("attack", "changed", "draft", DISCARD_DRAFT)
+
+
+@pytest.mark.parametrize(
+    "others",
+    [
+        Blocker("zt", "not_released", "approved"),
+        Blocker("zt", "changed", "approved", RELEASE_NEWER),
+        Blocker("zt", "changed", "released", REGENERATE),
+        Blocker("zt", "not_started", None),
+    ],
+)
+def test_a_discardable_draft_beside_any_other_blocker_is_not_told_to_discard(others) -> None:
+    message = _inputs_not_final_message([_DRAFT_OVER_RELEASED, others])
+    assert "Discard" not in message, message
+    assert "ATT&CK coverage (in progress (draft))" in message, message
+
+
+def test_two_discardable_drafts_still_read_as_the_approved_discard_sentence() -> None:
+    message = _inputs_not_final_message(
+        [_DRAFT_OVER_RELEASED, Blocker("zt", "changed", "draft", DISCARD_DRAFT)]
+    )
+    assert message == _DISCARD, message
+
+
+def _h(bearer: str, cid: str) -> dict:
+    return {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+
+
+def test_an_attack_draft_beside_an_unreleased_zt_is_not_told_to_discard_and_publish(
+    app_client,  # noqa: F811
+) -> None:
+    # ATT&CK released, ZT only approved at generate; then an ATT&CK revision.
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    release(c, bearer, cid, "attack", s.attack_service)
+    _gen(c, provider, bearer, cid)
+    r = c.post(
+        f"/attack/services/{s.attack_service}/assessments/{s.attack_assessment}/revisions",
+        headers=_h(bearer, cid),
+        json={"reason": "Client asked for a correction."},
+    )
+    assert r.status_code == 201, r.text
+    p = _publish(c, bearer, cid)
+    assert {b["input"] for b in _blockers(p)} == {"attack", "zt"}
+    message = p.json()["error"]["message"]
+    assert "Discard" not in message, message
+    assert "ATT&CK coverage (in progress (draft))" in message, message
+
+
+def test_following_discard_publishes(app_client) -> None:  # noqa: F811
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_released(c, bearer, cid)
+    _gen(c, provider, bearer, cid)
+    v2 = _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=False)
+    assert _publish(c, bearer, cid).json()["error"]["message"] == _DISCARD
+    d = c.post(f"/zt/assessments/{v2}/discard", headers=_h(bearer, cid))
+    assert d.status_code == 200, d.text
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
+
+
+def test_following_discard_after_a_version_gap_publishes(app_client) -> None:  # noqa: F811
+    # v2 drafted then discarded, v3 drafted on v1: the version has a gap, and
+    # the draft is still directly on the recorded v1.
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_released(c, bearer, cid)
+    _gen(c, provider, bearer, cid)
+    v2 = _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=False)
+    assert c.post(f"/zt/assessments/{v2}/discard", headers=_h(bearer, cid)).status_code == 200
+    v3 = _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=False)
+    assert _publish(c, bearer, cid).json()["error"]["message"] == _DISCARD
+    assert c.post(f"/zt/assessments/{v3}/discard", headers=_h(bearer, cid)).status_code == 200
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
+
+
+def test_following_release_then_generate_publishes(app_client) -> None:  # noqa: F811
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_released(c, bearer, cid)
+    _gen(c, provider, bearer, cid)
+    _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=True)
+    assert "waiting to be released" in _publish(c, bearer, cid).json()["error"]["message"]
+    release(c, bearer, cid, "zt", s.zt_service)
+    _gen(c, provider, bearer, cid)
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
