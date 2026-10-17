@@ -1,22 +1,24 @@
 """#1156: which sentence a `changed` input gets, as ONE table (the
-specification), after three review rounds each fixing one state of it.
+specification), after five review rounds each fixing one state of it.
 
-Inputs: the status of the record the register drew on (`was`), the status of
-the newest record now (`newest`), and whether that newest record is a DRAFT
-sitting directly on the recorded one (`over_was`: discarding it makes the
-recorded record the latest again).
+Two levels, because the discard promise is about the REGISTER:
 
-Output: the remedy, and whether following the sentence reaches a publishable
-register. Publish needs the recorded input RELEASED at generate, and a new
-version draws on the newest record and is refused unless that is released.
+1. Per input, `changed_remedy(was, newest)`: the status the register drew on
+   and the newest record's status give a remedy. DISCARD_DRAFT is only a
+   CANDIDATE (the register drew on released work and the newest record is a
+   draft).
+2. `publish_blockers` KEEPS a candidate only if re-running the same gate with
+   the draft removed returns no blockers. So "Discard that draft, then publish
+   again" is offered exactly when doing it publishes: not beside any other
+   blocker, not when a CSF Playbook fingerprint has drifted, not when the draft
+   sits on another unreleased record. The tests FOLLOW the remedy (discard,
+   then publish, expect 200) in ZT, CSF (with a seed in between) and Tech Debt.
 
-| was      | newest                  | over_was | following the sentence                  | remedy        |
-| released | draft                   | yes      | discard it, publish as is: publishes    | DISCARD_DRAFT |
-| released | draft                   | no       | discard leaves another unreleased record| RELEASE_NEWER |
-| released | submitted / approved    | any      | release it, generate: publishes         | RELEASE_NEWER |
-| released | released / none         | any      | generate: publishes                     | REGENERATE    |
-| unreleased | draft/submitted/approved | any    | as is never publishes; generate draws on the unreleased newest: release first | RELEASE_NEWER |
-| unreleased | released / none       | any      | generate: publishes                     | REGENERATE    |
+| was        | newest                   | remedy        |
+| released   | draft                    | DISCARD_DRAFT (candidate) |
+| any        | submitted / approved     | RELEASE_NEWER |
+| unreleased | draft                    | RELEASE_NEWER |
+| any        | released / none          | REGENERATE    |
 
 The sentences are the advisor's (#736 6225640724 item 5 and 6228351462 item 4),
 typed here from those comments, never read from the code.
@@ -41,40 +43,24 @@ from tests.unit.test_risk_register import _admin, app_client  # noqa: F401  (fix
 pytestmark = pytest.mark.unit
 
 _WAS = ("draft", "submitted", "approved", "released")
-_UNRELEASED_NEWEST = ("draft", "submitted", "approved")
-_RELEASED_OR_NONE_NEWEST = ("released", None)
-
 _ROWS = (
-    [("released", "draft", True, DISCARD_DRAFT)]
-    + [("released", "draft", False, RELEASE_NEWER)]
-    + [("released", n, o, RELEASE_NEWER) for n in ("submitted", "approved") for o in (True, False)]
-    + [
-        (w, n, o, RELEASE_NEWER)
-        for w in ("draft", "submitted", "approved")
-        for n in _UNRELEASED_NEWEST
-        for o in (True, False)
-    ]
-    + [(w, n, o, REGENERATE) for w in _WAS for n in _RELEASED_OR_NONE_NEWEST for o in (True, False)]
+    [("released", "draft", DISCARD_DRAFT)]
+    + [(w, "draft", RELEASE_NEWER) for w in ("draft", "submitted", "approved")]
+    + [(w, n, RELEASE_NEWER) for w in _WAS for n in ("submitted", "approved")]
+    + [(w, n, REGENERATE) for w in _WAS for n in ("released", None)]
 )
 
 
 def test_the_table_covers_every_state() -> None:
-    keys = {(w, n, o) for (w, n, o, _r) in _ROWS}
-    every = {
-        (w, n, o)
-        for w in _WAS
-        for n in (*_UNRELEASED_NEWEST, *_RELEASED_OR_NONE_NEWEST)
-        for o in (True, False)
-    }
-    assert len(_ROWS) == len(keys) == len(every) == 40, (len(_ROWS), len(keys), len(every))
+    keys = {(w, n) for (w, n, _r) in _ROWS}
+    every = {(w, n) for w in _WAS for n in ("draft", "submitted", "approved", "released", None)}
+    assert len(_ROWS) == len(keys) == len(every) == 20, (len(_ROWS), len(keys), len(every))
     assert keys == every
 
 
-@pytest.mark.parametrize(("was", "newest", "over_was", "expected"), _ROWS)
-def test_the_remedy_for_every_state(was, newest, over_was, expected) -> None:
-    assert (
-        changed_remedy(was_status=was, newest_status=newest, drafted_over_was=over_was) == expected
-    )
+@pytest.mark.parametrize(("was", "newest", "expected"), _ROWS)
+def test_the_remedy_for_every_state(was, newest, expected) -> None:
+    assert changed_remedy(was_status=was, newest_status=newest) == expected
 
 
 _DISCARD = (
@@ -195,19 +181,42 @@ def test_unreleased_at_generate_with_a_revision_draft_is_not_told_to_discard_it(
 _DRAFT_OVER_RELEASED = Blocker("attack", "changed", "draft", DISCARD_DRAFT)
 
 
+_DRAFT_WAITING = (
+    "This register can't be published while a newer version of an assessment it "
+    "draws on is waiting to be released: ATT&CK coverage (in progress (draft)). "
+    "Release that version, then generate a new version before publishing."
+)
+
+
 @pytest.mark.parametrize(
-    "others",
+    ("others", "expected"),
     [
-        Blocker("zt", "not_released", "approved"),
-        Blocker("zt", "changed", "approved", RELEASE_NEWER),
-        Blocker("zt", "changed", "released", REGENERATE),
-        Blocker("zt", "not_started", None),
+        (
+            Blocker("zt", "not_released", "approved"),
+            "This register cannot be published until every assessment it draws on is "
+            "released: Zero Trust (approved, not yet released). " + _DRAFT_WAITING,
+        ),
+        (
+            Blocker("zt", "changed", "approved", RELEASE_NEWER),
+            "This register can't be published while newer versions of assessments it "
+            "draws on are waiting to be released: ATT&CK coverage (in progress (draft)); "
+            "Zero Trust (approved, not yet released). Release those versions, then "
+            "generate a new version before publishing.",
+        ),
+        (
+            Blocker("zt", "changed", "released", REGENERATE),
+            _DRAFT_WAITING + " An assessment this register draws on has changed since it "
+            "was generated: Zero Trust. Generate a new version before publishing.",
+        ),
+        (
+            Blocker("zt", "not_started", None),
+            "This register cannot be published until every assessment it draws on is "
+            "released: Zero Trust (not started). " + _DRAFT_WAITING,
+        ),
     ],
 )
-def test_a_discardable_draft_beside_any_other_blocker_is_not_told_to_discard(others) -> None:
-    message = _inputs_not_final_message([_DRAFT_OVER_RELEASED, others])
-    assert "Discard" not in message, message
-    assert "ATT&CK coverage (in progress (draft))" in message, message
+def test_a_discardable_draft_beside_any_other_blocker_reads_as_waiting(others, expected) -> None:
+    assert _inputs_not_final_message([_DRAFT_OVER_RELEASED, others]) == expected
 
 
 def test_two_discardable_drafts_still_read_as_the_approved_discard_sentence() -> None:
@@ -238,9 +247,10 @@ def test_an_attack_draft_beside_an_unreleased_zt_is_not_told_to_discard_and_publ
     assert r.status_code == 201, r.text
     p = _publish(c, bearer, cid)
     assert {b["input"] for b in _blockers(p)} == {"attack", "zt"}
-    message = p.json()["error"]["message"]
-    assert "Discard" not in message, message
-    assert "ATT&CK coverage (in progress (draft))" in message, message
+    assert p.json()["error"]["message"] == (
+        "This register cannot be published until every assessment it draws on is "
+        "released: Zero Trust (approved, not yet released). " + _DRAFT_WAITING
+    )
 
 
 def test_following_discard_publishes(app_client) -> None:  # noqa: F811
@@ -281,5 +291,74 @@ def test_following_release_then_generate_publishes(app_client) -> None:  # noqa:
     assert "waiting to be released" in _publish(c, bearer, cid).json()["error"]["message"]
     release(c, bearer, cid, "zt", s.zt_service)
     _gen(c, provider, bearer, cid)
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
+
+
+def test_csf_after_a_playbook_seed_is_not_told_to_discard(app_client) -> None:  # noqa: F811
+    # CSF v1 released with no Playbook rows, generate, then the one writer an
+    # approved record keeps (the seed) moves its fingerprint, then a revision
+    # draft. Discarding the draft would leave v1 `changed` (the fingerprint), so
+    # the discard sentence is not offered; release-then-generate publishes.
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    seed_released(c, bearer, cid)
+    h = _h(bearer, cid)
+    sid = c.post("/csf/services", headers=h, json={"kind": "nist_csf", "title": "CSF"}).json()["id"]
+    a = c.post(f"/csf/services/{sid}/assessments", headers=h).json()
+    assert c.post(f"/csf/assessments/{a['id']}/approve", headers=h).status_code == 200
+    release(c, bearer, cid, "csf", sid)
+    _gen(c, provider, bearer, cid)
+    seeded = c.post(f"/csf/services/{sid}/profiles/seed", headers=h, json={"tiers": ["low"]})
+    assert seeded.status_code == 200, seeded.text
+    rev = c.post(
+        f"/csf/services/{sid}/assessments/{a['id']}/revisions",
+        headers=h,
+        json={"reason": "Client asked for a correction."},
+    )
+    assert rev.status_code == 201, rev.text
+    p = _publish(c, bearer, cid)
+    assert _blockers(p) == [{"input": "csf", "reason": "changed", "status": "draft"}]
+    assert p.json()["error"]["message"] == (
+        "This register can't be published while a newer version of an assessment it "
+        "draws on is waiting to be released: NIST CSF (in progress (draft)). Release "
+        "that version, then generate a new version before publishing."
+    )
+    assert c.post(f"/csf/assessments/{rev.json()['id']}/approve", headers=h).status_code == 200
+    release(c, bearer, cid, "csf", sid)
+    _gen(c, provider, bearer, cid)
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
+
+
+def test_following_discard_publishes_for_tech_debt(app_client) -> None:  # noqa: F811
+    import uuid
+
+    from app.models.capability import CapabilityList, CapabilityListStatus
+    from tests.unit.test_risk_register import _session
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    seed_released(c, bearer, cid)
+    h = _h(bearer, cid)
+    td = c.post("/tech-debt/services", headers=h, json={"kind": "tech_debt", "title": "TD"})
+    assert td.status_code in (200, 201), td.text
+    service_id = uuid.UUID(td.json()["id"])
+    with _session() as db:
+        db.add(
+            CapabilityList(service_id=service_id, version=1, status=CapabilityListStatus.RELEASED)
+        )
+        db.commit()
+    _gen(c, provider, bearer, cid)
+    with _session() as db:
+        draft = CapabilityList(service_id=service_id, version=2, status=CapabilityListStatus.DRAFT)
+        db.add(draft)
+        db.commit()
+        draft_id = str(draft.id)
+    p = _publish(c, bearer, cid)
+    assert _blockers(p) == [{"input": "tech_debt", "reason": "changed", "status": "draft"}]
+    assert p.json()["error"]["message"] == _DISCARD
+    d = c.post(f"/tech-debt/capability-lists/{draft_id}/discard", headers=h)
+    assert d.status_code == 200, d.text
     ok = _publish(c, bearer, cid)
     assert ok.status_code == 200, ok.text
