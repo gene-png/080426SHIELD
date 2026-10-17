@@ -431,3 +431,26 @@ def test_one_refusal_logs_the_real_blockers_once_and_the_discard_decision(
     decisions = [kw for (e, kw) in recorder.events if e == "risk_publish_discard_decision"]
     assert len(decisions) == 1, decisions
     assert (decisions[0]["kept"], decisions[0]["demoted"]) == ([], ["attack"]), decisions
+
+
+def test_a_kept_discard_is_logged_as_kept_with_the_blocker_logged_once(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    # Everything released, then a ZT revision draft: discarding it makes publish
+    # pass the input gate, so the decision line says kept, not demoted.
+    import app.risk.inputs as inputs
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_released(c, bearer, cid)
+    _gen(c, provider, bearer, cid)
+    _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=False)
+    recorder = _Recorder()
+    monkeypatch.setattr(inputs, "_log", recorder)
+    assert _publish(c, bearer, cid).status_code == 409
+    blocked = [kw for (e, kw) in recorder.events if e == "risk_publish_inputs_blocked"]
+    assert [sorted(k for k, _r in kw["blockers"]) for kw in blocked] == [["zt"]], blocked
+    decisions = [kw for (e, kw) in recorder.events if e == "risk_publish_discard_decision"]
+    assert len(decisions) == 1, decisions
+    assert (decisions[0]["kept"], decisions[0]["demoted"]) == (["zt"], []), decisions
