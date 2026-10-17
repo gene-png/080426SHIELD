@@ -135,6 +135,12 @@ def test_a_file_that_is_not_a_test_is_the_behaviour_change_and_is_not_judged(
     [
         "apps/api/pyproject.toml",
         "apps/api/pytest.ini",
+        "apps/api/.pytest.ini",
+        "apps/api/pytest.toml",
+        "apps/api/.pytest.toml",
+        "apps/web/vitest.workspace.ts",
+        "apps/api/scripts/__init__.py",
+        "apps/api/scripts/seed_demo.py",
         "apps/web/vitest.config.ts",
         "apps/web/playwright.config.ts",
         ".github/workflows/ci.yml",
@@ -595,10 +601,14 @@ def test_the_job_says_not_run_when_the_body_never_mentions_it(tmp_path) -> None:
     assert "CHECKER-RAN" not in proc.stdout
 
 
-def test_a_prose_mention_in_the_middle_of_a_line_is_not_a_declaration(tmp_path) -> None:
-    body = "The job runs for a body with `Literal-only-test-edits: yes` on its own line.\n"
-    proc = _run_step(tmp_path, body)
-    assert proc.returncode == 0 and "NOT RUN" in proc.stdout, proc.stdout + proc.stderr
+def test_a_prose_mention_exits_2_unless_the_exact_line_is_also_there(tmp_path) -> None:
+    # Any mention of the phrase without the exact line is red (reword the prose): a quoted
+    # declaration is the near miss the first versions greened.
+    prose = "The job runs for a body with `Literal-only-test-edits: yes` on its own line.\n"
+    proc = _run_step(tmp_path, prose)
+    assert proc.returncode == 2 and "CHECKER-RAN" not in proc.stdout, proc.stdout + proc.stderr
+    proc = _run_step(tmp_path, prose + "Literal-only-test-edits: yes\n")
+    assert proc.returncode == 0 and "CHECKER-RAN" in proc.stdout, proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize(
@@ -617,6 +627,11 @@ def test_a_prose_mention_in_the_middle_of_a_line_is_not_a_declaration(tmp_path) 
         "| Literal-only-test-edits | yes |",
         "Literal only test edits: yes",
         "Literal_only_test_edits: yes",
+        "Literal only  test edits: yes",
+        "Literal-only test	 edits: yes",
+        "Literal only test edits: yes",
+        "Literal‑only‑test‑edits: yes",
+        "Declaration: Literal-only-test-edits: yes",
     ],
 )
 def test_a_near_miss_declaration_fails_the_job_and_never_greens_silently(tmp_path, line) -> None:

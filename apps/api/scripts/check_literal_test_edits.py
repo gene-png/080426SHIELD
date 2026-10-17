@@ -73,10 +73,9 @@ _TEST_PATH = re.compile(
 #: literal-only test edit can switch tests off without touching a test file, so the
 #: pre-approval does not cover it.
 _DECIDES_TESTS = re.compile(
-    r"(^|/)(pyproject\.toml|package\.json|pytest\.ini|setup\.cfg|tox\.ini|conftest\.py|"
-    r"(vitest|playwright)(\.setup|\.config)[^/]*)$"
-    r"|^\.github/workflows/|^tests/gates/|^scripts/"
-    r"|^apps/api/scripts/(check_|shard_|preflight|mutation|leave_row)"
+    r"(^|/)(pyproject\.toml|package\.json|\.?pytest\.(ini|toml)|setup\.cfg|tox\.ini|conftest\.py|"
+    r"(vitest|playwright)(\.setup|\.config|\.workspace)[^/]*)$"
+    r"|^\.github/workflows/|^tests/gates/|^scripts/|^apps/api/scripts/"
 )
 #: A line of its own in the PR body. Digits only, long enough to be a comment id.
 _CITATION = re.compile(r"^Approved-behavior-comment:[ \t]*(\d{7,})[ \t]*$", re.MULTILINE)
