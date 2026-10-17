@@ -40,8 +40,9 @@ function MaturityBar({
   pillar: ZtPillar;
   framework: string;
 }): JSX.Element {
-  const cur = pillar.current_pct ?? 0;
-  const tgt = pillar.target_pct ?? 0;
+  // Null when nothing is scored (stage 1 is 0%, #1183): draw nothing, not 0.
+  const cur = pillar.current_pct;
+  const tgt = pillar.target_pct;
   const axis = stageAxis(framework);
   return (
     <div>
@@ -71,17 +72,19 @@ function MaturityBar({
           marginTop: 8,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            height: "100%",
-            width: `${cur}%`,
-            borderRadius: 999,
-            background: "linear-gradient(90deg, #22d3ee, #6366f1)",
-          }}
-        />
+        {cur !== null && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              height: "100%",
+              width: `${cur}%`,
+              borderRadius: 999,
+              background: "linear-gradient(90deg, #22d3ee, #6366f1)",
+            }}
+          />
+        )}
       </div>
       <div
         style={{
@@ -89,17 +92,19 @@ function MaturityBar({
           height: 0,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: -13,
-            left: `calc(${tgt}% - 1px)`,
-            height: 16,
-            width: 3,
-            background: C.green,
-            borderRadius: 2,
-          }}
-        />
+        {tgt !== null && (
+          <div
+            style={{
+              position: "absolute",
+              top: -13,
+              left: `calc(${tgt}% - 1px)`,
+              height: 16,
+              width: 3,
+              background: C.green,
+              borderRadius: 2,
+            }}
+          />
+        )}
       </div>
       <div
         style={{

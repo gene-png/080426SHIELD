@@ -109,16 +109,18 @@ export interface ZtDashboardData {
 
 export interface RadarData {
   labels: string[];
-  current: number[];
-  target: number[];
+  current: (number | null)[];
+  target: (number | null)[];
 }
 
-/** Current-vs-target maturity % per pillar for the radar chart. */
+/** Current-vs-target maturity % per pillar for the radar chart. A pillar with
+ *  nothing scored stays null: stage 1 is 0% (#1183), so 0 would plot it as a
+ *  pillar scored at the lowest stage. */
 export function radarData(pillars: ZtPillar[]): RadarData {
   return {
     labels: pillars.map((p) => p.name),
-    current: pillars.map((p) => p.current_pct ?? 0),
-    target: pillars.map((p) => p.target_pct ?? 0),
+    current: pillars.map((p) => p.current_pct),
+    target: pillars.map((p) => p.target_pct),
   };
 }
 

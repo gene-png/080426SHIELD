@@ -1693,7 +1693,14 @@ def zt_dashboard(
             )
         )
 
-    largest = max(pillars, key=lambda p: p.gap_pct, default=None)
+    # Stage 1 is 0% (#1183), so a pillar with nothing scored (null) must not be
+    # named the largest gap as if it sat at the lowest stage; CSF's guard is the
+    # same (`current_pct is not None`).
+    largest = max(
+        (p for p in pillars if p.current_pct is not None),
+        key=lambda p: p.gap_pct,
+        default=None,
+    )
 
     # #1343: the same predicate the deliverable's gap rows use.
     unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))
