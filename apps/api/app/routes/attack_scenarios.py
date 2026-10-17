@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.batching import run_batches
 from app.ai.engine import run_job
+from app.ai.isolation import RedactionRefused
 from app.ai.llm import LLMClient
 from app.ai.runs import (
     RunContext,
@@ -38,10 +39,13 @@ from app.ai.runs import (
     running_run,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.attack import added_since_base, scenario, scenario_intent
-from app.attack.citations import Candidate
+from app.attack.citations import Candidate, resolver_names
 from app.attack.computed import awaiting_review_sentence
+from app.attack.pending import row_tools
 from app.attack.rules import parents_computed
+from app.attack.shown_forms import shown_forms
 from app.audit import audit
 from app.config import get_settings
 from app.db.session import get_db
@@ -552,8 +556,14 @@ def create_scenario(
         raise _refuse(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "scenario_empty_change", EMPTY_MESSAGE
         ) from exc
+    # #1080: every name `covers` is asked about here, the base rows' tools,
+    # redacted in the same one call as the removals.
     spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
+        removed,
+        client_org_name=client.legal_name,
+        redaction_mode=mode,
+        name_hints=hints,
+        also=[t for r in base_rows for t in row_tools(r)],
     )
     affected = sorted(
         set(scenario.affected_codes(base_rows, spellings))
@@ -721,9 +731,10 @@ def _attempt_call_id(db: Session, *, service_id: uuid.UUID, user_id: uuid.UUID) 
     """The id of the `llm_calls` row this attempt wrote, or None.
 
     QUERIED by purpose, service, requester and the request's correlation id.
-    The query sees this attempt's row (`invoke` adds and flushes it before the
-    provider is called, and marks it FAILED on an error) and also any earlier
-    COMMITTED row under the same id: a parse makes at most one attempt, but a
+    The query sees this attempt's row (`invoke` writes it before the provider
+    is called -- committed from its own session, since this route ends its
+    read transaction first (#1025) -- and marks it FAILED on an error) and
+    also any earlier COMMITTED row under the same id: a parse makes at most one attempt, but a
     client may send an `X-Request-ID` again. More than one match is therefore
     possible, and is reported as unknown rather than guessed. Not read from the
     session's identity map, which holds a clean row only weakly; on a failure it
@@ -785,6 +796,9 @@ def _ai_reading(
     # sent as [NAME] (#863 review, F1). The SAME hints go to the sent text,
     # the call and the reading, so condition 1 checks what was sent.
     hints = name_hints_for_tenant(db, client.id)
+    # #1025 holder 2, #1027: this request's reads are done; its read
+    # transaction ends before the AI call (the audit below opens a new one).
+    end_read_transaction(db, where="attack.scenario.parse")
     sent = scenario_intent.sent_description(
         text,
         cited,
@@ -792,8 +806,18 @@ def _ai_reading(
         client_org_name=client.legal_name,
         name_hints=hints,
     )
+    # #1080 review F1: the shown forms the reading needs that are known now,
+    # asked BEFORE the paid call, so a refusal here is a typed 503 with
+    # nothing sent (the redaction child, as the egress).
+    shown = shown_forms(
+        [*cited, *client_tools],
+        mode=mode,
+        client_org_name=client.legal_name,
+        name_hints=hints,
+    )
     reading: scenario.ParsedChange | None = None
     failure: str | None = None
+    result = None
     try:
         result = run_job(
             db,
@@ -806,15 +830,6 @@ def _ai_reading(
             client_org_name=client.legal_name,
             name_hints=hints,
         )
-        reading = scenario_intent.read(
-            result.data,
-            sent=sent,
-            cited=cited,
-            client_tools=client_tools,
-            client_org_name=client.legal_name,
-            redaction_mode=mode,
-            name_hints=hints,
-        )
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - recorded below and disclosed as N2
@@ -824,6 +839,39 @@ def _ai_reading(
             service_id=str(service_id),
             error=f"{type(exc).__name__}: {exc}",
         )
+    if result is not None:
+        try:
+            reading = scenario_intent.read(
+                result.data,
+                sent=sent,
+                cited=cited,
+                client_tools=client_tools,
+                client_org_name=client.legal_name,
+                redaction_mode=mode,
+                name_hints=hints,
+                shown=shown,
+            )
+        except RedactionRefused as exc:
+            # #1080 review F1: the AI's proposed names could not be checked
+            # AFTER the call was made. Not a 503 saying "nothing was sent":
+            # the reading is unusable, disclosed as N2, with the call row and
+            # the audit kept. (A refusal by `run_job` itself comes before its
+            # call and still raises above, typed and true.)
+            failure = exc.reason
+            _log.warning(
+                "attack.scenario.chat_ai_reading_refused",
+                service_id=str(service_id),
+                reason=exc.reason,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - recorded below and disclosed as N2
+            failure = type(exc).__name__
+            _log.warning(
+                "attack.scenario.chat_ai_unusable",
+                service_id=str(service_id),
+                error=f"{type(exc).__name__}: {exc}",
+            )
     call_id = _attempt_call_id(db, service_id=service_id, user_id=user.id)
     if call_id is None:
         # Loud, never a silent null: this entry cannot name the attempt's
@@ -1163,10 +1211,20 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # Every spelling of a removed tool goes, the redacted one included (F2),
     # from what the model is offered AND from what the resolver may confirm,
     # so a removed tool the AI names anyway is counted, never credited.
-    spellings = scenario.removed_spellings(
-        removed, client_org_name=client.legal_name, redaction_mode=mode, name_hints=hints
-    )
     membership = _client_capability_membership(db, ctx.client_id)
+    # #1080: every name `covers` is asked about below -- the base rows' tools
+    # and the client's offered tools -- redacted in the same one call as the
+    # removals (through the redaction child: this build carries hints).
+    spellings = scenario.removed_spellings(
+        removed,
+        client_org_name=client.legal_name,
+        redaction_mode=mode,
+        name_hints=hints,
+        also=[
+            *(t for r in base_rows for t in row_tools(r)),
+            *(p.capability.name for p in membership.sent),
+        ],
+    )
     kept_offers = [p for p in membership.sent if not spellings.covers(p.capability.name)]
     kept = [p.capability for p in kept_offers]
     indistinct = [c.name for c in kept if spellings.shares_shown_form(c.name)]
@@ -1191,6 +1249,10 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # may be credited, but they are NOT the client's list: the drift check
     # above judges only `membership`, so they never read as drift.
     tools_you_added = _added_tools(s)
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+    # done, so the read transaction ends here and no connection is held
+    # while the provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.scenario.run")
     inputs = scenario.batch_inputs(
         base_rows,
         affected,
@@ -1202,6 +1264,15 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     remaining = [Candidate(name=c.name, vendor=c.vendor) for c in kept] + [
         Candidate(name=t.name, vendor=t.vendor) for t in tools_you_added
     ]
+    # #1080 review F3: every shown form the answers will be read against,
+    # asked ONCE and BEFORE anything is sent. A refusal here stops the run
+    # with nothing sent; reading the paid-for answers below asks nothing.
+    shown = shown_forms(
+        resolver_names(remaining),
+        mode=mode,
+        client_org_name=client.legal_name,
+        name_hints=hints,
+    )
     out = run_batches(
         db,
         ctx.llm,
@@ -1237,6 +1308,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
                 client_org_name=client.legal_name,
                 redaction_mode=mode,
                 name_hints=tuple(hints),
+                shown=shown,
             )
         except scenario.ScenarioShapeError:
             # Answered, but not in the contract's shape: its techniques are not

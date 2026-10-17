@@ -134,9 +134,10 @@ function stageRadio(code: string, stage: number): HTMLElement {
   const group = screen.getByRole("radiogroup", {
     name: `Maturity stage for ${code}`,
   });
-  return within(group).getByRole("radio", {
-    name: new RegExp(`^S${stage}(?![0-9])`),
-  });
+  // Z3 (#736 6205956728): a stage button is named by its stage's name alone.
+  const label = CATALOG.stages.find((s) => s.stage === stage)?.label;
+  if (label === undefined) throw new Error(`no stage ${stage} in CATALOG`);
+  return within(group).getByRole("radio", { name: label });
 }
 
 describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
@@ -144,7 +145,7 @@ describe("ZtSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(ONE_BLANK));
     expect(
       screen.getByText(
-        "1 of 4 capabilities have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "1 of 4 capabilities have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(ztClient.submitSelfAssessment).not.toHaveBeenCalled();

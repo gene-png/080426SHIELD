@@ -47,6 +47,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.llm import FixtureProvider, LLMClient, LLMResponse
+from tests._csf_notes import note_every_answer
 
 pytestmark = pytest.mark.unit
 
@@ -409,8 +410,15 @@ def test_reopening_a_released_assessment_measures_its_answers_and_says_so(world)
 
 
 def test_measure_zt_runs_the_job_n_times_and_applies_nothing(world) -> None:
+    from app.models.zt_assessment import ZtAnswer
+
     c, TestSession, provider = world
     code = _zt_assessment(c)
+    # #1084: a capability is sent, and its answer measured, only with notes.
+    with TestSession() as db:
+        row = db.execute(select(ZtAnswer).where(ZtAnswer.capability_code == code)).scalar_one()
+        row.notes = "MFA everywhere."
+        db.commit()
     provider.register_static(
         "zt_score",
         LLMResponse(
@@ -506,7 +514,10 @@ def test_csf_levels_go_through_the_engine_and_apply_the_evidence_cap() -> None:
             _csf_row("high", "C", (0, 1, 0, 1, 0)),  # total 2 -> L1
         ]
     }
-    levels = csf_levels(data, has_evidence={"high|A": True, "high|B": False, "high|C": True})
+    # `cap=True`: the frozen cap (rules 1 or 2, D-114), the only one left.
+    levels = csf_levels(
+        data, has_evidence={"high|A": True, "high|B": False, "high|C": True}, cap=True
+    )
     assert levels == {
         "levels": {"high|A": 5, "high|B": 2, "high|C": 1},
         "unscoreable_keys": [],
@@ -536,7 +547,7 @@ def test_csf_levels_never_clamp_or_coerce_a_bad_dimension() -> None:
             _csf_row("high", "H", (1.5, 1, 1, 1, 1)),
         ]
     }
-    levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDEFGH"})
+    levels = csf_levels(data, has_evidence={f"high|{k}": True for k in "ABCDEFGH"}, cap=True)
     assert sorted(levels["levels"]) == ["high|C", "high|E", "high|F", "high|G"]
     assert levels["levels"]["high|E"] == 2
     assert levels["levels"]["high|C"] == levels["levels"]["high|F"], '"2" scores as 2'
@@ -559,7 +570,8 @@ def test_a_row_unscoreable_in_either_run_is_compared_without_agreement() -> None
             for i in range(100)
         ]
     }
-    la, lb = csf_levels(a, has_evidence=has_evidence), csf_levels(b, has_evidence=has_evidence)
+    la = csf_levels(a, has_evidence=has_evidence, cap=True)
+    lb = csf_levels(b, has_evidence=has_evidence, cap=True)
     assert (len(la["levels"]), len(lb["levels"])) == (100, 10), "precondition"
     d = csf_level_agreement(la, lb, has_evidence)
     assert d["compared"] == 100, "the unscoreable rows left the denominator"
@@ -619,6 +631,9 @@ def csf_world(world) -> Iterator[tuple[TestClient, sessionmaker, FixtureProvider
     assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
     seeded = c.post(f"/csf/services/{svc_id}/profiles/seed", headers=h, json={"tiers": ["high"]})
     assert seeded.status_code in (200, 201), seeded.text
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent, and the
+    # measurement runs the route's own batches over the whole profile.
+    note_every_answer(svc_id)
     yield c, TestSession, provider, h, svc_id
 
 
@@ -1021,6 +1036,9 @@ def unseeded_csf(world):
         "id"
     ]
     assert c.post(f"/csf/services/{svc_id}/assessments", headers=h).status_code in (200, 201)
+    # CSF Option 1 (D-114): only rows whose answer has notes are sent, and a
+    # measurement with nothing to send is refused (`csf_nothing_to_send`).
+    note_every_answer(svc_id)
     yield TestSession, provider
 
 

@@ -15,6 +15,14 @@ import { useIntakeAutoSave } from "./useIntakeAutoSave";
 const REFUSED = "This value was not accepted, so it was not saved.";
 const SERVER_FAILED =
   "The server could not save this value. Try again in a moment.";
+/** #550's sentence, already on main; #1115 (advisor 6207611148) applies it to
+ *  a 5xx with no api envelope, where the save may have landed. */
+const OUTCOME_UNKNOWN =
+  "We couldn't confirm whether this finished. It may still complete; check before trying again.";
+/** S-1115-1, approved verbatim (6207611148): an answer that did not judge the
+ *  value, so the typed value is kept. */
+const NOT_SAVED_KEPT =
+  "This value was not saved. It is still in the form, so you can save it again.";
 
 function respond(status: number, body: unknown): void {
   respondRaw(status, JSON.stringify(body));
@@ -94,33 +102,52 @@ describe("useIntakeAutoSave refusal copy", () => {
     expect(message).toBe("Intake was already submitted.");
   });
 
-  // The 4xx/5xx boundary (review of #1092). A 4xx is a refusal; a 5xx with
-  // no usable server message gets the approved server sentence (#736
-  // 6116519635). Widening the refusal range to `< 600` turns the non-JSON 500
-  // test red; narrowing it turns the empty-body 4xx test red. The api's own
-  // JSON 500 carries a typed message, which is shown instead, and is not
-  // what these tests cover.
-  it("says the server could not save for a non-JSON 500", async () => {
+  // The 4xx/5xx boundary (review of #1092), as #1115 redraws it (advisor
+  // 6207611148) and #1207 item 1 narrows it (option (A), 6216024281): only a
+  // 422 judged the value; any other 4xx, a 400 or 409 included, did not.
+  // A 5xx with no api envelope may have landed, so its outcome is unknown.
+  // The api's own JSON 500 carries a typed message, which is shown instead,
+  // and is not what these tests cover.
+  it("says the outcome is unknown for a non-JSON 500", async () => {
     respondRaw(500, "Internal Server Error");
     const message = await saveWebsite();
+    expect(message).toBe(OUTCOME_UNKNOWN);
+  });
+
+  it("says the server could not save for a 5xx the api enveloped with no usable message", async () => {
+    // The api's envelope with an empty message: the api answered and typed it
+    // a failure, so the server sentence (#736 6116519635) still applies.
+    // A RATCHET, not a reachable state: today the api's 500 always carries a
+    // message (`_handle_unexpected`), so this row cannot occur on this route.
+    // It pins the envelope branch for the day an enveloped 5xx arrives bare.
+    respond(500, { error: { code: 500, message: "" } });
+    const message = await saveWebsite();
     expect(message).toBe(SERVER_FAILED);
   });
 
-  it("says the server could not save for a non-JSON 599 (top of the 5xx range)", async () => {
+  it("says the outcome is unknown for a non-JSON 599 (top of the 5xx range)", async () => {
     respondRaw(599, "bad gateway");
     const message = await saveWebsite();
-    expect(message).toBe(SERVER_FAILED);
+    expect(message).toBe(OUTCOME_UNKNOWN);
   });
 
-  it("says the value was not accepted for a 499 (top of the 4xx range)", async () => {
+  it("says the value was not saved and is kept for a 499 (a 4xx that did not judge it)", async () => {
     respondRaw(499, null);
     const message = await saveWebsite();
+    expect(message).toBe(NOT_SAVED_KEPT);
+  });
+
+  it("says the value was not accepted for a 422 with an empty body", async () => {
+    respondRaw(422, null);
+    const message = await saveWebsite();
     expect(message).toBe(REFUSED);
   });
 
-  it("says the value was not accepted for a 4xx with an empty body", async () => {
+  it("says the value was not saved and is kept for a 400 with an empty body (#1207)", async () => {
+    // On PATCH /intake a 400 comes from `current_client` or the proxy's
+    // "Invalid JSON body.", and neither judged the value.
     respondRaw(400, null);
     const message = await saveWebsite();
-    expect(message).toBe(REFUSED);
+    expect(message).toBe(NOT_SAVED_KEPT);
   });
 });

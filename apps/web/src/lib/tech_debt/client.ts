@@ -180,14 +180,31 @@ export async function bulkSetDisposition(
   listId: string,
   itemIds: string[],
   disposition: CapabilityDisposition | null,
+  // TD-11 (for #1055): true refuses the whole request if any row has a
+  // decision by now (`capability_items_already_decided`), so a click never
+  // overwrites another consultant's decision.
+  onlyIfUndecided = false,
 ): Promise<CapabilityList> {
   return jsonRequest<CapabilityList>(
     `/api/proxy/tech-debt/capability-lists/${listId}/items/disposition`,
     {
       method: "POST",
-      body: { item_ids: itemIds, disposition },
+      // The key is sent only when set, so #641's request body is unchanged.
+      body: onlyIfUndecided
+        ? { item_ids: itemIds, disposition, only_if_undecided: true }
+        : { item_ids: itemIds, disposition },
     },
   );
+}
+
+/** #1176: the category dropdown's options, from the API (never copied). */
+export interface TechDebtCategories {
+  categories: string[];
+  uncategorized_label: string;
+}
+
+export async function fetchCategories(): Promise<TechDebtCategories> {
+  return jsonRequest<TechDebtCategories>("/api/proxy/tech-debt/categories");
 }
 
 /** #804: the savings what-if. Rows not in `dispositions` keep their stored
@@ -268,6 +285,20 @@ export async function confirmSecurityClassification(
   return jsonRequest<CapabilityList>(
     `/api/proxy/tech-debt/capability-items/${itemId}/security-classification/confirm`,
     { method: "POST" },
+  );
+}
+
+/**
+ * #1174: confirm many negative classifications at once, all or nothing. Each
+ * row gets the single confirm's own effect and audit row on the server.
+ */
+export async function bulkConfirmSecurityClassification(
+  listId: string,
+  itemIds: string[],
+): Promise<CapabilityList> {
+  return jsonRequest<CapabilityList>(
+    `/api/proxy/tech-debt/capability-lists/${listId}/items/security-classification/confirm`,
+    { method: "POST", body: { item_ids: itemIds } },
   );
 }
 

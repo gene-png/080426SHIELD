@@ -16,12 +16,16 @@ import {
   type CsfDashboardData,
   type CsfFunction,
 } from "@/lib/dashboards/csf";
+import { CURRENT_MATURITY_SUB, ratingGap } from "@/lib/csf/ratingCopy";
 import { renderedAgainstNote } from "@/lib/dashboards/frozenTarget";
 
 import type { JSX } from "react";
 
+/** #1183: the API floors a maturity percentage to one decimal, and it is
+ *  shown as sent. `Math.round` here turned the API's 66.6 into "67". The value
+ *  already has one decimal, so `toFixed(1)` only formats it. */
 function pctText(n: number | null): string {
-  return n === null ? "—" : `${Math.round(n)}`;
+  return n === null ? "—" : n.toFixed(1);
 }
 
 /** One function's current→target bar. Mirrors ZT's per-pillar bar. */
@@ -44,11 +48,11 @@ function MaturityBar({ fn }: { fn: CsfFunction }): JSX.Element {
         {/* An unassessed function has NO gap to move — its bar length is an
             artefact of comparing 0 against the target, and it sorts to the top
             of a list headed "largest move required". Say what it is instead of
-            printing "0 gaps · +75 pt move" next to it. */}
+            printing "0 gaps · +66.6 pt move" next to it. */}
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {fn.current_pct === null
             ? `Not assessed · 0 of ${fn.subcategory_count} scored`
-            : `${fn.gap_count} gap${fn.gap_count === 1 ? "" : "s"} · +${Math.round(fn.gap_pct)} pt move · ${fn.answered_count}/${fn.subcategory_count} scored`}
+            : `${fn.gap_count} gap${fn.gap_count === 1 ? "" : "s"} · +${pctText(fn.gap_pct)} pt move · ${fn.answered_count}/${fn.subcategory_count} scored`}
         </span>
       </div>
       <div
@@ -130,7 +134,8 @@ export function CsfDashboard({
         <KpiCard
           label="Current maturity"
           value={`${data.overall_label} · ${pctText(data.current_pct)}`}
-          sub="Averaged across all functions"
+          // C9 (#736 6205956728): this is the client's self-rating.
+          sub={CURRENT_MATURITY_SUB}
           accent={C.accent2}
         />
         <KpiCard
@@ -158,7 +163,7 @@ export function CsfDashboard({
         <KpiCard
           label="Largest gap"
           value={data.largest_gap_function ?? "—"}
-          sub={`+${Math.round(data.largest_gap_pct)} points to target`}
+          sub={`+${pctText(data.largest_gap_pct)} points to target`}
           accent={C.amber}
         />
       </KpiRow>
@@ -220,7 +225,8 @@ export function CsfDashboard({
                 <span style={{ color: "#e5e7eb", flex: 1 }}>{g.name}</span>
                 <span style={{ color: C.muted }}>{g.function_name}</span>
                 <span style={{ color: C.amber, fontWeight: 700 }}>
-                  Tier {g.current_tier} → {g.target_tier}
+                  {/* W5 (#736 6205956728): tiers by name. */}
+                  {ratingGap(g.current_tier, g.target_tier)}
                 </span>
               </div>
             ))}

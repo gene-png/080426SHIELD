@@ -113,6 +113,8 @@ function gapAt(tier: number): GapAnalysis {
         target_tier: tier,
         gap_size: tier - 1,
         priority_score: 1,
+        // W6 (#736 6205956728): the list shows the priority's working.
+        weight: 1.0,
       },
     ],
   } as unknown as GapAnalysis;

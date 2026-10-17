@@ -390,6 +390,19 @@ class AttackRunAiResponse(BaseModel):
     # result written before them parses unchanged (C0).
     omitted_count: int = 0
     omitted_techniques: list[AttackOmittedTechnique] = Field(default_factory=list)
+    # #1047: the run asks once more for what a successful batch left out, so
+    # the two fields above are what is STILL missing after that. How many
+    # techniques were asked again, in how many batches, and how many of those
+    # failed. Not the run's `batches_*`: a failed re-ask's techniques stay
+    # omitted. Defaulted so a run stored before #1047 parses unchanged (C0).
+    reasked_count: int = 0
+    reask_batches_total: int = 0
+    reask_batches_failed: int = 0
+    # #1325: how many techniques the run's FIRST pass asked about (every row
+    # but a computed parent), failed batches included. The workspace's "of
+    # {total}" reads it. None on a run stored before #1325: that is "not
+    # recorded", never zero, so a reader falls back instead of printing 0.
+    techniques_asked: int | None = None
 
 
 class AttackCoveragePatch(BaseModel):

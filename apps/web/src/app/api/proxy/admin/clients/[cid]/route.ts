@@ -38,6 +38,10 @@ export async function DELETE(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/clients archive call");
+    return upstreamOutcomeUnknown(
+      err,
+      "Upstream admin/clients archive call",
+      "DELETE",
+    );
   }
 }

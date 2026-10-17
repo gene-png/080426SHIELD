@@ -36,7 +36,7 @@ from app.ai.engine import run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.llm import LLMClient
 from app.ai.preview import AiPreviewPayload
-from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, protected_keys
+from app.ai.provenance import SOURCE_AI, SOURCE_CLIENT, SOURCE_CONSULTANT, protected_keys
 from app.ai.runs import (
     RunContext,
     RunFailed,
@@ -47,10 +47,16 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.assessment_targets import MIN_TARGET_STAGE, floor_refusal, target_source_sentence
 from app.audit import audit
 from app.db.session import get_db
-from app.deliverable_release import release_deliverable
+from app.deliverable_release import (
+    ParentGuard,
+    refuse_parent_changed_after_release,
+    refuse_parent_changed_during_release,
+    release_deliverable,
+)
 from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
@@ -105,10 +111,13 @@ from app.services.revisions import (
     client_facing,
     evidence_links_for,
     is_revision_draft,
+    latest_released_version,
+    refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
 )
 from app.storage import StorageBackend
+from app.tech_debt.extract import name_hints_for_tenant
 from app.tech_debt.filename import (
     SERVICE_SLUG_ZT_CISA,
     SERVICE_SLUG_ZT_DOD,
@@ -135,6 +144,7 @@ from app.zt.scoring import (
     analyze_gaps,
     build_roadmap,
     engagement_target_capability_count,
+    pillar_weight,
     resolve_target_stage,
 )
 from app.zt.scoring import compute as compute_score
@@ -557,6 +567,7 @@ def get_catalog(
                 name=c.name,
                 outcome=c.outcome,
                 kind=c.kind,
+                max_stage=max_stage_for(cat_fw, c.code),
             )
             for c in capabilities(cat_fw)
             if c.pillar_code == p.code
@@ -727,6 +738,12 @@ register_catalog_field(
 )
 
 
+def _notes_blank(notes: str | None) -> bool:
+    """Null, empty or whitespace-only. "N/A" is a note: code cannot classify
+    it, so the prompt's A5 judges it."""
+    return notes is None or not notes.strip()
+
+
 def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequest:
     """The request for ONE assessment, named by id: the background job (#645)
     re-loads the assessment its POST validated, never "the latest"."""
@@ -745,6 +762,13 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
     }
     locked_keys = frozenset(code for code, r in rows.items() if r.locked)
     client_org = client.legal_name  # NULL when nobody has named the org (D-080)
+    # #1084: a capability with blank notes is never sent. A5 tells the model to
+    # return nothing for one, so code decides it, deterministically, and no
+    # blank row costs input tokens; a wholly blank assessment makes no call at
+    # all (`_zt_run_work`). `rows` keeps every row: the run still
+    # lists a blank one as omitted with `notes_blank` (#840), and drops a stray
+    # entry naming one as `no_notes`.
+    sent = sorted(code for code, r in rows.items() if not _notes_blank(r.notes))
     return ZtAiRequest(
         assessment=a,
         rows=rows,
@@ -754,14 +778,20 @@ def _zt_ai_request_for(db: Session, a: ZtAssessment, client: Client) -> ZtAiRequ
             job_name="zt_score",
             inputs={
                 "framework": a.framework.value,
-                "capabilities": sorted(rows),
-                "capability_details": _zt_capability_details(cat_fw, sorted(rows)),
+                "capabilities": sent,
+                "capability_details": _zt_capability_details(cat_fw, sent),
                 "answers": {
-                    code: {"notes": r.notes, "current": r.maturity_stage}
-                    for code, r in rows.items()
+                    code: {"notes": rows[code].notes, "current": rows[code].maturity_stage}
+                    for code in sent
                 },
             },
             client_org_name=client_org,
+            # #1006: the tenant's user names are the redactor's name list, so
+            # a staff member named in notes is sent as [NAME] (as #863/#865
+            # do for ATT&CK). Here, in the one builder, so the preview and the
+            # run (`name_hints=req.preview.name_hints`) cannot differ. Its CSF
+            # twin (`routes/csf.py`, csf_score) landed in #1261.
+            name_hints=tuple(name_hints_for_tenant(db, client.id)),
         ),
     )
 
@@ -818,9 +848,11 @@ def _zt_omitted(
     answered: set[str],
     locked_keys: frozenset[str],
 ) -> list[ZtOmittedCapability]:
-    """#840: the capabilities the run asked for that no entry named.
+    """#840: the capabilities the run covers that no entry named.
 
-    `(asked & rows) - answered - locked`. A locked row is untouched by design,
+    `(asked & rows) - answered - locked`. `asked` is every row, not only the
+    codes sent: a blank-notes row is never sent (#1084) and must still be
+    listed, as "No notes recorded". A locked row is untouched by design,
     so it is never a missing answer. A row edited during the run is counted:
     "got no stage from the AI this run" stays true of it. Call it after the
     apply, so `kept_stage` is the stage the row holds now.
@@ -832,8 +864,7 @@ def _zt_omitted(
         out.append(
             ZtOmittedCapability(
                 capability_code=code,
-                # Whitespace-only is blank; "N/A" is a note.
-                notes_blank=notes is None or not notes.strip(),
+                notes_blank=_notes_blank(notes),
                 kept_stage=rows[code].maturity_stage,
             )
         )
@@ -869,6 +900,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         )
     req = _zt_ai_request_for(db, a, db.get(Client, ctx.client_id))
     rows, max_stage = req.rows, req.max_stage
+    sent_codes = frozenset(req.preview.inputs["capabilities"])
     llm = ctx.llm
 
     def _snap() -> dict[str, dict]:
@@ -877,19 +909,44 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             for code, r in rows.items()
         }
 
-    # A provider failure here must stay typed and leave an llm_calls row.
-    with ai_call_boundary(db, llm, purpose=req.preview.job_name):
-        result = run_job(
-            db,
-            llm,
-            req.preview.job_name,
-            inputs=req.preview.inputs,
-            requested_by=ctx.requested_by,
-            service_id=ctx.service_id,
-            client_id=ctx.client_id,
-            client_org_name=req.preview.client_org_name,
-            name_hints=req.preview.name_hints,
+    if sent_codes:
+        # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+        # done, so the read transaction ends here and no connection is held
+        # while the provider answers. Refuses loudly if anything was written.
+        end_read_transaction(db, where="zt.run_ai")
+        # A provider failure here must stay typed and leave an llm_calls row.
+        with ai_call_boundary(db, llm, purpose=req.preview.job_name):
+            result = run_job(
+                db,
+                llm,
+                req.preview.job_name,
+                inputs=req.preview.inputs,
+                requested_by=ctx.requested_by,
+                service_id=ctx.service_id,
+                client_id=ctx.client_id,
+                client_org_name=req.preview.client_org_name,
+                name_hints=req.preview.name_hints,
+            )
+        # `parse_json_object` guarantees a dict or raises (issue #41). The old
+        # `else {}` here discarded a whole unwrapped response and reported zero
+        # changes, which read as the model agreeing with everything.
+        data = result.data
+    else:
+        # #1084: every capability is blank, so there is nothing to ask and no
+        # call is made. This mirrors CSF's approved P1 (#736 6205956728), which
+        # is not yet built on main as of 2026-10-16; CSF still calls. Not an
+        # error: the run completes with no entries, lists every unlocked row
+        # as omitted with `notes_blank`, and says `capabilities_sent=0`.
+        _log.info(
+            "zt_run_ai_nothing_sent",
+            service_id=str(ctx.service_id),
+            assessment_id=str(a.id),
+            capabilities=len(rows),
         )
+        # #1219: so the run records "not charged" rather than "not known" (a
+        # run the reaper ends stays "not known": the reaper never sees ctx).
+        ctx.declare_no_call()
+        data = {"capabilities": []}
     # The provider call is over: keep its `llm_calls` row whatever happens to
     # the apply. Then read the rows as they are NOW -- an edit that landed while
     # the model answered must be seen -- and take the PRE-WRITE stamps:
@@ -904,18 +961,13 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # duration of an offline run; a LIVE run may still draft over them, which is
     # the consultant workflow and shows a diff for review.
     #
-    # CSF's twin of this site now drops a LIVE suggestion for a row with no
-    # notes (#1000, reason `no_notes`). Deliberately NOT ported here: ZT's
-    # no-notes behaviour is #981's prompt and decision.
+    # CSF's twin drops a LIVE suggestion for a row with no notes (#1000). ZT
+    # does it before egress instead (#1084): a blank row is never sent, on any
+    # provider, and a stray entry naming one is dropped as `no_notes` below.
     protected = protected_keys(
         ((code, r.answer_source, r.maturity_stage is not None) for code, r in rows.items()),
         is_fixture=llm.provider.name == "fixture",
     )
-    # `parse_json_object` guarantees a dict or raises (issue #41). The old
-    # `else {}` here discarded a whole unwrapped response and reported zero
-    # changes, which read as the model agreeing with everything.
-    data = result.data
-
     received = 0
     applied = 0
     dropped: list[ZtDroppedSuggestion] = []
@@ -1038,6 +1090,16 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
             # itemized like the other by-design skips.
             dropped.append(ZtDroppedSuggestion(reason="edited", key=key, values=recognized_values))
             continue
+        if raw_code not in sent_codes:
+            # #1084: a blank-notes row was never sent, so an entry naming it
+            # answers a question nobody asked (A7). Kept, never applied, and a
+            # by-design skip like `locked`. Checked after `edited`: `sent_codes`
+            # is fixed when the job starts, so a row given notes during the run
+            # is named by its edit, not called a row with no notes.
+            dropped.append(
+                ZtDroppedSuggestion(reason="no_notes", key=key, values=recognized_values)
+            )
+            continue
 
         # Provenance follows the VALUE, not the attempt (issue #38), and is
         # settled after the loop from the before/after snapshot — see below.
@@ -1103,7 +1165,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
     # #840: read AFTER the apply, so `kept_stage` is what the row holds now,
     # including an edit that landed while the model answered.
     omitted_capabilities = _zt_omitted(
-        asked=req.preview.inputs["capabilities"],
+        asked=list(rows),
         rows=rows,
         answered=answered,
         locked_keys=locked_keys,
@@ -1210,6 +1272,7 @@ def _zt_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.UUID)
         preserved_client_answers=len(protected),
         omitted_count=len(omitted_capabilities),
         omitted_capabilities=omitted_capabilities,
+        capabilities_sent=len(sent_codes),
     )
     return RunOutcome(
         result=payload.model_dump(mode="json"), applied_count=applied, accounting=accounting
@@ -1260,6 +1323,12 @@ def create_assessment(
         )
         response.status_code = status.HTTP_200_OK
         return _serialize_assessment(db, prior, viewer=user)
+    # #1123 item 1: never a plain draft over released work; a revision only.
+    # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
+    # its next list by extraction and has no Start a revision, so it does not.
+    released = latest_released_version(db, ZtAssessment, ZtAssessmentStatus.RELEASED, svc.id)
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = ZtAssessment(
         service_id=svc.id,
@@ -1405,8 +1474,10 @@ def patch_answer(
                 detail=f"target_stage must be 1-{max_stage}.",
             )
         row.target_stage = ts
+        row.target_source = SOURCE_CONSULTANT  # #982: the consultant set it
     elif "target_stage" in data:
         row.target_stage = None
+        row.target_source = None  # no target, so no origin (#982)
     if "notes" in data:
         row.notes = data["notes"]
     if "evidence_artifact_id" in data:
@@ -1946,6 +2017,7 @@ def gap_analysis(
                 target_stage=g.target_stage,
                 gap_size=g.gap_size,
                 priority_score=g.priority_score,
+                pillar_weight=pillar_weight(g.pillar_code),
                 notes=g.notes,
             )
             for g in analysis.gaps
@@ -2328,6 +2400,9 @@ def release_zt_deliverable(
     client: Annotated[Client, Depends(current_client)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeliverableResponse:
+    # #1123 (a) guards every release, the repair re-release included (#736
+    # 6220094031 item 6). On a repair its miss raises the repair refusal,
+    # which is true for a report the client already has.
     deliv = release_deliverable(
         db,
         deliverable_id=deliverable_id,
@@ -2335,8 +2410,26 @@ def release_zt_deliverable(
         user=user,
         kinds=(ServiceKind.ZERO_TRUST_CISA, ServiceKind.ZERO_TRUST_DOD),
         action="zt.deliverable.released",
+        parent_guard=_zt_release_guard(deliverable_id),
     )
     return _serialize_deliverable(db, deliv)
+
+
+def _zt_release_guard(deliverable_id: uuid.UUID) -> ParentGuard:
+    """#1123 (a): the approval in force must predate the deliverable's
+    finalize, judged in the flip's own WHERE. A RATCHET: no product path fires
+    it today (an approved ZT version cannot be re-approved, and
+    `start_revision` makes a new version rather than reopening this one). It
+    would fire if #1120's unlock ever re-approves a version after its report
+    was built. CSF's twin is the CSF track's (#1123)."""
+    finalized_at = (
+        select(Deliverable.finalized_at).where(Deliverable.id == deliverable_id).scalar_subquery()
+    )
+    return ParentGuard(
+        condition=lambda _parent_id: ZtAssessment.approved_at <= finalized_at,
+        refusal=lambda _db, _parent_id: refuse_parent_changed_during_release(),
+        repair_refusal=lambda _db, _parent_id: refuse_parent_changed_after_release(),
+    )
 
 
 # ---------------------------------------------------------------------------

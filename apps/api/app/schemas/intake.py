@@ -26,6 +26,7 @@ from pydantic import (
     HttpUrl,
     ValidatorFunctionWrapHandler,
     field_validator,
+    model_validator,
 )
 
 from app.models.service_request import CsfProfile, ServiceType
@@ -78,6 +79,19 @@ class ClientProfilePatch(BaseModel):
     legal_name: str | None = Field(default=None, max_length=255)
     dba_name: str | None = Field(default=None, max_length=255)
     website: HttpUrl | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_strings_clear(cls, data: Any) -> Any:
+        """#1093: an emptied or whitespace-only string is None, so the client
+        can clear a field, as the class docstring says. Before this a blank
+        website stripped to "" and `HttpUrl` refused it with a 422, and every
+        other text field stored the blanks. Blanks only: a real value is left
+        exactly as typed. Runs before the field validators, so the website
+        prefixing never sees a blank."""
+        if not isinstance(data, dict):
+            return data
+        return {k: (None if isinstance(v, str) and not v.strip() else v) for k, v in data.items()}
 
     @field_validator("website", mode="before")
     @classmethod
@@ -161,6 +175,14 @@ class ClientProfilePatch(BaseModel):
     primary_contact_phone: str | None = Field(default=None, max_length=64)
 
 
+def _blank_to_none(value: Any) -> Any:
+    """#1198: an emptied title or phone is a clear, stored as NULL, as
+    `ClientProfilePatch` does for the client fields (#1093)."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
 class IntakePatchRequest(BaseModel):
     """Auto-save body: any subset of client fields plus optional profile bits."""
 
@@ -169,6 +191,11 @@ class IntakePatchRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("title", "phone", mode="before")
+    @classmethod
+    def _blank_clears(cls, value: Any) -> Any:
+        return _blank_to_none(value)
 
 
 class ServiceRequestInput(BaseModel):
@@ -201,6 +228,13 @@ class IntakeSubmitRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
+
+    # #1198: the twin of `IntakePatchRequest`'s. Submit applies the same
+    # profile fields through `_apply_profile_fields`.
+    @field_validator("title", "phone", mode="before")
+    @classmethod
+    def _blank_clears(cls, value: Any) -> Any:
+        return _blank_to_none(value)
 
 
 class ClientProfileResponse(BaseModel):
@@ -275,6 +309,10 @@ class IntakeStateResponse(BaseModel):
     service_requests: list[ServiceRequestResponse]
     intake_completed_at: datetime | None
     contact: IntakeContactResponse | None = None
+    # #1282: the submitter's own account details, apart from `contact`, which
+    # is the primary-contact override once one names someone. Step 3's own
+    # inputs read this, so a blur never writes the override onto the account.
+    submitter: IntakeContactResponse | None = None
 
 
 class EngagementCreateRequest(BaseModel):

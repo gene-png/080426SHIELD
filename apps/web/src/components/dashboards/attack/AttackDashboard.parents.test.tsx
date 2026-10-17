@@ -124,7 +124,9 @@ describe("AttackDashboard, a computed parent (#620 round 3)", () => {
       .getByText("What you're blind to today")
       .closest("section") as HTMLElement;
     expect(within(section).getByText("1 uncovered")).toBeInTheDocument();
-    expect(within(section).queryByText("Parent technique")).toBeNull();
+    // #1180: the section lists categories, not cards, so a "no Parent
+    // technique card" check here could not fail. AttackBlindCategory.test.tsx
+    // pins it on the category page, which renders the cards.
     expect(section.textContent).toContain(
       "A technique with sub-techniques is listed through them.",
     );

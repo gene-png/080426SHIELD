@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { auth } from "@/lib/auth/options";
+import { namedClientId } from "@/lib/proxy-client-id";
 import { upstreamOutcomeUnknown } from "@/lib/upstream-outcome-unknown";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -13,6 +14,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 401 },
     );
   }
+  // #1262: the client the wizard names, else the cookie (`namedClientId`).
+  const clientId = namedClientId(request, "/intake/submit");
+  if (clientId instanceof NextResponse) return clientId;
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -27,6 +31,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       method: "POST",
       bearer,
       body,
+      clientId,
     });
     return NextResponse.json(result);
   } catch (err) {
@@ -35,6 +40,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream submit");
+    return upstreamOutcomeUnknown(err, "Upstream submit", "POST");
   }
 }

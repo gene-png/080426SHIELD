@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -44,6 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.attack import release_readiness
 from app.attack.after import after_planned_changes
 from app.attack.after import counts as after_counts
@@ -124,6 +126,7 @@ from app.dependencies import current_client, current_user, require_role
 from app.logging import get_logger
 from app.mode_stamp import ai_mode_for
 from app.models._common import utcnow
+from app.models.ai_run import AiRun, AiRunStatus
 from app.models.artifact import Artifact, ArtifactOrigin
 from app.models.attack_assessment import (
     AttackAssessment,
@@ -170,6 +173,7 @@ from app.schemas.attack import (
     CoverageChange,
     TacticHeatmapEntry,
 )
+from app.schemas.clients import AttackDraftDashboardResponse
 from app.schemas.revisions import RevisionStartRequest
 from app.schemas.tech_debt import DeliverableResponse
 from app.security.rate_limit import enforce_ai_rate_limit
@@ -177,6 +181,8 @@ from app.services.revisions import (
     ChildSpec,
     KindPlan,
     evidence_links_for,
+    latest_released_version,
+    refuse_mint_over_released,
     revision_for_viewer,
     start_revision,
 )
@@ -638,6 +644,14 @@ def create_assessment(
         )
         response.status_code = status.HTTP_200_OK
         return _serialize_assessment(db, prior, viewer=user)
+    # #1123 item 1: never a plain draft over released work; a revision only.
+    # Twins: CSF, ATT&CK and ZT `create_assessment` all refuse; Tech Debt mints
+    # its next list by extraction and has no Start a revision, so it does not.
+    released = latest_released_version(
+        db, AttackAssessment, AttackAssessmentStatus.RELEASED, svc.id
+    )
+    if released is not None:
+        raise refuse_mint_over_released(released)
     version = _max_assessment_version(db, svc.id) + 1
     assessment = AttackAssessment(
         service_id=svc.id,
@@ -734,6 +748,144 @@ def latest_assessment(
             detail="ATT&CK assessments are admin-only.",
         )
     return _serialize_assessment(db, a, viewer=user)
+
+
+#: #1178, D-1 and D-4, approved verbatim (advisor, #736 6216024281, 3b).
+_NO_DRAFT_MESSAGE = "No completed AI run yet, so there is no draft to show."
+#: D-4 is option (a), with no remedy sentence (advisor, #736 6216730972 item 2):
+#: Run AI refuses an approved assessment, which is where the draft is read.
+_UNREADABLE_DRAFT_MESSAGE = (
+    "The last AI run was stored in an older format, so its draft cannot be shown."
+)
+
+
+def _row_as_the_run_left_it(a: AttackAssessment, row: AttackCoverageResponse) -> AttackCoverage:
+    """One coverage row rebuilt IN MEMORY from a run's stored result, never added
+    to a session, so nothing is written. Carries every column the dashboard
+    reads: status, reason, the three tool lists, rationale and the citation
+    record. `reviewed_status` is carried too, though the dashboard does not read
+    it."""
+    return AttackCoverage(
+        id=row.id,
+        assessment_id=a.id,
+        technique_code=row.technique_code,
+        status=row.status.value if row.status is not None else None,
+        reason_code=row.reason_code,
+        narrative=row.narrative,
+        notes=row.notes,
+        locked=row.locked,
+        detection_tools=row.detection_tools,
+        prevention_tools=row.prevention_tools,
+        response_tools=row.response_tools,
+        rationale=row.rationale,
+        unconfirmed_citations=(
+            None
+            if row.unconfirmed_citations is None
+            else [c.model_dump() for c in row.unconfirmed_citations]
+        ),
+        answered_by=row.answered_by,
+        answered_at=row.answered_at,
+        reviewed_status=row.reviewed_status,
+    )
+
+
+@router.get(
+    "/services/{service_id}/draft-dashboard",
+    response_model=AttackDraftDashboardResponse,
+    summary="The dashboard as the last AI run left the assessment, before review (admin, #1178)",
+)
+def draft_dashboard(
+    service_id: uuid.UUID,
+    user: Annotated[User, _admin_required],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackDraftDashboardResponse:
+    """Gene's 2026-10-15 test-run item 10: an admin-only draft dashboard after
+    the AI run, kept for comparison after review.
+
+    Built from the last COMPLETED mitre_map run on the service's current
+    assessment, from the rows as that run left them (`ai_runs.result`), never
+    from the rows as they are now: a consultant's later edit does not move it,
+    and a re-run replaces it. The body is the client dashboard's own builder
+    (`clients.attack_dashboard_content`), so the two compute rows the same way.
+    Admin-only by the route's dependency, not by a hidden link."""
+    # Imported here: `routes.clients` imports this module at load time.
+    from app.routes.clients import attack_dashboard_content
+
+    svc = require_service_in_tenant(db, service_id, client.id, kind=ServiceKind.ATTACK_COVERAGE)
+    a = _latest_assessment(db, svc.id)
+    if a is not None:
+        # #556, as the heatmap and the client dashboard: never compute coverage
+        # over rows keyed to another catalog. BEFORE the run lookup, so a stale
+        # assessment with no run names the cause a re-run cannot fix.
+        require_current_catalog(db, a)
+    run = (
+        None
+        if a is None
+        else db.execute(
+            select(AiRun)
+            .where(
+                AiRun.service_id == svc.id,
+                AiRun.purpose == "mitre_map",
+                AiRun.subject_id == a.id,
+                AiRun.status == AiRunStatus.COMPLETED,
+            )
+            .order_by(AiRun.finished_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    )
+    if a is None or run is None or run.finished_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"reason": "attack_no_draft", "message": _NO_DRAFT_MESSAGE},
+        )
+    try:
+        stored = AttackRunAiResponse.model_validate(run.result)
+    except ValidationError as exc:
+        # A run stored in a shape this build refuses (one older than a field the
+        # schema now requires). Refused with a reason, never a 500, and never
+        # read around: a draft built from a partial result would misstate it.
+        _log.error(
+            "attack.draft_dashboard.unreadable_result",
+            service_id=str(svc.id),
+            run_id=str(run.id),
+            errors=exc.error_count(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "attack_draft_unreadable", "message": _UNREADABLE_DRAFT_MESSAGE},
+        ) from exc
+    body = attack_dashboard_content(
+        db,
+        client=client,
+        svc=svc,
+        assessment=a,
+        coverage=[_row_as_the_run_left_it(a, row) for row in stored.coverage],
+    )
+    _log.info(
+        "attack.draft_dashboard.built",
+        service_id=str(svc.id),
+        run_id=str(run.id),
+        actor_user_id=str(user.id),
+        evaluated=len(body.techniques),
+    )
+    return AttackDraftDashboardResponse(
+        **dict(body),
+        service_id=svc.id,
+        service_title=svc.title,
+        run_id=run.id,
+        run_finished_at=run.finished_at,
+        batches_failed=stored.batches_failed,
+        # #1337: a result stored before #853 never measured this; the field's
+        # default of 0 would say "nothing omitted". `reasked_count` is a true 0
+        # for such a run (no re-ask existed), and `batches_failed` is in every
+        # stored result (the job writes every field; batching predates
+        # `ai_runs.result`), so only this one can be unmeasured.
+        omitted_count=(
+            stored.omitted_count if "omitted_count" in stored.model_fields_set else None
+        ),
+        reasked_count=stored.reasked_count,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2313,13 +2465,16 @@ def _mitre_map_batches(
     service_id: uuid.UUID,
     client_id: uuid.UUID,
     deadline_at: datetime,
+    codes: list[str] | None = None,
 ) -> Batched:
     """The batched mitre_map call. How batches run, fail and are accounted for
-    is `app.ai.batching.run_batches`, shared with csf_score."""
-    codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
-    batches = [
-        codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)
-    ] or [[]]
+    is `app.ai.batching.run_batches`, shared with csf_score.
+
+    `codes` asks for those techniques only, with the same payload otherwise
+    (#1047's re-ask). None asks for every code the request carries."""
+    if codes is None:
+        codes = [c for c in (req.preview.inputs.get("technique_codes") or []) if isinstance(c, str)]
+    batches = _mitre_batches(codes)
     out = run_batches(
         db,
         llm,
@@ -2339,6 +2494,115 @@ def _mitre_map_batches(
         ),
     )
     return out
+
+
+def _mitre_batches(codes: list[str]) -> list[list[str]]:
+    """`codes` in slices of `_MITRE_BATCH_SIZE`. No codes is one empty batch:
+    `run_batches` refuses an empty list as a caller's bug."""
+    batches = [codes[i : i + _MITRE_BATCH_SIZE] for i in range(0, len(codes), _MITRE_BATCH_SIZE)]
+    return batches or [[]]
+
+
+@dataclass(frozen=True)
+class _Reask:
+    """What #1047's second ask did.
+
+    `entries` holds only the entries naming a technique their OWN re-ask batch
+    asked about; anything else is a stray, dropped and counted, so a re-ask
+    can never overwrite an answer the first pass gave. `answered` is the
+    techniques those entries named. Only the ones the run then APPLIES (or
+    kept as a consultant's edit) leave the omitted list: a refused re-ask
+    answer applies nothing, so its technique still got no status this run.
+    """
+
+    entries: list[dict] = field(default_factory=list)
+    answered: frozenset[str] = frozenset()
+    asked: int = 0
+    batches_total: int = 0
+    batches_failed: int = 0
+    strays_dropped: int = 0
+    skipped_past_deadline: bool = False
+
+
+def _reask_omitted(db: Session, ctx: RunContext, req: AttackAiRequest, omitted: set[str]) -> _Reask:
+    """#1047: ask once more for the techniques a SUCCESSFUL first-pass batch
+    left out (`_omitted_codes`), with the same prompt and batching.
+
+    - Failed first-pass batches are NOT asked again: their techniques stay on
+      the failed-batch alert, and `batches_failed` keeps its meaning.
+    - Nothing is asked past the run's deadline. Recorded, so "why was nothing
+      asked again" has an answer.
+    - A re-ask that fails, in part or whole, costs only its own techniques:
+      they stay omitted and the failure is counted on `batches_failed` here,
+      never the run's. A deadline reached DURING the re-ask is such a failure.
+    - A redaction refusal is not caught: it fails the run whole (ruling (a)
+      on #736), as it does in the first pass.
+    """
+    if not omitted:
+        return _Reask()
+    codes = sorted(omitted)
+    if ctx.past_deadline():
+        _log.warning(
+            "attack.run_ai.reask_skipped_past_deadline",
+            service_id=str(ctx.service_id),
+            omitted=len(codes),
+        )
+        return _Reask(skipped_past_deadline=True)
+    planned = len(_mitre_batches(codes))
+    # #1025 holder 2: the caller re-read the rows' locks after the first pass,
+    # which opened a new read transaction; it ends before the re-ask's calls.
+    end_read_transaction(db, where="attack.run_ai.reask")
+    try:
+        out = _mitre_map_batches(
+            db,
+            ctx.llm,
+            req,
+            requested_by=ctx.requested_by,
+            service_id=ctx.service_id,
+            client_id=ctx.client_id,
+            deadline_at=ctx.deadline_at,
+            codes=codes,
+        )
+    except RunFailed as exc:
+        # Every re-ask batch came back without an answer, or the deadline
+        # passed while they ran. The first pass still lands.
+        _log.error(
+            "attack.run_ai.reask_failed",
+            service_id=str(ctx.service_id),
+            reason=exc.reason,
+            asked=len(codes),
+            batches=planned,
+        )
+        return _Reask(asked=len(codes), batches_total=planned, batches_failed=planned)
+    entries: list[dict] = []
+    strays = 0
+    for inputs, data in zip(out.inputs, out.answers, strict=True):
+        asked_here = set(inputs["technique_codes"])
+        for t in data.get("techniques") or []:
+            if not isinstance(t, dict):
+                continue
+            if t.get("technique_code") in asked_here:
+                entries.append(t)
+            else:
+                strays += 1
+    reask = _Reask(
+        entries=entries,
+        answered=frozenset(t["technique_code"] for t in entries),
+        asked=len(codes),
+        batches_total=out.total,
+        batches_failed=out.failed,
+        strays_dropped=strays,
+    )
+    _log.info(
+        "attack.run_ai.reasked",
+        service_id=str(ctx.service_id),
+        asked=reask.asked,
+        answered=len(reask.answered),
+        batches_total=reask.batches_total,
+        batches_failed=reask.batches_failed,
+        strays_dropped=strays,
+    )
+    return reask
 
 
 def _omitted_codes(out: Batched, locked: frozenset[str]) -> set[str]:
@@ -2635,6 +2899,10 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+    # done, so the read transaction ends here and no connection is held
+    # while the provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.run_ai")
     batched = _mitre_map_batches(
         db,
         ctx.llm,
@@ -2645,7 +2913,19 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         deadline_at=ctx.deadline_at,
     )
     batches_total, batches_failed = batched.total, batched.failed
-    result = _BatchedResult(data={"techniques": _batch_suggestions(batched)})
+    # #1047: ask once more for what a successful batch left out. Locked rows
+    # read fresh: a lock set while the first pass ran is honoured.
+    db.expire_all()
+    reask = _reask_omitted(
+        db,
+        ctx,
+        req,
+        _omitted_codes(batched, frozenset(code for code, r in rows.items() if r.locked)),
+    )
+    # First pass, then re-ask: no technique is in both, because the re-ask
+    # asked only for techniques no first-pass entry named and keeps nothing
+    # else.
+    result = _BatchedResult(data={"techniques": _batch_suggestions(batched) + reask.entries})
     # The snapshot is taken AFTER the provider calls, from the database as it
     # is now: a row edited while the batches ran (an edit that checked the lock
     # before this run existed) must be seen as edited, and the rows above were
@@ -2931,9 +3211,16 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # #853: read after the apply, so `kept_status` is what the row holds now,
     # an edit that landed while the model answered included. Against the
     # PRE-recompute `locked_keys`: an unlocked parent is never asked for.
+    # #1047: less what the re-ask settled, so this is what is STILL missing.
+    # Settled means applied, or kept as an edit made during the run. NOT a
+    # re-ask answer the loop refused: unlike a first-pass refusal, which is an
+    # answer (`_omitted_codes`), that technique was already on this list, and
+    # moving it to the audit row alone (#859) would hide a status nobody
+    # confirmed that the list exists to show.
+    reask_settled = reask.answered & (applied_codes | skipped_codes)
     omitted_techniques = [
         AttackOmittedTechnique(technique_code=code, kept_status=rows[code].status)
-        for code in sorted(_omitted_codes(batched, locked_keys))
+        for code in sorted(_omitted_codes(batched, locked_keys) - reask_settled)
     ]
     locked_keys = locked_keys - frozenset(parents_unlocked)
     db.flush()
@@ -2988,6 +3275,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             "unusable": citations.unusable,
             "pending_review_rows": len(pending),
             "omitted_count": len(omitted_techniques),
+            "reasked_count": reask.asked,
         },
     )
     audit(
@@ -3026,6 +3314,14 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             # this run, the ones that reach the deliverable.
             "omitted_count": len(omitted_techniques),
             "omitted_kept_status": sum(1 for t in omitted_techniques if t.kept_status is not None),
+            # #1047: the second ask, counts only. Its batches are not the
+            # run's `batches_*`: a failed re-ask leaves its techniques on the
+            # omitted list above, not on the failed-batch alert.
+            "reasked_count": reask.asked,
+            "reask_batches_total": reask.batches_total,
+            "reask_batches_failed": reask.batches_failed,
+            "reask_strays_dropped": reask.strays_dropped,
+            "reask_skipped_past_deadline": reask.skipped_past_deadline,
         },
     )
     # No commit: the framework commits this apply together with the
@@ -3064,6 +3360,10 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         forbidden_reason_refused=len(forbidden_reason_codes - applied_codes),
         omitted_count=len(omitted_techniques),
         omitted_techniques=omitted_techniques,
+        reasked_count=reask.asked,
+        reask_batches_total=reask.batches_total,
+        reask_batches_failed=reask.batches_failed,
+        techniques_asked=len(req.preview.inputs.get("technique_codes") or []),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

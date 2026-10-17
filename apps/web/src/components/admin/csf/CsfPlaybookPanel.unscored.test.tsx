@@ -121,9 +121,14 @@ describe("CsfPlaybookPanel, unscored tiers and unmeasured targets (#1031)", () =
   it("names every unscored in-scope tier rather than dropping it", async () => {
     render(<CsfPlaybookPanel serviceId="svc-1" />);
     expect(
-      await screen.findByText("H3 \u00b7 M Not scored \u00b7 L Not scored"),
+      // C12 (#736 6205956728): level names grouped by tier.
+      await screen.findByText(
+        "Defined (High) \u00b7 Not scored (Moderate, Low)",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText("H2 \u00b7 M1")).toBeInTheDocument();
+    expect(
+      screen.getByText("Developing (High) \u00b7 Ad hoc (Moderate)"),
+    ).toBeInTheDocument();
   });
 
   it("reads Not measured in Target and Gap when the only target is unscored", async () => {

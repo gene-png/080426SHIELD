@@ -160,17 +160,18 @@ def test_csf_dashboard_released_returns_functions(app_client) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
 
-    # Tier 2 of 4 -> 50%. Default target tier 3 of 4 -> 75%.
-    assert body["current_pct"] == 50.0
-    assert body["target_pct"] == 75.0
+    # #1183: (avg - 1) / (top - 1), floored. Tier 2 of 1..4 -> 33.3%. Default
+    # target tier 3 -> 66.6%.
+    assert body["current_pct"] == 33.3
+    assert body["target_pct"] == 66.6
     assert body["coverage_pct"] == 100.0
     # CSF 2.0 has six functions: Govern, Identify, Protect, Detect, Respond, Recover.
     assert len(body["functions"]) == 6
     fn = body["functions"][0]
-    assert fn["current_pct"] == 50.0
-    assert fn["target_pct"] == 75.0
-    assert fn["gap_pct"] == 25.0
-    assert body["largest_gap_pct"] == 25.0
+    assert fn["current_pct"] == 33.3
+    assert fn["target_pct"] == 66.6
+    assert fn["gap_pct"] == 33.3
+    assert body["largest_gap_pct"] == 33.3
     assert body["largest_gap_function"] is not None
 
 
@@ -397,7 +398,8 @@ def test_csf_dashboard_names_an_unassessed_function_rather_than_ranking_it(
 def test_csf_dashboard_numbers_come_from_the_version_the_header_claims(app_client) -> None:
     """#114, CSF's half. Released v1 at tier 2; v2 approved at tier 4, unfinalized.
 
-    The dashboard must keep reporting v1's 50% under its "v1, released" header.
+    The dashboard must keep reporting v1's figure (33.3% since #1183) under
+    its "v1, released" header.
     Before the fix the assessment was resolved as "latest APPROVED" while the
     version label came from the released deliverable, so approving v2 — a
     prerequisite for finalizing it — swapped the client's numbers underneath a
@@ -412,12 +414,22 @@ def test_csf_dashboard_numbers_come_from_the_version_the_header_claims(app_clien
 
     svc_id = _seed_release(c, bearer_admin, score_tier=2)
 
-    v2 = c.post(f"/csf/services/{svc_id}/assessments", headers=h)
+    # #1123 item 1: a plain create over released work is refused; a revision
+    # is the way to open the next version.
+    v1 = c.get(f"/csf/services/{svc_id}/assessments/latest", headers=h).json()["id"]
+    v2 = c.post(
+        f"/csf/services/{svc_id}/assessments/{v1}/revisions",
+        headers=h,
+        json={"reason": "re-assessment"},
+    )
     assert v2.status_code == 201, v2.text
     v2 = v2.json()
     assert v2["version"] == 2, "the preamble did not actually cut a second version"
     for ans in v2["answers"]:
-        c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 4})
+        # Asserted: a revision copies v1 forward, so a failed patch would leave
+        # v2 equal to v1 and the #114 check below could not fail.
+        r = c.patch(f"/csf/answers/{ans['id']}", headers=h, json={"maturity_tier": 4})
+        assert r.status_code == 200, r.text
     assert c.post(f"/csf/assessments/{v2['id']}/approve", headers=h).status_code == 200
 
     c.headers["X-Client-Id"] = client_id
@@ -429,8 +441,9 @@ def test_csf_dashboard_numbers_come_from_the_version_the_header_claims(app_clien
     body = r.json()
 
     assert body["deliverable_version"] == 1, "the header stopped naming the released report"
-    assert body["current_pct"] == 50.0, (
+    # #1183: tier 2 is 33.3% and tier 4 100% under (avg - 1) / (top - 1).
+    assert body["current_pct"] == 33.3, (
         "the dashboard served v2's tier-4 score (100%) under a header naming the "
-        "released v1 report, whose PDF says 50%"
+        "released v1 report, at tier 2"
     )
-    assert body["largest_gap_pct"] == 25.0, "the gap figure came from the wrong version too"
+    assert body["largest_gap_pct"] == 33.3, "the gap figure came from the wrong version too"

@@ -68,7 +68,7 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream CSF call");
+    return upstreamOutcomeUnknown(err, "Upstream CSF call", init.method);
   }
 }
 

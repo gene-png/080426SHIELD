@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { cn, EmptyState } from "@shield/design-system";
 
+import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
 import { type ArtifactSummary, uploadArtifact } from "@/lib/intake/artifacts";
 
 import type { JSX } from "react";
@@ -11,6 +12,9 @@ import { clientFacingError } from "@/lib/describe-save-error";
 export interface DropzoneProps {
   /** Called after each successful upload with the API's artifact row. */
   onUploaded: (artifact: ArtifactSummary) => void;
+  /** #1262, the `/intake` residual: the client the intake wizard loaded.
+   *  Inside an admin workspace, the workspace's own client is used instead. */
+  clientId?: string;
   /** Bytes; default 50 MB matches the API. */
   maxBytes?: number;
   /** Accept attribute for the native input; the API also enforces this. */
@@ -30,10 +34,15 @@ interface UploadingItem {
 
 export function Dropzone({
   onUploaded,
+  clientId,
   maxBytes = 50 * 1024 * 1024,
   accept = DEFAULT_ACCEPT,
 }: DropzoneProps): JSX.Element {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // #1262: inside an admin workspace, file uploads under ITS client, never
+  // the shared cookie; null elsewhere, where the `clientId` prop (the client
+  // the intake wizard loaded) is used.
+  const workspaceClientId = useWorkspaceClientId();
   const [dragging, setDragging] = React.useState(false);
   const [items, setItems] = React.useState<UploadingItem[]>([]);
 
@@ -65,7 +74,11 @@ export function Dropzone({
         { id, name: file.name, size: file.size, status: "uploading" },
       ]);
       try {
-        const artifact = await uploadArtifact(file);
+        const artifact = await uploadArtifact(
+          file,
+          undefined,
+          workspaceClientId ?? clientId,
+        );
         setItem(id, { status: "done" });
         onUploaded(artifact);
       } catch (err) {

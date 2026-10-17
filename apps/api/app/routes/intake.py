@@ -68,6 +68,17 @@ _ZT_FRAMEWORK_BY_SERVICE = {
 }
 
 
+def _submitter_details(user: User) -> IntakeContactResponse:
+    """#1282: the submitting user's OWN account details, never an override's.
+
+    Step 3's "your details" inputs read these. They used to read the effective
+    contact, which is the override once one names someone, and each input
+    saves on blur, so tabbing through Step 3 wrote the override's name, title
+    and phone onto the submitter's own account.
+    """
+    return IntakeContactResponse.model_validate(user, from_attributes=True)
+
+
 def _effective_contact(client: Client | None, user: User) -> IntakeContactResponse:
     """Whose details this engagement actually uses.
 
@@ -267,15 +278,21 @@ def _apply_patch_to_client(client: Client, patch: IntakePatchRequest) -> None:
         setattr(client, field, value)
 
 
-def _apply_profile_fields(user: User, fields: dict[str, str | None]) -> None:
-    """Apply only the profile fields present in `fields` AND non-None.
+# #1198 (#736 6216024281): the profile fields a sent null CLEARS. Both columns
+# are nullable. `timezone` is NOT NULL, and `display_name` is the person's name
+# on every record, so a null for either is still skipped.
+_CLEARABLE_PROFILE_FIELDS = frozenset({"title", "phone"})
 
-    Caller is responsible for filtering down to set-and-non-None values so
-    we don't overwrite a stored timezone with None just because the caller
-    didn't include it (which would violate the NOT NULL on users.timezone).
+
+def _apply_profile_fields(user: User, fields: dict[str, str | None]) -> None:
+    """Apply the profile fields present in `fields`.
+
+    The caller passes only the fields the request SET (`exclude_unset`). A None
+    clears `title` and `phone`; for `timezone` (NOT NULL on users.timezone) and
+    `display_name` it is skipped, so neither can be blanked here.
     """
     for field, value in fields.items():
-        if value is None:
+        if value is None and field not in _CLEARABLE_PROFILE_FIELDS:
             continue
         setattr(user, field, value)
 
@@ -305,6 +322,7 @@ def read_intake(
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
@@ -354,6 +372,7 @@ def patch_intake(
         service_requests=list(requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
@@ -478,6 +497,7 @@ def submit_intake(
         service_requests=list(all_requests),
         intake_completed_at=client.intake_completed_at,
         contact=_effective_contact(client, user),
+        submitter=_submitter_details(user),
     )
 
 
@@ -666,12 +686,16 @@ def create_engagement(
     # `.strip()` HERE TOO, matching the submit guard, and the earlier version of
     # this comment argued the opposite. It said a stored name is always NULL or
     # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
-    # every row written from this branch onward and FALSE of rows already in the
-    # database: `ClientProfilePatch` carries no validator, so any pre-branch
+    # every row written since the D-080 branch and FALSE of rows already in the
+    # database: `ClientProfilePatch` carried no validator then (it has had a
+    # blank normaliser since #1093), so any pre-D-080
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
-    # sentinel. The branch introduces a write-time invariant and ships nothing
-    # that establishes it for existing data.
+    # sentinel. The D-080 branch introduced a write-time invariant and shipped nothing
+    # that establishes it for existing data. Migration 0050 has since NULLed
+    # every blank `legal_name` (with Python's `.strip()`), so no stored row
+    # holds one today: the strip stays as a RATCHET against a future writer or
+    # restore that brings a blank back.
     #
     # What that cost, before the strip: `"   "` is truthy, so this guard passed
     # and `provision_self_assessment_service` raised `ValueError` on the very
@@ -709,8 +733,8 @@ def create_engagement(
     #
     # The general shape, which is the part worth keeping: an invariant enforced
     # at every WRITER still does not hold for rows that predate the enforcement.
-    # Either backfill them or keep reading defensively. This does the second,
-    # because the first cannot distinguish `"   "` from a name someone meant.
+    # Backfill them, and keep reading defensively. Both are done here: 0050
+    # backfilled the blanks, and this strip is the ratchet.
     if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

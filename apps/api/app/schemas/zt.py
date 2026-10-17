@@ -28,6 +28,10 @@ class CatalogCapability(BaseModel):
     #: "function", or "cross_cutting" for a CISA pillar's Visibility and
     #: Analytics, Automation and Orchestration and Governance rows (#838).
     kind: str = "function"
+    #: #922: the highest MATURITY stage this capability may be stored at, the
+    #: value every maturity-stage write refuses above (`max_stage_for`, #839).
+    #: Not a cap on the target stage, which is stored above it and disclosed.
+    max_stage: int
 
 
 class CatalogPillar(BaseModel):
@@ -82,6 +86,8 @@ class ZtAnswerResponse(BaseModel):
     capability_code: str
     maturity_stage: int | None
     target_stage: int | None = None
+    #: #982: who set `target_stage`; None = origin not recorded.
+    target_source: str | None = None
     notes: str | None
     evidence_artifact_id: uuid.UUID | None
     locked: bool = False
@@ -288,6 +294,7 @@ class ZtDroppedSuggestion(BaseModel):
     | `locked`       | a human locked the row — a by-design skip, not a defect  |
     | `protected`    | an offline run declined to overwrite a non-AI answer     |
     | `edited`       | the answer was edited after the run started (#645)       |
+    | `no_notes`     | named a blank-notes capability, which is never sent (#1084) |
     | `stage_above_capability_max` | a current stage above the capability's own maximum (#839) |
 
     `locked` and `protected` render separately from the rest. Both are by-design
@@ -312,6 +319,7 @@ class ZtDroppedSuggestion(BaseModel):
         "locked",
         "protected",
         "edited",
+        "no_notes",
         "stage_above_capability_max",
     ]
     # The capability code as the model wrote it (escaped and bounded), or None
@@ -340,7 +348,9 @@ class ZtDroppedSuggestion(BaseModel):
 
 
 class ZtOmittedCapability(BaseModel):
-    """A capability the run asked the model about and got no entry for (#840).
+    """A capability the run covers and got no entry for (#840): one the model
+    was asked about and did not answer, or one with blank notes, which is never
+    sent (#1084).
 
     NOT a `ZtDroppedSuggestion`: `received == applied + sum(dropped)` counts
     values the model SENT, and a capability with no entry sent none. An entry
@@ -349,8 +359,9 @@ class ZtOmittedCapability(BaseModel):
 
     `notes_blank` is the only part of the #806 ZT prompt's "nothing to score"
     rule (A5) code can test: no notes, or whitespace only. "N/A" and "TBD" are
-    notes, and the panel says so instead of classifying them. Leaving a
-    blank-notes capability out is by design under the #806 ZT prompt (A5).
+    notes, and the panel says so instead of classifying them. A blank-notes
+    capability is left out by design: since #1084 code leaves it out of the
+    request, as the #806 ZT prompt (A5) asked the model to.
 
     `kept_stage` is the maturity stage the row still holds, read AFTER the
     apply, so an edit that landed while the model answered is what it reports.
@@ -393,10 +404,15 @@ class ZtRunAiResponse(BaseModel):
     # `update_answer`, which never writes the field. The name is kept for
     # compatibility; the population is "answers the AI did not write".
     preserved_client_answers: int = 0
-    # #840: every capability asked for, not locked, that no entry named. Both
+    # #840: every capability, not locked, that no entry named, including the
+    # blank-notes ones never sent (#1084). Both
     # optional, so a stored run result written before them parses unchanged.
     omitted_count: int = 0
     omitted_capabilities: list[ZtOmittedCapability] = []
+    # #1084: how many capabilities the run sent. 0 means every row was blank,
+    # so no model call was made and receiving nothing is the design, not a
+    # broken response. None on a run stored before this field: unknown.
+    capabilities_sent: int | None = None
 
 
 class ZtInterviewQuestion(BaseModel):
@@ -430,6 +446,9 @@ class GapItem(BaseModel):
     target_stage: int
     gap_size: int
     priority_score: float
+    # Z4: the weight `priority_score` multiplied the gap by, as stored, so the
+    # gap list can show the working (`zt.scoring.pillar_weight`).
+    pillar_weight: float
     notes: str | None
 
 

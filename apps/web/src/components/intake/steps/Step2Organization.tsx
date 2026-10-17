@@ -51,7 +51,7 @@ export function Step2Organization({
               // this is the wizard step whose job is to supply the name.
               c?.legal_name ?? ""
             }
-            onBlur={(e) => saveField("legal_name", e.target.value || undefined)}
+            onBlur={(e) => saveField("legal_name", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -60,7 +60,7 @@ export function Step2Organization({
             id="dba_name"
             type="text"
             defaultValue={c?.dba_name ?? ""}
-            onBlur={(e) => saveField("dba_name", e.target.value || undefined)}
+            onBlur={(e) => saveField("dba_name", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -69,7 +69,7 @@ export function Step2Organization({
             id="website"
             type="url"
             defaultValue={c?.website ?? ""}
-            onBlur={(e) => saveField("website", e.target.value || undefined)}
+            onBlur={(e) => saveField("website", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -81,10 +81,8 @@ export function Step2Organization({
             // on blur alone, while the step-5 selects save on change. A picked
             // value that never blurs was silently lost. Selects commit on
             // change; the blur handler stays as a belt-and-braces catch.
-            onChange={(e) =>
-              saveField("size_band", e.target.value || undefined)
-            }
-            onBlur={(e) => saveField("size_band", e.target.value || undefined)}
+            onChange={(e) => saveField("size_band", e.target.value || null)}
+            onBlur={(e) => saveField("size_band", e.target.value || null)}
             className={selectClasses}
           >
             {SIZE_BANDS.map((b) => (
@@ -103,7 +101,7 @@ export function Step2Organization({
             id="industry"
             type="text"
             defaultValue={c?.industry ?? ""}
-            onBlur={(e) => saveField("industry", e.target.value || undefined)}
+            onBlur={(e) => saveField("industry", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -122,9 +120,7 @@ export function Step2Organization({
             id="address_line1"
             type="text"
             defaultValue={c?.address_line1 ?? ""}
-            onBlur={(e) =>
-              saveField("address_line1", e.target.value || undefined)
-            }
+            onBlur={(e) => saveField("address_line1", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -137,9 +133,7 @@ export function Step2Organization({
             id="address_line2"
             type="text"
             defaultValue={c?.address_line2 ?? ""}
-            onBlur={(e) =>
-              saveField("address_line2", e.target.value || undefined)
-            }
+            onBlur={(e) => saveField("address_line2", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -148,7 +142,7 @@ export function Step2Organization({
             id="city"
             type="text"
             defaultValue={c?.city ?? ""}
-            onBlur={(e) => saveField("city", e.target.value || undefined)}
+            onBlur={(e) => saveField("city", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -157,7 +151,7 @@ export function Step2Organization({
             id="state"
             type="text"
             defaultValue={c?.state ?? ""}
-            onBlur={(e) => saveField("state", e.target.value || undefined)}
+            onBlur={(e) => saveField("state", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -166,9 +160,7 @@ export function Step2Organization({
             id="postal_code"
             type="text"
             defaultValue={c?.postal_code ?? ""}
-            onBlur={(e) =>
-              saveField("postal_code", e.target.value || undefined)
-            }
+            onBlur={(e) => saveField("postal_code", e.target.value || null)}
             className={inputClasses}
           />
         </Field>
@@ -176,8 +168,10 @@ export function Step2Organization({
           <input
             id="country"
             type="text"
-            defaultValue={c?.country ?? "United States"}
-            onBlur={(e) => saveField("country", e.target.value || undefined)}
+            // #1200: no prefill. A default shown here is what the next blur
+            // saves, which silently undid a cleared country.
+            defaultValue={c?.country ?? ""}
+            onBlur={(e) => saveField("country", e.target.value || null)}
             className={inputClasses}
           />
         </Field>

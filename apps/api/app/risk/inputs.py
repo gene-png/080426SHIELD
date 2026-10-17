@@ -32,14 +32,18 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer_group
 
 from app.csf.retired import catalog_rows as csf_catalog_rows
 from app.logging import get_logger
 from app.models.attack_assessment import AttackAssessment
 from app.models.capability import CapabilityList
 from app.models.csf_assessment import CsfAssessment
-from app.models.csf_profile import CsfDimensionScore
+from app.models.csf_profile import (
+    EVIDENCE_STATUS_GROUP,
+    CsfDimensionScore,
+    CsfEvidenceStatus,
+)
 from app.models.service import Service, ServiceKind, ServiceStatus
 from app.models.zt_assessment import ZtAssessment
 from app.risk.selection import Selection, SelectionRead, selection_roles
@@ -129,26 +133,35 @@ def csf_playbook_fingerprint(db: Session, assessment_id: str) -> str:
     record's rows in place would make the other changes reachable again."""
     rows = csf_catalog_rows(
         db.execute(
-            select(CsfDimensionScore).where(
-                CsfDimensionScore.assessment_id == uuid.UUID(assessment_id)
-            )
+            select(CsfDimensionScore)
+            .where(CsfDimensionScore.assessment_id == uuid.UUID(assessment_id))
+            .options(undefer_group(EVIDENCE_STATUS_GROUP))
         )
         .scalars()
         .all()
     )
     content = sorted(
-        (
-            [
-                str(getattr(r, f)) if f == "evidence_artifact_id" else getattr(r, f)
-                for f in _PLAYBOOK_FIELDS
-            ]
-            for r in rows
-            if r.in_scope
-        ),
+        ([_fingerprint_value(r, f) for f in _PLAYBOOK_FIELDS] for r in rows if r.in_scope),
         key=lambda v: (v[1], v[0]),
     )
     blob = json.dumps(content, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_value(row: CsfDimensionScore, field: str) -> object:
+    """One field as the fingerprint hashes it. `has_evidence` became the
+    three-valued `evidence_status` (migration 0075): its two old values hash
+    as the boolean did, so a fingerprint recorded before 0075 still matches an
+    unchanged Playbook, and the new middle value hashes as itself, so a move
+    to or from it reads as changed."""
+    if field == "evidence_artifact_id":
+        return str(row.evidence_artifact_id)
+    if field == "has_evidence":
+        status = row.evidence_status
+        if status == CsfEvidenceStatus.CONFIRMED_IN_DISCUSSION:
+            return status.value
+        return status == CsfEvidenceStatus.ON_FILE
+    return getattr(row, field)
 
 
 def _status(value: object) -> str:

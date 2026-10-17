@@ -14,6 +14,9 @@ export interface CatalogCapability {
   outcome: string;
   /** #838: a CISA pillar's cross-cutting rows. Absent reads as "function". */
   kind?: "function" | "cross_cutting";
+  /** #922: the highest MATURITY stage this capability may be stored at (the
+   *  API's own). Not a cap on the target stage. */
+  max_stage?: number;
 }
 
 export interface CatalogPillar {
@@ -42,6 +45,8 @@ export interface ZtAnswer {
   capability_code: string;
   maturity_stage: number | null;
   target_stage?: number | null;
+  /** #982: who set `target_stage`; null = origin not recorded. */
+  target_source?: string | null;
   locked?: boolean;
   notes: string | null;
   evidence_artifact_id: string | null;
@@ -124,6 +129,8 @@ export interface ZtDroppedSuggestion {
     | "locked"
     | "protected"
     | "edited"
+    // #1084: named a blank-notes capability, which is never sent.
+    | "no_notes"
     // #839 F1: a current stage above the capability's own maximum.
     | "stage_above_capability_max";
   /** The capability code exactly as the model wrote it, or null. */
@@ -157,12 +164,18 @@ export interface ZtRunAiResponse {
    */
   preserved_client_answers?: number;
   /**
-   * #840: capabilities the run asked about, not locked, that no entry named.
+   * #840: capabilities, not locked, that no entry named, including the
+   * blank-notes ones the run never sends (#1084).
    * Not part of the values identity above: a capability with no entry sent no
    * value. Optional, so a run stored before #840 reads as none.
    */
   omitted_count?: number;
   omitted_capabilities?: ZtOmittedCapability[];
+  /**
+   * #1084: how many capabilities the run sent. 0 means every row was blank,
+   * so no model call was made. Absent or null on a run stored before it.
+   */
+  capabilities_sent?: number | null;
 }
 
 /**
@@ -208,6 +221,12 @@ export interface GapItem {
   target_stage: number;
   gap_size: number;
   priority_score: number;
+  /**
+   * Z4: the pillar weight the priority multiplied the gap by, as the engine
+   * stores it. The API always sends it (the analysis is computed per request,
+   * never stored); optional only so test fixtures written before it type-check.
+   */
+  pillar_weight?: number;
   notes: string | null;
 }
 

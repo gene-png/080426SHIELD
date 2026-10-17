@@ -37,7 +37,9 @@ function sub(code: string, fn: string, minProfile = "LOW") {
   };
 }
 
-// GV has three outcomes, one of them HIGH-only; ID has one.
+// GV has three outcomes, one of them HIGH-only; ID has two, and ID.AM-02 is
+// answered in every fixture, so every function has an answer and #1171's
+// submit lock (an answer in every function) never holds Submit off here.
 const CATALOG = {
   functions: [
     {
@@ -68,7 +70,7 @@ const CATALOG = {
           function: "ID",
           name: "Asset Management",
           purpose: "Inventory.",
-          subcategories: [sub("ID.AM-01", "ID")],
+          subcategories: [sub("ID.AM-01", "ID"), sub("ID.AM-02", "ID")],
         },
       ],
     },
@@ -79,7 +81,7 @@ const CATALOG = {
     { tier: 3, short_label: "Repeatable", description: "" },
     { tier: 4, short_label: "Adaptive", description: "" },
   ],
-  total_subcategories: 4,
+  total_subcategories: 5,
 } as unknown as CsfCatalog;
 
 function answer(id: string, code: string, tier: number | null): CsfAnswer {
@@ -143,12 +145,13 @@ async function mountWith(a: CsfAssessment): Promise<void> {
 }
 
 // At the MOD profile GV.OC-03 is out of scope, so in scope are GV.OC-01,
-// GV.OC-02 and ID.AM-01. One GV blank and the ID blank.
+// GV.OC-02, ID.AM-01 and ID.AM-02. One GV blank and one ID blank.
 const TWO_BLANK = {
   "GV.OC-01": 2,
   "GV.OC-02": null,
   "GV.OC-03": null,
   "ID.AM-01": null,
+  "ID.AM-02": 2,
 };
 
 // One in-scope blank, in ID (GV.OC-03 is out of scope at MOD).
@@ -157,6 +160,7 @@ const ONE_BLANK = {
   "GV.OC-02": 3,
   "GV.OC-03": null,
   "ID.AM-01": null,
+  "ID.AM-02": 2,
 };
 
 function tierRadio(code: string, tier: number): HTMLElement {
@@ -173,7 +177,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(TWO_BLANK));
     expect(
       screen.getByText(
-        "2 of 3 outcomes have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "2 of 4 outcomes have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(csfClient.submitSelfAssessment).not.toHaveBeenCalled();
@@ -186,6 +190,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
         "GV.OC-02": 3,
         "GV.OC-03": null,
         "ID.AM-01": null,
+        "ID.AM-02": 2,
       }),
     );
     expect(
@@ -292,6 +297,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
         "GV.OC-02": 3,
         "GV.OC-03": null,
         "ID.AM-01": 1,
+        "ID.AM-02": 2,
       }),
     );
     expect(csfClient.submitSelfAssessment).toHaveBeenCalledTimes(1);
@@ -303,7 +309,7 @@ describe("CsfSelfAssessment: blank answers before submit (#1173)", () => {
     await mountWith(assessment(TWO_BLANK, { profile: "HIGH" }));
     expect(
       screen.getByText(
-        "3 of 4 outcomes have no answer yet. Blank answers are left out of your results. Answer them now, or submit anyway.",
+        "3 of 5 outcomes have no answer yet. Your consultant may score them, but any left blank are reported as not scored. Answer them now, or submit anyway.",
       ),
     ).toBeVisible();
     expect(

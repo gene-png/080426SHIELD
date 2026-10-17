@@ -242,22 +242,22 @@ class AttackDashboardRollup(BaseModel):
         return _without_none(handler(self), _OUTSIDE_COUNT_KEYS)
 
 
-class AttackDashboardResponse(BaseModel):
-    """Release-gated client-facing ATT&CK coverage dashboard payload (D-035).
+class AttackDashboardContent(BaseModel):
+    """The ATT&CK coverage dashboard's content, without the head that says
+    which service and which record it shows.
 
-    A DETERMINISTIC read of the released assessment's coverage — no LLM. Reached
-    only when the service has a RELEASED deliverable (the §12 visibility gate),
-    so no pre-release number ever leaks.
+    #1178: shared by the client dashboard (`AttackDashboardResponse`, whose head
+    is the release) and the admin-only draft dashboard
+    (`AttackDraftDashboardResponse`, whose head is the AI run). A DETERMINISTIC
+    read of coverage rows — no LLM.
+
+    FIELD ORDER IS PART OF THE CONTRACT: a released dashboard must render
+    byte-identically (`test_attack_parent_rules_golden.py`). Pydantic orders a
+    subclass's fields by its bases in reverse MRO, so each response lists its
+    head base LAST (`class R(AttackDashboardContent, Head)`) to put the head's
+    fields first, as they were.
     """
 
-    service_id: uuid.UUID
-    service_title: str
-    released_at: datetime
-    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
-    # dashboard. Clients only ever receive True (their gate is unchanged), so
-    # the default keeps every existing consumer working.
-    released: bool = True
-    deliverable_version: int
     #: True for an assessment approved under D-094's rules for computed parents
     #: (#620). OMITTED for one approved before #620, whose dashboard must be
     #: byte-identical to what was delivered (Gene's condition, D-094). The web
@@ -322,7 +322,7 @@ class AttackDashboardResponse(BaseModel):
         )
 
     @model_validator(mode="after")
-    def _counts_travel_with_the_rule(self) -> AttackDashboardResponse:
+    def _counts_travel_with_the_rule(self) -> AttackDashboardContent:
         """#621 option (a): the two counts are present EXACTLY when
         `parents_computed` is. They are omitted from the JSON under rule 1, so
         without this a rule-2 response built with a None would drop them as
@@ -340,6 +340,53 @@ class AttackDashboardResponse(BaseModel):
                         "sent exactly when parents_computed is (#621 option (a))."
                     )
         return self
+
+
+class _AttackReleasedHead(BaseModel):
+    """The client dashboard's head: the service and the release behind it."""
+
+    service_id: uuid.UUID
+    service_title: str
+    released_at: datetime
+    # Issue 4: False when an ADMIN is previewing a finalized-but-unreleased
+    # dashboard. Clients only ever receive True (their gate is unchanged), so
+    # the default keeps every existing consumer working.
+    released: bool = True
+    deliverable_version: int
+
+
+class AttackDashboardResponse(AttackDashboardContent, _AttackReleasedHead):
+    """Release-gated client-facing ATT&CK coverage dashboard payload (D-035).
+
+    A DETERMINISTIC read of the released assessment's coverage — no LLM. Reached
+    only when the service has a RELEASED deliverable (the §12 visibility gate),
+    so no pre-release number ever leaks. The head base is listed last on
+    purpose: see `AttackDashboardContent`.
+    """
+
+
+class _AttackDraftHead(BaseModel):
+    """#1178: the draft dashboard's head: the service and the AI run it shows."""
+
+    service_id: uuid.UUID
+    service_title: str
+    run_id: uuid.UUID
+    run_finished_at: datetime
+    #: The run's own disclosures, from its stored result, so a draft from a
+    #: partial run never reads as complete (advisor, #736 6216024281, 3b):
+    #: batches that failed, techniques a successful batch left out and the
+    #: re-ask did not recover, and techniques asked again (#1047).
+    batches_failed: int
+    #: None when the stored result has no `omitted_count` (a run stored before
+    #: #853): "not measured", never zero (#1337).
+    omitted_count: int | None
+    reasked_count: int
+
+
+class AttackDraftDashboardResponse(AttackDashboardContent, _AttackDraftHead):
+    """#1178: the admin-only draft dashboard, the dashboard as the last completed
+    mitre_map run left the assessment's rows, before review. No release stands
+    behind it, so its head names the run in place of the release."""
 
 
 class ZtPillarDashboard(BaseModel):
@@ -550,6 +597,12 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #1343: capabilities whose APPLIED per-capability target has no recorded
+    # origin (stored before migration 0076; some set by earlier AI runs), from
+    # the one predicate the deliverable uses (`zt/target_origin.py`). The web
+    # renders the approved sentence beside each code. Empty when every applied
+    # target's origin is recorded.
+    unrecorded_target_codes: list[str] = []
     # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
     # (`zt/target_caps.py`), rendered as given.
     target_cap_notes: list[str] = []
@@ -616,6 +669,9 @@ class TechDebtCategorySpend(BaseModel):
     category: str
     total_usd: float
     count: int
+    #: #1214: the category's tools with no cost, by TD-10's one rule
+    #: (`overlap.no_cost_items`). Above 0, `total_usd` is a floor.
+    no_cost_count: int
 
 
 class TechDebtRedundancy(BaseModel):
@@ -686,6 +742,11 @@ class TechDebtDashboardResponse(BaseModel):
     # uploaded row, so `excluded_count` is the count. False makes it a FLOOR
     # (the true count may be higher, and is unknown); the client is told so.
     excluded_count_exact: bool
+    # TD-10 (for #1048): source items (not a split bundle's parts) with no
+    # recorded cost, which `annual_spend_usd` leaves out; `overlap.no_cost_items`.
+    # A recorded $0 is a cost. REQUIRED: a default of 0 would claim every tool
+    # was costed.
+    no_cost_count: int
     redundant_category_count: int
     spend_by_category: list[TechDebtCategorySpend]
     sprawl_by_category: list[TechDebtCategorySpend]

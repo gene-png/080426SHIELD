@@ -12,6 +12,7 @@ sees nothing until a consultant explicitly releases the finalized deliverable.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Annotated, NamedTuple
 
@@ -47,6 +48,8 @@ from app.attack.parents import PARENT_CHILDREN as ATTACK_PARENT_CHILDREN
 from app.attack.parents import is_computed_parent as attack_is_computed_parent
 from app.attack.partial_reasons import partial_reason_for_row as attack_partial_reason_for_row
 from app.attack.pending import pending_codes as attack_pending_codes
+from app.attack.retirement import Retirement as AttackRetirement
+from app.attack.retirement import RetirementIndex as AttackRetirementIndex
 from app.attack.rules import parents_computed as attack_parents_computed
 from app.attack.rules import statuses_computed as attack_statuses_computed
 from app.csf.gap import MAX_TIER as CSF_MAX_TIER
@@ -59,6 +62,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.maturity_percent import maturity_percent
 from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
@@ -103,6 +107,7 @@ from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sent
 from app.routes.attack import client_retirement_index
 from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
+    AttackDashboardContent,
     AttackDashboardResponse,
     AttackDashboardRollup,
     AttackDashboardTechnique,
@@ -136,6 +141,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
@@ -152,6 +158,7 @@ from app.zt.scoring import (
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
 from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
+from app.zt.target_origin import unrecorded_target_codes as zt_unrecorded_target_codes
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -888,7 +895,10 @@ def _attack_uncovered_total(
     (`subset_state`, the dashboard's own read). The total sums Gap only, so
     such a row is left out of it: the total may be understated (review F1,
     copy C7 as ruled). A Gap row crediting such a tool is already IN the total,
-    so it does not raise the flag (round-2 review). None with the total, and
+    so it does not raise the flag (round-2 review). Under R3 (#1016) a row
+    raises it only when its status, recomputed without the outside tools,
+    falls to Gap: a row that would only fall to Partial stays out of the total
+    either way, so the total is exact for it. None with the total, and
     when nothing could be checked (no Tech Debt list, only lists with no
     security tool, or only discarded lists): not checked is not "none found".
 
@@ -930,12 +940,12 @@ def _attack_uncovered_total(
             return _KindTotal(None, True), True, None, None, None
         # #554 R3: computed statuses where they apply, so this gap count is the
         # dashboard's gap count.
-        rows = attack_effective_coverage(
-            a,
+        stored = (
             db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == a.id))
             .scalars()
-            .all(),
+            .all()
         )
+        rows = attack_effective_coverage(a, stored)
         coverage_map: dict[str, str | None] = {r.technique_code: r.status for r in rows}
         # No `pending_codes` here, and that is deliberate rather than an
         # oversight (#102). This reads `.gap` only, and `gap` is not a
@@ -962,7 +972,24 @@ def _attack_uncovered_total(
             # Only rows the rollup counts toward coverage: C7 says "counted as
             # covered", and a Gap, N/A or unscored row is not.
             credited = {r.technique_code for r in rows if r.status in _CREDITS_COVERAGE}
-            outside = bool(outside) or any(o.technique_code in credited for o in subset.outside)
+            relying = {o.technique_code for o in subset.outside} & credited
+            if relying and attack_statuses_computed(a):
+                # #1016 (advisor, #736 6216024281): C7 says the techniques
+                # "rely on" such a tool. Under R3 that is checkable: recompute
+                # with the outside tools removed -- R3's own computation, as
+                # #801 recounts without retiring tools -- and keep only rows
+                # that would fall to Gap, the one status the total sums
+                # (advisor, 6219475831). A row that would fall only to Partial
+                # is outside the total either way. Before R3 the stored status
+                # cannot be recomputed, so every such row still raises it.
+                without = {
+                    r.technique_code: r.status
+                    for r in attack_effective_coverage(
+                        a, stored, retirement=_OutsideToolsRemoved(subset.outside_tools())
+                    )
+                }
+                relying = {code for code in relying if without.get(code) not in _CREDITS_COVERAGE}
+            outside = bool(outside) or bool(relying)
         else:
             not_checked.add(subset.not_checked_reason)
     return _KindTotal(total, False), False, not_verified, outside, _one_reason(outside, not_checked)
@@ -987,6 +1014,22 @@ def _one_reason(outside: bool | None, not_checked: set[str | None]) -> str | Non
 _CREDITS_COVERAGE = frozenset(
     {AttackCoverageStatus.COVERED.value, AttackCoverageStatus.PARTIAL.value}
 )
+
+
+class _OutsideToolsRemoved(AttackRetirementIndex):
+    """#1016: a retirement index that reads every tool outside the security
+    tool list as leaving and every other as staying -- the counterfactual the
+    home card's "relies on" is measured against, never a figure any surface
+    shows. Keyed as the retirement index keys names (case-folded)."""
+
+    def __init__(self, outside: Iterable[str]) -> None:
+        super().__init__(has_plan=True, by_key={})
+        object.__setattr__(self, "_outside", frozenset(str(t).strip().casefold() for t in outside))
+
+    def state(self, tool: str) -> AttackRetirement | None:
+        if str(tool or "").strip().casefold() in self._outside:
+            return AttackRetirement.PLANNED
+        return AttackRetirement.NOT_RETIRING
 
 
 def _service_client_id(db: Session, service_id: uuid.UUID) -> uuid.UUID:
@@ -1200,97 +1243,26 @@ def _dashboard_stamp(deliv: Deliverable, is_released: bool) -> datetime:
     return deliv.released_at if is_released and deliv.released_at else deliv.finalized_at
 
 
-@router.get(
-    "/{client_id}/attack/{service_id}/dashboard",
-    response_model=AttackDashboardResponse,
-    summary="Released ATT&CK coverage dashboard for the client (client + admin)",
-)
-def attack_dashboard(
-    client_id: uuid.UUID,
-    service_id: uuid.UUID,
-    user: Annotated[User, Depends(current_user)],
-    client: Annotated[Client, Depends(current_client)],
-    db: Annotated[Session, Depends(get_db)],
-) -> AttackDashboardResponse:
-    """Coverage rollup + per-technique matrix for a released ATT&CK service.
+def attack_dashboard_content(
+    db: Session,
+    *,
+    client: Client,
+    svc: Service,
+    assessment: AttackAssessment,
+    coverage: Sequence[AttackCoverage],
+) -> AttackDashboardContent:
+    """The ATT&CK dashboard over `coverage`, the assessment's rows.
 
-    Tenant-enforced (404, never 403). Release-gated on the deliverable (NOT the
-    assessment status), so it is visible exactly when the downloadable report is.
+    #1178: extracted unchanged from `attack_dashboard`, which passes the rows
+    stored for the released assessment. The admin-only draft dashboard
+    (`routes/attack.py`) passes the rows as an AI run left them, rebuilt in
+    memory from the run's stored result, so the two cannot compute the same
+    rows differently. The release gate and the record the numbers come from
+    are the caller's.
     """
-    if client_id != client.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
-
-    released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
-        ServiceKind.ATTACK_COVERAGE, []
-    )
-    resolved = _dashboard_deliverable(
-        db, service_id=service_id, user=user, released_service_ids=released_attack_ids
-    )
-    if resolved is None:
-        # Typed 404 (D-016): the dashboard exists only once a deliverable is
-        # released (or, for an admin, finalized). 404 (not 403) keeps parity
-        # with the tenant-not-found path.
-        #
-        # THE STRING `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE,
-        # in `apps/web/src/lib/describe-save-error.ts` as the sole member of
-        # `GENERIC_COPY_IS_BETTER`. There is no build step between these two
-        # trees, so nothing derives one from the other.
-        #
-        # The pointer lives HERE, at the side that closes the window, rather
-        # than only there -- whoever renames this code is the person who would
-        # otherwise have no way to know the copy exists. Same placement, and
-        # the same reason, as `SCHEMA_REASON_PREFIX` in `app/exceptions.py`.
-        #
-        # THE WIDTH OF THE GAP, stated so it is not rediscovered: rename this
-        # code without editing that Set and the Set stops matching. The web
-        # layer then takes its unknown-code branch, prefers the server's
-        # sentence, and renders "No released X report for this service yet."
-        # over the client copy again -- which is #318, in the page's most
-        # common state, with nothing red. The five `test_*_dashboard.py`
-        # suites assert this literal over HTTP and would go red, but a rename
-        # refactor edits those in the same pass and nothing in that pass
-        # mentions a web-layer Set.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "dashboard_not_released",
-                "message": "No released ATT&CK coverage report for this service yet.",
-            },
-        )
-    deliv, is_released = resolved
-
-    svc = db.get(Service, service_id)
-    if svc is None:
-        # A finalized deliverable implies a service; if that invariant is
-        # broken, fail loudly rather than serve an empty dashboard.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "dashboard_not_released",
-                "message": "No released ATT&CK coverage report for this service yet.",
-            },
-        )
-    # #114: the numbers below and `deliverable_version` in the response must
-    # name the same record, so the assessment is resolved FROM `deliv`.
-    assessment = _deliverable_parent(
-        db,
-        AttackAssessment,
-        deliv,
-        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
-    )
-    if assessment is None:
-        raise _unresolved_parent(deliv, surface="attack_dashboard")
-    # #556: refuse, in client words, rather than drop unknown codes below.
-    require_current_catalog_for_client(assessment)
-
     valid = attack_all_codes()
     # #554 R3: computed statuses where they apply; the stored rows otherwise.
-    rows = attack_effective_coverage(
-        assessment,
-        db.execute(select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id))
-        .scalars()
-        .all(),
-    )
+    rows = attack_effective_coverage(assessment, coverage)
     coverage_map: dict[str, str | None] = {
         r.technique_code: r.status for r in rows if r.technique_code in valid
     }
@@ -1407,21 +1379,7 @@ def attack_dashboard(
         for reason, n in attack_partial_reason_counts(deliverable_ctx)
     ] or None
 
-    _log.info(
-        "client.attack_dashboard.built",
-        client_id=str(client.id),
-        service_id=str(service_id),
-        actor_user_id=str(user.id),
-        evaluated=len(techniques),
-        coverage_pct=rollup.coverage_pct,
-    )
-
-    return AttackDashboardResponse(
-        service_id=service_id,
-        service_title=svc.title,
-        released_at=_dashboard_stamp(deliv, is_released),
-        released=is_released,
-        deliverable_version=deliv.version,
+    return AttackDashboardContent(
         parents_computed=True if rule else None,
         # #554 R3 (Q4): the deliverable's own sentence, from the same context.
         awaiting_review_sentence=attack_awaiting_review_text(deliverable_ctx),
@@ -1473,13 +1431,127 @@ def attack_dashboard(
         retirement_notes=retirement_notes,
         partial_reasons=partial_reasons,
         # #889: all three states (Q1) and the per-tool mark (Q2). C1 counts
-        # EVERY row the deliverable prints that credits such a tool, at any
+        # every row that credits such a tool AND HAS A STATUS (#1010), at any
         # status, NOT only rows credited as coverage like the home card's flag
         # (`_attack_uncovered_total`): C1 says the row's status "may count" the
-        # tool, which is true of a Gap row's judgement too, and it is the
-        # document's own sentence, so the two surfaces stay the same claim.
+        # tool, which is true of a Gap row's judgement too, and an unscored row
+        # has no status. It is the document's own sentence, so the two surfaces
+        # stay the same claim.
         subset_notes=attack_subset_sentences(deliverable_ctx),
         tool_outside_subset=sorted(subset.outside_tools()) if subset.checked else None,
+    )
+
+
+@router.get(
+    "/{client_id}/attack/{service_id}/dashboard",
+    response_model=AttackDashboardResponse,
+    summary="Released ATT&CK coverage dashboard for the client (client + admin)",
+)
+def attack_dashboard(
+    client_id: uuid.UUID,
+    service_id: uuid.UUID,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Client, Depends(current_client)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AttackDashboardResponse:
+    """Coverage rollup + per-technique matrix for a released ATT&CK service.
+
+    Tenant-enforced (404, never 403). Release-gated on the deliverable (NOT the
+    assessment status), so it is visible exactly when the downloadable report is.
+    """
+    if client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    released_attack_ids = _released_service_ids_by_kind(db, client.id).get(
+        ServiceKind.ATTACK_COVERAGE, []
+    )
+    resolved = _dashboard_deliverable(
+        db, service_id=service_id, user=user, released_service_ids=released_attack_ids
+    )
+    if resolved is None:
+        # Typed 404 (D-016): the dashboard exists only once a deliverable is
+        # released (or, for an admin, finalized). 404 (not 403) keeps parity
+        # with the tenant-not-found path.
+        #
+        # THE STRING `dashboard_not_released` IS DUPLICATED IN THE WEB BUNDLE,
+        # in `apps/web/src/lib/describe-save-error.ts` as the sole member of
+        # `GENERIC_COPY_IS_BETTER`. There is no build step between these two
+        # trees, so nothing derives one from the other.
+        #
+        # The pointer lives HERE, at the side that closes the window, rather
+        # than only there -- whoever renames this code is the person who would
+        # otherwise have no way to know the copy exists. Same placement, and
+        # the same reason, as `SCHEMA_REASON_PREFIX` in `app/exceptions.py`.
+        #
+        # THE WIDTH OF THE GAP, stated so it is not rediscovered: rename this
+        # code without editing that Set and the Set stops matching. The web
+        # layer then takes its unknown-code branch, prefers the server's
+        # sentence, and renders "No released X report for this service yet."
+        # over the client copy again -- which is #318, in the page's most
+        # common state, with nothing red. The five `test_*_dashboard.py`
+        # suites assert this literal over HTTP and would go red, but a rename
+        # refactor edits those in the same pass and nothing in that pass
+        # mentions a web-layer Set.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+    deliv, is_released = resolved
+
+    svc = db.get(Service, service_id)
+    if svc is None:
+        # A finalized deliverable implies a service; if that invariant is
+        # broken, fail loudly rather than serve an empty dashboard.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "dashboard_not_released",
+                "message": "No released ATT&CK coverage report for this service yet.",
+            },
+        )
+    # #114: the numbers below and `deliverable_version` in the response must
+    # name the same record, so the assessment is resolved FROM `deliv`.
+    assessment = _deliverable_parent(
+        db,
+        AttackAssessment,
+        deliv,
+        (AttackAssessmentStatus.APPROVED, AttackAssessmentStatus.RELEASED),
+    )
+    if assessment is None:
+        raise _unresolved_parent(deliv, surface="attack_dashboard")
+    # #556: refuse, in client words, rather than drop unknown codes below.
+    require_current_catalog_for_client(assessment)
+
+    body = attack_dashboard_content(
+        db,
+        client=client,
+        svc=svc,
+        assessment=assessment,
+        coverage=db.execute(
+            select(AttackCoverage).where(AttackCoverage.assessment_id == assessment.id)
+        )
+        .scalars()
+        .all(),
+    )
+    _log.info(
+        "client.attack_dashboard.built",
+        client_id=str(client.id),
+        service_id=str(service_id),
+        actor_user_id=str(user.id),
+        evaluated=len(body.techniques),
+        coverage_pct=body.rollup.coverage_pct,
+    )
+
+    return AttackDashboardResponse(
+        **dict(body),
+        service_id=service_id,
+        service_title=svc.title,
+        released_at=_dashboard_stamp(deliv, is_released),
+        released=is_released,
+        deliverable_version=deliv.version,
     )
 
 
@@ -1623,6 +1695,9 @@ def zt_dashboard(
 
     largest = max(pillars, key=lambda p: p.gap_pct, default=None)
 
+    # #1343: the same predicate the deliverable's gap rows use.
+    unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))
+
     _log.info(
         "client.zt_dashboard.built",
         client_id=str(client.id),
@@ -1643,6 +1718,8 @@ def zt_dashboard(
         # this records the same class of fault one level down, and it belongs
         # in the row for the same reason: it is a number the client can dispute.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #1343: the codes served below as having no recorded target origin.
+        unrecorded_target_codes=unrecorded_codes,
     )
 
     return ZtDashboardResponse(
@@ -1675,6 +1752,7 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        unrecorded_target_codes=unrecorded_codes,
         # #839: off the same GapAnalysis, as #188's field above.
         target_cap_notes=zt_target_cap_sentences(gap_analysis),
         # #914: the same derivation the workspace and the three files call.
@@ -1781,7 +1859,11 @@ def tech_debt_dashboard(
     # of SPEND. An uncosted item contributes 0.0 below and is still counted in
     # `total_applications`, so the spend figure was a floor and said so nowhere
     # while `savings` beside it carried a flag for exactly this.
-    spend_cost_known = True
+    # TD-10 (for #1048): THE ONE RULE for the uncosted count, shared with the
+    # admin overlap view and the deliverable. The floor flag is derived from it,
+    # so the count and "partial" cannot disagree.
+    no_cost_count = len(no_cost_items(items))
+    spend_cost_known = no_cost_count == 0
     # category -> {"total": float, "items": [CapabilityItem]}; "count" is
     # derived below as the number of distinct LICENSES in the bucket.
     by_cat: dict[str, dict] = {}
@@ -1791,8 +1873,6 @@ def tech_debt_dashboard(
         # own, makes spend a floor. A real uncosted source row still does.
         part = is_component(it)
         cost = float(it.annual_cost_usd) if it.annual_cost_usd is not None and not part else 0.0
-        if it.annual_cost_usd is None and not part:
-            spend_cost_known = False
         annual_spend += cost
         # A part DOES sit in its own category (UX finding 5: Defender beside
         # CrowdStrike is a real redundancy), but a bundle and its parts are one
@@ -1807,12 +1887,22 @@ def tech_debt_dashboard(
             (i.disposition, savings_cost(i)) for i in bucket["items"]
         )
 
+    def _category_spend(cat: str, b: dict) -> TechDebtCategorySpend:
+        # #1214: the category's own uncosted count, by the same rule as the
+        # headline's, so the categories add up to it.
+        return TechDebtCategorySpend(
+            category=cat,
+            total_usd=round(b["total"], 2),
+            count=b["count"],
+            no_cost_count=len(no_cost_items(b["items"])),
+        )
+
     spend_by_category = [
-        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        _category_spend(cat, b)
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["total"], reverse=True)
     ]
     sprawl_by_category = [
-        TechDebtCategorySpend(category=cat, total_usd=round(b["total"], 2), count=b["count"])
+        _category_spend(cat, b)
         for cat, b in sorted(by_cat.items(), key=lambda kv: kv[1]["count"], reverse=True)
         if b["count"] > 1
     ]
@@ -1915,6 +2005,7 @@ def tech_debt_dashboard(
         source_rows_total=source_rows_total,
         included_count=included_count,
         excluded_count=excluded_count,
+        no_cost_count=no_cost_count,
         redundant_category_count=len(sprawl_by_category),
         spend_by_category=spend_by_category,
         sprawl_by_category=sprawl_by_category,
@@ -2212,14 +2303,15 @@ def csf_dashboard(
     gap = csf_analyze_gaps(answers, target_tier=target_tier)
 
     max_tier = CSF_MAX_TIER
-    target_pct = round(target_tier / max_tier * 100, 1)
+    # #1183: (avg - 1) / (top - 1), floored to one decimal (`maturity_percent`).
+    target_pct = maturity_percent(target_tier, max_tier)
 
     functions: list[CsfFunctionDashboard] = []
     largest_gap_function: str | None = None
     largest_gap_pct = 0.0
     for fn in score.by_function:
         current_pct = (
-            round(fn.average_tier / max_tier * 100, 1) if fn.average_tier is not None else None
+            maturity_percent(fn.average_exact, max_tier) if fn.average_exact is not None else None
         )
         gap_pct = round(max(0.0, target_pct - (current_pct or 0.0)), 1)
         if current_pct is not None and gap_pct > largest_gap_pct:
@@ -2268,8 +2360,8 @@ def csf_dashboard(
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(
-            round(score.average_tier / max_tier * 100, 1)
-            if score.average_tier is not None
+            maturity_percent(score.average_exact, max_tier)
+            if score.average_exact is not None
             else None
         ),
         coverage_pct=score.coverage_pct,

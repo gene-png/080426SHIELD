@@ -105,7 +105,11 @@ function OmittedItems<T extends AttackOmittedTechnique>({
  * are ZT's `ZtOmittedBlock` (#840) and CSF's playbook panel (#836).
  *
  * Not a refusal: an entry that names a technique and is refused is an answer,
- * not an omission. Only the N/A and forbidden-reason refusals are counted in
+ * not an omission. One exception since #1047: a technique the first pass left
+ * out whose RE-ASK answer is refused stays here (nothing applied it), so it
+ * can be counted both here and on the N/A or forbidden-reason line below; each
+ * line is true of it, and they are not to be added up. Only the N/A and
+ * forbidden-reason refusals are counted in
  * this panel, on their own lines further down (`not_applicable_refused`,
  * `forbidden_reason_refused`); the rest are only in the audit row's `details`
  * and reach no screen (#859). A failed batch's techniques are the failed-batch
@@ -180,6 +184,90 @@ function AttackOmittedBlock({
   );
 }
 
+/**
+ * #1047: the run asked a second time about the techniques a successful batch
+ * left out. The omitted block above already counts what is STILL missing
+ * after that; this line says the second ask happened, and how many of its
+ * requests failed. Copy R-1047-1, approved verbatim (#736 comment 6206422365),
+ * counts comma-formatted.
+ *
+ * Absent (a run stored before #1047) or 0 renders nothing.
+ */
+function AttackReaskLine({ result }: { result: AttackRunAiResponse }) {
+  const asked = result.reasked_count ?? 0;
+  if (asked === 0) return null;
+  const total = result.reask_batches_total ?? 0;
+  const failed = result.reask_batches_failed ?? 0;
+  const count = (n: number) => n.toLocaleString("en-US");
+  return (
+    <p className="text-ink-secondary" data-testid="attack-reask">
+      {asked === 1
+        ? "1 technique the AI left out was asked about again."
+        : `${count(asked)} techniques the AI left out were asked about again.`}
+      {failed > 0
+        ? ` ${count(failed)} of ${count(total)} of those follow-up requests failed, so those techniques are still listed above as left out.`
+        : null}
+    </p>
+  );
+}
+
+/**
+ * #1181: Gene's plain-English citation line, replacing the numeric headline
+ * ("{n} tool citations checked against the client's capability list: ...").
+ * Copy C-1 to C-5 approved verbatim (#736 comment 6216024281, from the
+ * proposal in 6208173127); counts comma-formatted. C-2a and C-5a keep #115's
+ * "completed batches only" qualifier on a partial run, and the singulars at
+ * n = 1 are 6219475831 item 5 and 6220638526 item 5.
+ */
+const CITATION_INTRO =
+  "For each attack technique, the AI listed which of the client's tools help stop it, spot it or respond to it. Each time it named a tool, we checked that the tool is really on the client's approved list, so the AI can't make one up.";
+
+function citationLine(
+  confirmed: number,
+  needsReview: number,
+  rejected: number,
+  runIncomplete: boolean,
+): string {
+  const n = (k: number) => k.toLocaleString("en-US");
+  const total = confirmed + needsReview + rejected;
+  if (total === 0) {
+    // C-5a (advisor, #736 6219475831 item 5): a partial run keeps #115's
+    // qualifier here too -- the failed batches may have named tools.
+    return runIncomplete
+      ? `${CITATION_INTRO} The AI named no tools in the completed batches, so there was nothing to check.`
+      : `${CITATION_INTRO} The AI named no tools, so there was nothing to check.`;
+  }
+  const checked = runIncomplete
+    ? `We checked ${n(total)} of these, from the batches that completed.`
+    : `We checked ${n(total)} of these.`;
+  if (needsReview === 0 && rejected === 0) {
+    // The singular is 6219475831 item 5's "It is on the list.".
+    const all =
+      total === 1 ? "It is on the list." : `All ${n(total)} are on the list.`;
+    return `${CITATION_INTRO} ${checked} ${all} None need a closer look and none were rejected.`;
+  }
+  // The singulars at n = 1 are 6219475831 item 5 and 6220638526 item 5.
+  const onList =
+    confirmed === 0
+      ? "None are on the list."
+      : confirmed === 1
+        ? "1 is on the list."
+        : `${n(confirmed)} are on the list.`;
+  const closer =
+    needsReview === 0
+      ? "None need a closer look."
+      : needsReview === 1
+        ? "1 needs a closer look."
+        : `${n(needsReview)} need a closer look.`;
+  const gone =
+    rejected === 0
+      ? "None were rejected."
+      : rejected === 1
+        ? "1 was rejected."
+        : `${n(rejected)} were rejected.`;
+  return `${CITATION_INTRO} ${checked} ${onList} ${closer} ${gone}`;
+}
+
 export function AttackCitationAccounting({
   result,
 }: {
@@ -188,7 +276,6 @@ export function AttackCitationAccounting({
   const confirmed = result.citations_confirmed ?? 0;
   const needsReview = result.citations_needs_review ?? 0;
   const rejected = result.citations_rejected ?? 0;
-  const total = confirmed + needsReview + rejected;
 
   // A payload from before the resolver carries none of these. Rendering
   // "0 citations" over it would assert something the run never measured.
@@ -243,17 +330,8 @@ export function AttackCitationAccounting({
       data-testid="attack-citation-accounting"
       aria-live="polite"
     >
-      <p className="text-ink-secondary">
-        {total === 1 ? "1 tool citation" : `${total} tool citations`} checked
-        {runIncomplete
-          ? " across the completed batches only"
-          : " against the client’s capability list"}
-        : <span className="font-semibold text-ink-primary">{confirmed}</span>{" "}
-        confirmed,{" "}
-        <span className="font-semibold text-ink-primary">{needsReview}</span>{" "}
-        need review,{" "}
-        <span className="font-semibold text-ink-primary">{rejected}</span>{" "}
-        rejected.
+      <p className="text-ink-secondary" data-testid="attack-citation-line">
+        {citationLine(confirmed, needsReview, rejected, runIncomplete)}
       </p>
 
       {runIncomplete ? (
@@ -286,6 +364,7 @@ export function AttackCitationAccounting({
         result={result}
         otherAlert={runIncomplete || rejected > 0}
       />
+      <AttackReaskLine result={result} />
 
       {pendingRows > 0 ? (
         <p

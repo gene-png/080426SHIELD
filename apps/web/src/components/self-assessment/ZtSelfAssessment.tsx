@@ -530,6 +530,7 @@ export function ZtSelfAssessment({
                           <ZtStagePicker
                             value={ans.maturity_stage}
                             stages={catalog.stages}
+                            maxStage={cap.max_stage}
                             ariaLabel={`Maturity stage for ${cap.code}`}
                             // #758 review: read-only while Submit is out. Submit
                             // cannot start while a save is out, but a save
@@ -585,6 +586,11 @@ export function ZtSelfAssessment({
                   );
                 })}
               </ul>
+              {/* Z2, the client's wording (#736 6204461502 section 6, approved
+                  at 6205956728): once, under the stage buttons. */}
+              <p className="text-xs text-ink-tertiary">
+                The highlighted stage is your current answer.
+              </p>
 
               {/* Within-pillar navigation */}
               <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-3">

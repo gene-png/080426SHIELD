@@ -1,0 +1,439 @@
+"""#1025: the AI framework holds no pooled connection of its own across a
+provider call.
+
+Measured on #1025 against Postgres: every background AI run held connections
+for its whole life, and eight concurrent ordinary runs exhausted the production
+pool for every tenant. Three holders were named:
+
+1. the REQUEST's session (`runs.start_run` re-read the run, and `get_db`
+   closes only after the background task);
+2. the job session's read transaction, across the call;
+3. `invoke`'s write transaction around the RUNNING `llm_calls` row, for the
+   length of every provider call, in the job and in every batch worker.
+
+This file pins 1 and 3, which release only what the framework itself opened.
+Holder 2 is ended by each CALLER before its call (`session_marks.
+end_read_transaction`, advisor #736 6216024281, 3e), so the run test below
+expects no connection held during a call; every caller is pinned in
+`test_ai_read_transaction_ended*.py`.
+
+Every test drives a route or `invoke` itself. CI runs SQLite, so the counts are
+of the SQLAlchemy pool, which is what ran out.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+
+import pytest
+from sqlalchemy import event, func, select
+from sqlalchemy.orm import Session
+
+from app.ai.llm import LLMResponse
+from app.models.llm_call import LLMCall, LLMCallMode, LLMCallStatus
+from tests._ai_runs import attack_run_ai
+from tests._attack_rows import standalone_rows
+from tests.unit.test_attack_run_ai import (  # noqa: F401  (fixture)
+    _admin,
+    _seed_tech_debt_tools,
+    app_client,
+)
+
+pytestmark = pytest.mark.unit
+
+
+@dataclass
+class PoolWatch:
+    """Connections checked out of one engine's pool, live."""
+
+    held: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    #: The most held at once since `reset_peak`, outside `paused()` blocks: a
+    #: probe the test itself opens is not counted against the code under test.
+    peak: int = 0
+    _paused: bool = False
+
+    def attach(self, engine) -> None:
+        def _out(*_args) -> None:
+            with self.lock:
+                self.held += 1
+                if not self._paused:
+                    self.peak = max(self.peak, self.held)
+
+        def _in(*_args) -> None:
+            with self.lock:
+                self.held -= 1
+
+        event.listen(engine, "checkout", _out)
+        event.listen(engine, "checkin", _in)
+
+    def now(self) -> int:
+        with self.lock:
+            return self.held
+
+    def reset_peak(self) -> None:
+        with self.lock:
+            self.peak = self.held
+
+    @contextmanager
+    def paused(self):
+        with self.lock:
+            self._paused = True
+        try:
+            yield
+        finally:
+            with self.lock:
+                self._paused = False
+
+
+def _recording(cls_list: list[Session]) -> type[Session]:
+    class _Recorded(Session):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            cls_list.append(self)
+
+    return _Recorded
+
+
+@dataclass
+class Sample:
+    held: int
+    request_in_txn: bool
+    workers_in_txn: bool
+    running_rows_visible: int
+
+
+def _attack_world(app_client, monkeypatch):  # noqa: F811
+    """A batched ATT&CK run, one worker so batches run one at a time and a
+    sample never catches a sibling mid-commit. Records the request sessions the
+    app opens and the batch workers' sessions."""
+    from app.ai import batching
+    from app.db.session import get_db
+    from app.routes import attack as attack_routes
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Tool A"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    coverage = c.post(f"/attack/services/{svc_id}/assessments", headers=h).json()["coverage"]
+
+    request_sessions: list[Session] = []
+
+    def _recorded_get_db():
+        db = TestSession()
+        request_sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    c.app.dependency_overrides[get_db] = _recorded_get_db
+    worker_sessions: list[Session] = []
+    monkeypatch.setattr(batching, "Session", _recording(worker_sessions))
+    watch = PoolWatch()
+    watch.attach(TestSession.kw["bind"])
+    samples: list[Sample] = []
+
+    def _answer(payload: dict) -> LLMResponse:
+        with TestSession() as probe:
+            running = probe.execute(
+                select(func.count())
+                .select_from(LLMCall)
+                .where(LLMCall.status == LLMCallStatus.RUNNING)
+            ).scalar_one()
+        samples.append(
+            Sample(
+                # Read after the probe closed, so it counts only the others.
+                held=watch.now(),
+                request_in_txn=any(s.in_transaction() for s in request_sessions),
+                workers_in_txn=any(s.in_transaction() for s in worker_sessions),
+                running_rows_visible=running,
+            )
+        )
+        entries = [
+            {
+                "technique_code": t,
+                "status": "gap",
+                "detection_tools": [],
+                "prevention_tools": [],
+                "response_tools": [],
+                "rationale": "x",
+            }
+            for t in payload.get("technique_codes") or []
+        ]
+        return LLMResponse(json.dumps({"techniques": entries}))
+
+    provider.register("mitre_map", _answer)
+    return c, h, svc_id, standalone_rows(coverage, 1), samples, request_sessions
+
+
+def test_the_request_session_holds_nothing_while_the_run_calls_the_provider(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """Holder 1: the session of the request that started the run."""
+    c, h, svc_id, rows, samples, request_sessions = _attack_world(app_client, monkeypatch)
+    result = attack_run_ai(c, svc_id, h)
+    assert result["batches_total"] > 1, "setup: a batched run"
+    assert len(samples) == result["batches_total"], samples
+    assert request_sessions, "setup: the request sessions were recorded"
+    assert not any(s.request_in_txn for s in samples), samples
+
+
+def test_no_batch_worker_holds_a_transaction_during_its_call_and_the_ledger_row_is_committed(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """Holder 3: the RUNNING `llm_calls` row is committed before egress, from
+    its own short session, so no worker holds a write open during the call,
+    and the row is evidence another session can already read."""
+    c, h, svc_id, rows, samples, _ = _attack_world(app_client, monkeypatch)
+    result = attack_run_ai(c, svc_id, h)
+    assert len(samples) == result["batches_total"] > 1, samples
+    assert not any(s.workers_in_txn for s in samples), samples
+    assert all(s.running_rows_visible == 1 for s in samples), samples
+    # And every row was finalized afterwards.
+    with app_client[1]() as db:
+        statuses = db.execute(select(LLMCall.status)).scalars().all()
+    assert statuses and set(statuses) == {LLMCallStatus.COMPLETED}, statuses
+
+
+def test_a_run_holds_no_connection_during_a_call(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """Measured on main: 3 per call (request, job, worker). With holders 1 and
+    3 released, the job session's read was the one left; with holder 2 ended
+    by the run before its calls (#736 6216024281, 3e), none is."""
+    c, h, svc_id, rows, samples, _ = _attack_world(app_client, monkeypatch)
+    result = attack_run_ai(c, svc_id, h)
+    assert len(samples) == result["batches_total"] > 1, samples
+    assert [s.held for s in samples] == [0] * len(samples), samples
+
+
+def _invoke_world(app_client):  # noqa: F811
+    from app.ai.llm import LLMClient
+    from app.models.client import Client
+
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    return TestSession, provider, LLMClient(provider), uuid.UUID(me["id"]), uuid.UUID(cid), Client
+
+
+def _visible_running(TestSession) -> int:
+    with TestSession() as other:
+        return other.execute(
+            select(func.count()).select_from(LLMCall).where(LLMCall.status == LLMCallStatus.RUNNING)
+        ).scalar_one()
+
+
+def test_a_caller_that_wrote_keeps_its_transaction_and_the_ledger_row_in_it(
+    app_client,  # noqa: F811
+) -> None:
+    """`invoke` never commits a caller's write: that would break the caller's
+    atomicity. With a write pending it keeps today's path, the RUNNING row in
+    the caller's own transaction (not yet visible to others), and a rollback
+    takes both away."""
+    TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)
+    seen: list[int] = []
+    provider.register(
+        "conn_probe",
+        lambda payload: (seen.append(_visible_running(TestSession)), LLMResponse("{}"))[1],
+    )
+    with TestSession() as db:
+        client = db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        client.legal_name = "Renamed mid-call"
+        db.flush()
+        llm.invoke(db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id)
+        db.rollback()
+    assert seen == [0], seen
+    with TestSession() as other:
+        name = other.execute(select(Client.legal_name).where(Client.id == cid)).scalar_one()
+        calls = other.execute(select(func.count()).select_from(LLMCall)).scalar_one()
+    assert (name, calls) == ("Acme", 0)
+
+
+def test_a_caller_with_an_open_read_keeps_one_connection_and_the_row_in_it(
+    app_client,  # noqa: F811
+) -> None:
+    """A caller already in a transaction holds its connection across the call
+    (holder 2, held for the advisor). `invoke` must not add a SECOND one beside
+    it, which would double the call's peak and could starve the pool: the row
+    joins the caller's transaction, unseen by others until it commits."""
+    TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)
+    watch = PoolWatch()
+    watch.attach(TestSession.kw["bind"])
+    seen: list[tuple[int, int]] = []
+
+    def _answer(payload: dict) -> LLMResponse:
+        held = watch.now()
+        with watch.paused():
+            seen.append((held, _visible_running(TestSession)))
+        return LLMResponse("{}")
+
+    provider.register("conn_probe", _answer)
+    with TestSession() as db:
+        db.execute(select(Client).where(Client.id == cid)).scalar_one()
+        assert db.in_transaction(), "setup: the caller holds an open read"
+        assert watch.now() == 1, "setup: the caller's read holds one connection"
+        watch.reset_peak()
+        llm.invoke(db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id)
+        # The PEAK across the whole call, ledger writes before and after the
+        # provider included: never a second connection beside the caller's.
+        peak = watch.peak
+        db.commit()
+    assert peak == 1, peak
+    assert seen == [(1, 0)], seen
+    with TestSession() as other:
+        assert other.execute(select(LLMCall.status)).scalars().all() == [LLMCallStatus.COMPLETED]
+
+
+def test_a_caller_with_no_transaction_gets_a_committed_ledger_row(
+    app_client,  # noqa: F811
+) -> None:
+    """Holder 3 through `invoke` itself: the RUNNING row is visible to another
+    session during the call, survives the caller's rollback (it is evidence a
+    call was made), and is finalized as COMPLETED."""
+    TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)
+    seen: list[int] = []
+    provider.register(
+        "conn_probe",
+        lambda payload: (seen.append(_visible_running(TestSession)), LLMResponse("{}"))[1],
+    )
+    with TestSession() as db:
+        _response, row = llm.invoke(
+            db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id
+        )
+        db.rollback()
+    assert seen == [1], seen
+    assert (row.status, row.purpose) == (LLMCallStatus.COMPLETED, "conn_probe")
+    with TestSession() as other:
+        stored = other.execute(select(LLMCall.status)).scalars().all()
+    assert stored == [LLMCallStatus.COMPLETED], stored
+
+
+def test_a_failed_call_from_a_caller_with_no_transaction_is_recorded_failed(
+    app_client,  # noqa: F811
+) -> None:
+    TestSession, provider, llm, user_id, cid, Client = _invoke_world(app_client)
+
+    def _boom(payload: dict) -> LLMResponse:
+        raise RuntimeError("provider closed the connection")
+
+    provider.register("conn_probe", _boom)
+    with TestSession() as db:
+        with pytest.raises(RuntimeError):
+            llm.invoke(db, purpose="conn_probe", prompt="p", payload={}, requested_by=user_id)
+        db.rollback()
+    with TestSession() as other:
+        rows = other.execute(select(LLMCall.status, LLMCall.error_message)).all()
+    assert [r.status for r in rows] == [LLMCallStatus.FAILED], rows
+    assert "provider closed the connection" in rows[0].error_message
+
+
+def test_a_run_reaped_mid_call_leaves_no_ledger_row_running(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    """A batch worker's RUNNING row is committed before egress, so a process
+    that dies mid-call would leave it RUNNING for ever. The reap that ends the
+    run ends that run's RUNNING calls too, FAILED, in the same transaction, and
+    touches nothing else: not the run's COMPLETED calls (billed, successful),
+    and not another call's RUNNING row.
+
+    The death is simulated inside the SECOND provider call, so one COMPLETED
+    row already exists: the run is dropped from the live set, as a restart
+    would leave it, and reaped from a session of its own, as the next status
+    read would. The ledger is read straight after the reap, and again after
+    the worker returns: a call that then completes says so, with no error."""
+    from app.ai import runs
+    from app.ai.run_context import ai_run_id_var
+    from app.routes import attack as attack_routes
+    from tests._ai_runs import get_run, start_run
+
+    monkeypatch.setattr(attack_routes, "_MITRE_MAX_WORKERS", 1)
+    c, TestSession, provider = app_client
+    bearer, cid = _admin(c)
+    me = c.get("/auth/me", headers={"Authorization": f"Bearer {bearer}"}).json()
+    _seed_tech_debt_tools(TestSession, cid, me["id"], ["Tool A"])
+    h = {"Authorization": f"Bearer {bearer}", "X-Client-Id": cid}
+    svc_id = c.post(
+        "/attack/services", headers=h, json={"kind": "attack_coverage", "title": "ATT&CK"}
+    ).json()["id"]
+    assert c.post(f"/attack/services/{svc_id}/assessments", headers=h).status_code == 201
+
+    # Another call in flight, outside any run (a preview, say): the reap of
+    # this run must leave it alone.
+    with TestSession() as db:
+        other = LLMCall(
+            purpose="other_call",
+            prompt_version="v1",
+            provider="fixture",
+            model="fixture-model-1",
+            mode=LLMCallMode.FIXTURE,
+            status=LLMCallStatus.RUNNING,
+            requested_by=uuid.UUID(me["id"]),
+        )
+        db.add(other)
+        db.commit()
+        other_id = other.id
+
+    def _counts(run_id) -> tuple[int, int, int]:
+        with TestSession() as db:
+            return tuple(
+                db.execute(
+                    select(func.count())
+                    .select_from(LLMCall)
+                    .where(LLMCall.ai_run_id == run_id, LLMCall.status == st)
+                ).scalar_one()
+                for st in (LLMCallStatus.RUNNING, LLMCallStatus.FAILED, LLMCallStatus.COMPLETED)
+            )
+
+    calls: list[int] = []
+    after_reap: list[tuple[int, int, int]] = []
+    reaped_run: list[uuid.UUID] = []
+
+    def _answer(payload: dict) -> LLMResponse:
+        calls.append(1)
+        if len(calls) == 2:
+            run_id = ai_run_id_var.get()
+            assert run_id is not None, "setup: the call is inside a run"
+            assert _counts(run_id) == (1, 0, 1), "setup: one completed, one in flight"
+            runs._mark_done(run_id)
+            with TestSession() as db:
+                runs.reap(db, service_id=uuid.UUID(svc_id))
+            after_reap.append(_counts(run_id))
+            reaped_run.append(run_id)
+        return LLMResponse(json.dumps({"techniques": []}))
+
+    provider.register("mitre_map", _answer)
+    started = start_run(c, f"/attack/services/{svc_id}/run-ai", h)
+    run = get_run(c, started["run_id"], h)
+    assert run["status"] == "failed", run
+    # Straight after the reap: the in-flight row FAILED, the completed one left.
+    assert after_reap == [(0, 1, 1)], after_reap
+    with TestSession() as db:
+        assert db.get(LLMCall, other_id).status == LLMCallStatus.RUNNING
+        rows = (
+            db.execute(
+                select(LLMCall.status, LLMCall.error_message)
+                .where(LLMCall.ai_run_id == reaped_run[0])
+                .order_by(LLMCall.requested_at)
+            )
+            .tuples()
+            .all()
+        )
+    # After the worker returned: the reaped call completed, and says so with no
+    # error; no row is RUNNING again.
+    assert rows[:2] == [(LLMCallStatus.COMPLETED, None), (LLMCallStatus.COMPLETED, None)], rows
+    assert LLMCallStatus.RUNNING not in {st for st, _ in rows}, rows

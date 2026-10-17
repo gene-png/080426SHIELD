@@ -15,8 +15,10 @@ import {
 import dynamic from "next/dynamic";
 import * as React from "react";
 
-import { DashShell } from "@/components/dashboards/shared";
+import { CollapsibleList, DashShell } from "@/components/dashboards/shared";
 import {
+  blindByTactic,
+  cannotBePreventedToggle,
   blindSpotReconciliation,
   blindSpots,
   dprCoverage,
@@ -389,6 +391,22 @@ export function AttackDashboard({
           <div style={{ position: "relative", height: 340 }}>
             <TacticBarChart byTactic={data.rollup.by_tactic} />
           </div>
+          {/* #1324: P-1, approved verbatim (#736 6225076633). The chart's
+              counts and the blind-spot categories below count differently;
+              this says how, where the chart is read. Shown only when that
+              section is on the page, since it names it (review F2). */}
+          {blind.length > 0 ? (
+            <p
+              data-testid="attack-tactic-bar-counting"
+              style={{ margin: "10px 0 0", color: C.muted, fontSize: 12 }}
+            >
+              This chart counts a technique under every tactic it belongs to,
+              and a parent technique as well as its sub-techniques, so its
+              uncovered counts can be higher than the categories under
+              &quot;What you&apos;re blind to today&quot;, which list each
+              technique once.
+            </p>
+          ) : null}
         </Section>
         <Section
           title="Overall coverage mix"
@@ -496,77 +514,35 @@ export function AttackDashboard({
               {reconcile}
             </p>
           ) : null}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, 1fr)",
-              gap: 14,
-            }}
-            className="dash-blind"
+          <p
+            data-testid="attack-blind-first-tactic"
+            style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}
           >
-            {blind.map((t) => (
-              <div
-                key={t.code}
-                style={{
-                  background: C.bg2,
-                  border: `1px solid ${C.border}`,
-                  borderLeft: `3px solid ${C.red}`,
-                  borderRadius: 12,
-                  padding: "16px 18px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                  }}
+            Each technique is listed under its first tactic.
+          </p>
+          {/* #1180 (B-1, approved #736 6216024281): one entry per category,
+              each opening its own page of that category's techniques. */}
+          <ul
+            data-testid="attack-blind-categories"
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            {blindByTactic(data).map((g) => (
+              <li key={g.slug}>
+                <a
+                  href={`/dashboards/attack/${data.service_id}/blind/${g.slug}`}
+                  style={{ color: C.text, fontWeight: 600, fontSize: 14 }}
                 >
-                  <div>
-                    <div
-                      style={{
-                        fontFamily: "ui-monospace, Menlo, monospace",
-                        fontSize: 11,
-                        color: C.muted,
-                      }}
-                    >
-                      {t.code}
-                    </div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>
-                      {t.name}
-                    </div>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: ".08em",
-                      padding: "3px 8px",
-                      borderRadius: 999,
-                      background: "rgba(239,68,68,.18)",
-                      color: "#fecaca",
-                    }}
-                  >
-                    {t.tactic_name}
-                  </span>
-                </div>
-                {t.rationale ? (
-                  <div
-                    style={{
-                      fontSize: 12.5,
-                      color: C.muted,
-                      lineHeight: 1.55,
-                      marginTop: 8,
-                    }}
-                  >
-                    {t.rationale}
-                  </div>
-                ) : null}
-              </div>
+                  {`${g.tactic} (${g.rows.length.toLocaleString("en-US")})`}
+                </a>
+              </li>
             ))}
-          </div>
+          </ul>
         </Section>
       ) : null}
 
@@ -949,42 +925,47 @@ function CannotBePreventedSection({
       <p style={{ margin: "0 0 10px", fontSize: 13 }}>
         {CANNOT_BE_PREVENTED_SENTENCE}
       </p>
-      <table
-        aria-label={CANNOT_BE_PREVENTED_HEADING}
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}
+      {/* #1384: collapsed by default; the count line below stays outside. */}
+      <CollapsibleList
+        label={(open) => cannotBePreventedToggle(rows.length, open)}
       >
-        <thead>
-          <tr>
-            {["Technique", "Status", "Detect", "Respond"].map((h) => (
-              <th
-                key={h}
-                style={{
-                  color: C.muted,
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  fontWeight: 600,
-                  fontSize: 11,
-                  borderBottom: `1px solid ${C.border}`,
-                }}
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((t) => (
-            <tr key={t.code}>
-              <td style={cell({ mono: true })}>{t.code}</td>
-              <td style={cell()}>
-                <Chip status={t.status} pendingReview={t.pending_review} />
-              </td>
-              <td style={cell({ muted: true })}>{t.in_place?.detect}</td>
-              <td style={cell({ muted: true })}>{t.in_place?.respond}</td>
+        <table
+          aria-label={CANNOT_BE_PREVENTED_HEADING}
+          style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}
+        >
+          <thead>
+            <tr>
+              {["Technique", "Status", "Detect", "Respond"].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    color: C.muted,
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    fontWeight: 600,
+                    fontSize: 11,
+                    borderBottom: `1px solid ${C.border}`,
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.code}>
+                <td style={cell({ mono: true })}>{t.code}</td>
+                <td style={cell()}>
+                  <Chip status={t.status} pendingReview={t.pending_review} />
+                </td>
+                <td style={cell({ muted: true })}>{t.in_place?.detect}</td>
+                <td style={cell({ muted: true })}>{t.in_place?.respond}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CollapsibleList>
       <p style={{ margin: "10px 0 0", fontSize: 13 }}>
         {rows.length === 1
           ? `This is 1 of the ${m} assessed techniques above.`
@@ -1077,4 +1058,68 @@ function cell(
     color: opts.muted ? C.muted : undefined,
     fontSize: opts.mono ? 11.5 : undefined,
   };
+}
+
+/** #1180: one blind-spot card, as the dashboard drew it before the
+ *  categories; the category page renders these. */
+export function BlindSpotCard({ t }: { t: DashTechnique }): JSX.Element {
+  return (
+    <div
+      style={{
+        background: C.bg2,
+        border: `1px solid ${C.border}`,
+        borderLeft: `3px solid ${C.red}`,
+        borderRadius: 12,
+        padding: "16px 18px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontFamily: "ui-monospace, Menlo, monospace",
+              fontSize: 11,
+              color: C.muted,
+            }}
+          >
+            {t.code}
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{t.name}</div>
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: ".08em",
+            padding: "3px 8px",
+            borderRadius: 999,
+            background: "rgba(239,68,68,.18)",
+            color: "#fecaca",
+          }}
+        >
+          {t.tactic_name}
+        </span>
+      </div>
+      {t.rationale ? (
+        <div
+          style={{
+            fontSize: 12.5,
+            color: C.muted,
+            lineHeight: 1.55,
+            marginTop: 8,
+          }}
+        >
+          {t.rationale}
+        </div>
+      ) : null}
+    </div>
+  );
 }

@@ -36,6 +36,7 @@ from app.tech_debt.components import (
     savings_cost,
     source_items,
 )
+from app.tech_debt.overlap import no_cost_items
 from app.tech_debt.reconcile import exclusion_count_state
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
 from app.xlsx_export import safe_text_row
@@ -85,10 +86,34 @@ class DeliverableContext:
     #: default is "not recorded", never live: a context built without a lookup
     #: must not read as a clean one.
     ai_mode: AiModeStamp = UNKNOWN_AI_MODE
+    #: TD-10 (for #1048): the names of the source items `total_cost` leaves
+    #: out, from `overlap.no_cost_items`. `spend_cost_known` is False exactly
+    #: when this is non-empty, because `build_context` derives one from the
+    #: other. Defaulted like `spend_cost_known`; `build_context` always sets it.
+    no_cost_names: tuple[str, ...] = ()
 
 
 #: #193: why the exclusion count is unknown, as every surface states it.
 UNKNOWN_EXCLUSION_CAUSE = "the AI could not match every extracted capability to one uploaded row"
+
+
+def no_cost_lines(ctx: DeliverableContext) -> list[str]:
+    """TD-10 (for #1048): the note that the annual cost leaves tools out, and
+    their names; nothing when every tool has a cost. Copy approved verbatim on
+    #736 (6115773247; strings in 6115177462), with the singular forms. All
+    three renderers print these lines after the cost figure."""
+    names = ctx.no_cost_names
+    if not names:
+        return []
+    if len(names) == 1:
+        return [
+            "Note: 1 tool has no cost; the annual cost excludes it.",
+            f"Tool with no cost: {names[0]}.",
+        ]
+    return [
+        f"Note: {len(names)} tools have no cost; the annual cost excludes them.",
+        f"Tools with no cost: {', '.join(names)}.",
+    ]
 
 
 def reconciliation_line(ctx: DeliverableContext) -> str | None:
@@ -252,7 +277,10 @@ def build_context(
     # `total_cost` SKIPS an uncosted item rather than failing, which makes the
     # figure a floor. Nothing recorded that, so `cost_label` had no way to know
     # and printed "Total annual cost" over it (#126, exporter half).
-    spend_known = True
+    # TD-10 (for #1048): the floor flag is DERIVED from the uncosted items, so
+    # the count the files state and the label above it cannot disagree.
+    uncosted = no_cost_items(items_list)
+    spend_known = not uncosted
     for it in items_list:
         # for #835: a split bundle's part is not a cost. Its parent holds the
         # license value, so the part neither adds to the total nor, by having
@@ -261,8 +289,6 @@ def build_context(
             continue
         if it.annual_cost_usd is not None:
             total_cost += float(it.annual_cost_usd)
-        else:
-            spend_known = False
     named = list(getattr(cap_list, "excluded_rows", None) or [])
     received = getattr(cap_list, "source_rows_total", None)
     # Rows that came from the upload. Children of a decomposed bundle carry a
@@ -313,6 +339,7 @@ def build_context(
         estimated_savings=estimated_savings,
         savings_cost_known=savings_known,
         spend_cost_known=spend_known,
+        no_cost_names=tuple(it.name for it in uncosted),
         # #177: THE ONE READER, as the dashboard and the admin list call it.
         exclusion_state=exclusion_count_state(cap_list),
     )
@@ -393,13 +420,21 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
     ws.cell(row=summary_row, column=5, value=ctx.total_cost).number_format = "$#,##0"
     ws.cell(row=summary_row + 1, column=1, value="Estimated annual savings").font = Font(bold=True)
     savings_cell = ws.cell(row=summary_row + 1, column=5, value=ctx.estimated_savings)
-    savings_cell.number_format = "$#,##0"
+    # #1094: the "≥" is ON the value when the savings are a floor, as the PDF and
+    # DOCX print it. The cell stays NUMERIC (a sum over it still works); only
+    # its number format carries the marker, so a copied cell carries it too.
+    # An exact figure keeps the plain format. Ruled on #736 (6229200940).
+    savings_cell.number_format = "$#,##0" if ctx.savings_cost_known else '"≥ "$#,##0'
     if not ctx.savings_cost_known:
         ws.cell(
             row=summary_row + 1,
             column=6,
             value="≥ (one or more cut rows missing a cost)",
         ).font = Font(italic=True)
+    # TD-10 (for #1048): below the savings row, so every existing cell keeps
+    # its position. The names are client text, so they go in as text.
+    for line in no_cost_lines(ctx):
+        safe_text_row(ws, [line])
 
     # Reasonable column widths.
     widths = [28, 22, 16, 28, 18, 10, 14, 38, 38, 16]
@@ -477,6 +512,9 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
             body,
         )
     )
+    # TD-10 (for #1048): the names are client text, so they are escaped (#775).
+    for line in no_cost_lines(ctx):
+        story.append(pdf_text(line, body))
     if not ctx.savings_cost_known:
         story.append(
             Paragraph(
@@ -567,6 +605,8 @@ def render_docx(ctx: DeliverableContext) -> bytes:
         # for #835: source items, not a split bundle's parts.
         f"Capabilities reviewed: {ctx.included_count}",
         f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
+        # TD-10 (for #1048): directly after the cost line it qualifies.
+        *no_cost_lines(ctx),
         f"Estimated annual savings: {savings}",
     ]
     if not ctx.savings_cost_known:

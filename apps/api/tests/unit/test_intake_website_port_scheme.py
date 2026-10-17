@@ -67,6 +67,26 @@ def test_a_bare_scheme_and_a_port_is_refused(app_client, typed) -> None:  # noqa
         assert db.execute(select(Client)).scalar_one().website is None
 
 
+# The scheme-then-digit guard's own sentence, spelled out rather than imported
+# so the test does not agree with the schema by construction. "https:1.2.3.4"
+# would 422 without the guard too ("1.2.3.4" is not a valid port), so only its
+# MESSAGE says which check refused it (review of 1e93d146).
+_NEEDS_SLASHES = 'A website address needs "//" after "http:" or "https:".'
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["https:8080", "http:443/x", "HTTPS:8080", "https:8080/about", " http:80 ", "https:1.2.3.4"],
+)
+def test_scheme_then_digit_names_its_guard(app_client, typed) -> None:  # noqa: F811
+    client, _ = app_client
+    bearer = _register_and_bearer(client)
+    r = _patch_website(client, bearer, typed)
+    assert r.status_code == 422, r.text
+    msgs = [d.get("msg", "") for d in r.json()["error"]["details"]]
+    assert any(m.endswith(_NEEDS_SLASHES) for m in msgs), msgs
+
+
 @pytest.mark.parametrize(
     ("typed", "stored"),
     [

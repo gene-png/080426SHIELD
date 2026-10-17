@@ -565,6 +565,9 @@ _SIGNATURE_LEAKS = [
     ("signatory line ends in punctuation", "Dana Whitfield, CISO."),
     ("name with suffix, as the LAST line", "John Smith Jr."),
     ("rank and initials, five tokens", "Lt. Col. Dana M. Whitfield"),
+    # #1256: six tokens AND a final full stop, so the prose test (more than four
+    # words, ending in ".") fired before the signatory test, and nothing was cut.
+    ("rank, initials and suffix, ending in a full stop", "Lt. Col. Dana M. Whitfield Jr."),
 ]
 
 
@@ -597,5 +600,16 @@ def test_the_signature_blocks_that_leaked_are_cut(shape: str, tail: str) -> None
     assert not counts.get("address"), f"{shape}: an address/ZIP signal is doing the work"
 
     assert counts.get("signature_block"), f"{shape}: the sign-off was not cut"
-    surname = tail.replace(",", " ").split()[-1].rstrip(".")
+    # The last word that is not a suffix or initial: for "... Whitfield Jr." the
+    # last token is "Jr", which proves nothing about the name (review of
+    # 96b41f97, #1256).
+    tokens = tail.replace(",", " ").split()
+    # Nor a capitalised title ("CISO."): for "Dana Whitfield, CISO." that is
+    # the job, not the name (review of db522400).
+    surname = next(
+        t
+        for t in reversed(tokens)
+        if not (len(t) <= 4 and t.endswith(".")) and not t.rstrip(".").isupper()
+    )
+    surname = surname.rstrip(".")
     assert surname not in out, f"{shape}: {surname!r} egressed"

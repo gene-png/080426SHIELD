@@ -299,7 +299,9 @@ def test_t6_the_home_card_flags_a_covered_technique_relying_on_a_tool_outside_th
 ) -> None:
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
-    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    # #1016: LEGACY is the row's only tool, so its Covered status rests on
+    # it, and the home card's "relies on" holds once LEGACY leaves the list.
+    _cover(w, _codes(w)[0], [LEGACY])
     _release(w, _approve_finalize(w))
     before = _value_summary(w)
     assert before["attack_uncovered_count"] is not None, before  # positive first
@@ -467,7 +469,9 @@ def test_a_tool_dropped_from_an_approved_v2_is_flagged_though_v1_held_it(
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
     w.approve_list()
-    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    # #1016: LEGACY is the row's only tool, so its Covered status rests on
+    # it, and the home card's "relies on" holds once LEGACY leaves the list.
+    _cover(w, _codes(w)[0], [LEGACY])
     _release(w, _approve_finalize(w))
     before = _dashboard(w)
     assert before["tool_outside_subset"] == [], before.get("tool_outside_subset")  # positive first
@@ -513,7 +517,9 @@ def test_in_a_drafts_only_service_the_newest_draft_is_the_list(
     service's only draft. This used to be two drafts."""
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)  # v1 is a DRAFT
-    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    # #1016: LEGACY is the row's only tool, so its Covered status rests on
+    # it, and the home card's "relies on" holds once LEGACY leaves the list.
+    _cover(w, _codes(w)[0], [LEGACY])
     _release(w, _approve_finalize(w))
     assert _dashboard(w)["tool_outside_subset"] == []  # positive first: v1 holds it
     _discard(w, w.list_id)
@@ -602,7 +608,9 @@ def test_an_open_draft_changes_nothing_the_admin_or_the_client_sees(
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
     w.approve_list()
-    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    # #1016: LEGACY is the row's only tool, so its Covered status rests on
+    # it, and the home card's "relies on" holds once LEGACY leaves the list.
+    _cover(w, _codes(w)[0], [LEGACY])
     _release(w, _approve_finalize(w))
     w.confirm_not_security(LEGACY)
     w.approve_list()

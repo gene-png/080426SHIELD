@@ -20,6 +20,7 @@ import {
   type TechDebtDashboardData,
   type TechDebtItem,
 } from "@/lib/dashboards/techDebt";
+import { noCostSentence } from "@/lib/tech_debt/components";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 
 import type { JSX } from "react";
@@ -70,18 +71,31 @@ const DISPOSITION: Record<string, { bg: string; fg: string; label: string }> = {
  */
 export function spendSub(data: TechDebtDashboardData): string {
   if (data.spend_completeness === "unknown") {
-    return "May not be complete - upload not reconciled";
+    // #1215: the files for the same list state the uncosted count, so the
+    // dashboard does too (approved on #736, 6216024281).
+    const noCost = noCostSentence(data.no_cost_count);
+    const note = "May not be complete - upload not reconciled";
+    return noCost === null ? note : `${note} · ${noCost}`;
   }
   if (data.spend_completeness === "partial") {
+    // TD-10 (for #1048): the count of tools the total leaves out follows any
+    // exclusion text, so an excluded row can no longer hide it.
+    const noCost = noCostSentence(data.no_cost_count);
+    const withNoCost = (exclusion: string) =>
+      noCost === null ? exclusion : `${exclusion} · ${noCost}`;
     // #193: an exclusion count the extraction could not attribute is a FLOOR,
     // and 0 when items were as many as rows -- never stated as the count.
     if (!data.excluded_count_exact && data.source_rows_total !== null) {
-      return data.excluded_count > 0
-        ? `Floor - at least ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`
-        : "May not be complete - excluded rows could not be counted";
+      return withNoCost(
+        data.excluded_count > 0
+          ? `Floor - at least ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`
+          : "May not be complete - excluded rows could not be counted",
+      );
     }
     if (data.excluded_count > 0 && data.source_rows_total !== null) {
-      return `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`;
+      return withNoCost(
+        `Floor - ${data.excluded_count} of ${data.source_rows_total} uploaded rows excluded`,
+      );
     }
     // The unbalanced case -- more items than source rows -- used to arrive
     // here looking like an uncosted tool, and had its own "does not
@@ -89,8 +103,18 @@ export function spendSub(data: TechDebtDashboardData): string {
     // means attribution failed, so the API reports `excluded_count_exact`
     // false and the branch above takes it. Pinned at the API by
     // `test_an_unbalanced_list_is_never_exact`. What remains here is the one
-    // cause left: an included tool with no cost.
-    return "Floor - some tools lacked a cost";
+    // cause left: an included tool with no cost, which the API counts with the
+    // same predicate that made the figure partial.
+    //
+    // RATCHET, deliberately kept: the count-free sentence below is UNREACHABLE
+    // from the current API, which reaches this line only with
+    // no_cost_count > 0 (`no_cost_items` sets both the count and "partial").
+    // It would become reachable if "partial" gained a cause other than an
+    // uncosted tool or an exclusion, or if an API older than `no_cost_count`
+    // served this page. Either way it stays a floor, never "Across all tools".
+    return noCost === null
+      ? "Floor - some tools lacked a cost"
+      : `Floor - ${noCost}`;
   }
   return "Across all tools";
 }
@@ -263,7 +287,14 @@ export function TechDebtDashboard({
         />
         <KpiCard
           label="Identified savings"
-          value={usdFull(data.identified_savings_usd)}
+          // #1094: "≥" ON the value when the savings are a floor, the marker
+          // the PDF, DOCX and plan card use. Only `true` reads as exact; a
+          // missing flag (an API older than the field) is a floor too.
+          value={
+            data.savings_cost_known === true
+              ? usdFull(data.identified_savings_usd)
+              : `≥ ${usdFull(data.identified_savings_usd)}`
+          }
           sub={
             data.savings_cost_known
               ? "From tools marked to cut"

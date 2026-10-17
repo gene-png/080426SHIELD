@@ -50,6 +50,10 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
         "REFUSED",
         "tests/unit/test_approved_writes_refused.py::test_attack_discard_assessment_refuses_approved",
     ),
+    "app/routes/attack.py::draft_dashboard": (
+        "NOT A WRITE",
+        "NOT A WRITE: an over-match; _row_as_the_run_left_it builds AttackCoverage rows in memory from a stored run result and never adds them to a session (#1178, pinned by test_attack_draft_dashboard.py::test_reading_the_draft_writes_nothing)",
+    ),
     "app/routes/attack.py::finalize_attack_deliverable": (
         "EXCLUDED",
         "D: clears documents_stale only, a staleness flag, not content (A4)",
@@ -169,6 +173,10 @@ WRITER_VERDICTS: dict[str, tuple[str, str]] = {
     "app/routes/tech_debt.py::approve_capability_list": (
         "EXCLUDED",
         "T: a status transition into APPROVED (idempotent on APPROVED) or the release flip APPROVED -> RELEASED, with its ParentGuard (A4, #736 6136101129); and A1: re-approving overwrites approved_membership, approved_at, approved_by and approved_revision",
+    ),
+    "app/routes/tech_debt.py::bulk_confirm_security_classification": (
+        "EXCLUDED",
+        "A1: a Tech Debt APPROVED list stays editable; an edit makes the approval stale and release refuses it in the flip (#640, #657; ruled #736 6136101129)",
     ),
     "app/routes/tech_debt.py::bulk_set_disposition": (
         "EXCLUDED",

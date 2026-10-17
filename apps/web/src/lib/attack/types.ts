@@ -279,6 +279,22 @@ export interface AttackRunAiResponse {
    */
   omitted_count?: number;
   omitted_techniques?: AttackOmittedTechnique[];
+  /**
+   * #1047. The run asks once more for the techniques a successful batch left
+   * out, so `omitted_*` above is what is STILL missing after that. How many
+   * techniques were asked again, in how many requests, and how many of those
+   * failed. Not `batches_*`: a failed re-ask's techniques stay omitted.
+   * Optional so a run stored before #1047 parses unchanged (C0).
+   */
+  reasked_count?: number;
+  reask_batches_total?: number;
+  reask_batches_failed?: number;
+  /**
+   * #1325. How many techniques the run's first pass asked about, failed
+   * batches included; the "of {total}" in the Mapping done line. Optional: a
+   * run stored before #1325 has none, which is "not recorded", not zero.
+   */
+  techniques_asked?: number | null;
 }
 
 /**

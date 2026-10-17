@@ -59,6 +59,9 @@ class _FakeItem:
     annual_cost_usd: float | None = 100.0
     disposition: object | None = None
     parent_item_id: object | None = None
+    # TD-10 (for #1048): `build_context` names the uncosted items, and a real
+    # `CapabilityItem.name` is NOT NULL, so the fake carries one too.
+    name: str = "Tool"
 
 
 def _ctx(
