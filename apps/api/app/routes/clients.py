@@ -157,6 +157,7 @@ from app.zt.scoring import (
 from app.zt.scoring import resolve_target_stage as zt_resolve_target_stage
 from app.zt.target_caps import stage_above_max_sentences as zt_stage_above_max_sentences
 from app.zt.target_caps import target_cap_sentences as zt_target_cap_sentences
+from app.zt.target_origin import unrecorded_target_codes as zt_unrecorded_target_codes
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -1693,6 +1694,9 @@ def zt_dashboard(
 
     largest = max(pillars, key=lambda p: p.gap_pct, default=None)
 
+    # #1343: the same predicate the deliverable's gap rows use.
+    unrecorded_codes = list(zt_unrecorded_target_codes(fw, rows))
+
     _log.info(
         "client.zt_dashboard.built",
         client_id=str(client.id),
@@ -1713,6 +1717,8 @@ def zt_dashboard(
         # this records the same class of fault one level down, and it belongs
         # in the row for the same reason: it is a number the client can dispute.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        # #1343: the codes served below as having no recorded target origin.
+        unrecorded_target_codes=unrecorded_codes,
     )
 
     return ZtDashboardResponse(
@@ -1745,6 +1751,7 @@ def zt_dashboard(
         # would be worse than most -- the screen and the PDF would be stating
         # different facts about one assessment.
         unusable_target_codes=list(gap_analysis.unusable_target_codes),
+        unrecorded_target_codes=unrecorded_codes,
         # #839: off the same GapAnalysis, as #188's field above.
         target_cap_notes=zt_target_cap_sentences(gap_analysis),
         # #914: the same derivation the workspace and the three files call.
