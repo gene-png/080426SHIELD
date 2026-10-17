@@ -561,6 +561,12 @@ def _is_unscored(cov: AttackCoverage | None) -> bool:
     return False
 
 
+def has_status(cov: AttackCoverage | None) -> bool:
+    """The row has a status the rollup counts. A sentence about what a STATUS
+    counts or credits (#1010, #1277) is not about a row that has none."""
+    return not _is_unscored(cov)
+
+
 def _tactic_name(tactic_id: str) -> str:
     for t in TACTICS:
         if t.id == tactic_id:
