@@ -283,6 +283,7 @@ def _publish_blockers(
     *,
     selection: SelectionRead,
     ignore_ids: frozenset[str] = frozenset(),
+    log_refusal: bool = True,
 ) -> list[Blocker]:
     """What stops this register being published, per input. Empty = publishable
     as far as its inputs go.
@@ -421,7 +422,7 @@ def _publish_blockers(
         for (kind, service_id), _was in then.items():
             if kind in SYNTHESIS_KINDS and str(service_id) not in drawn_from:
                 blockers.append(Blocker(str(kind), "not_recorded", None))
-    if blockers:
+    if blockers and log_refusal:
         _log.info(
             "risk_publish_inputs_blocked",
             client_id=str(client_id),
@@ -440,7 +441,8 @@ def publish_blockers(
 ) -> list[Blocker]:
     """`_publish_blockers`, with each DISCARD_DRAFT candidate CHECKED against the
     real gate (#1156). "Discard that draft, then publish again" is a promise
-    that publishing then succeeds, so it is kept only if re-running the very
+    that the input gate then passes (publish still runs its own certifiable-inputs
+    and unrated-entries refusals after it), so it is kept only if re-running the very
     same checks with every candidate draft removed returns NO blockers. A draft
     beside any other blocker, a recorded record whose CSF Playbook fingerprint
     has drifted, a service archived or newly engaged since generate: each fails
@@ -451,8 +453,23 @@ def publish_blockers(
     if not candidates:
         return blockers
     drafts = frozenset(b.draft_id for b in candidates if b.draft_id)
-    if len(drafts) == len(candidates) and not _publish_blockers(
-        db, client_id, recorded, synthesized, selection=selection, ignore_ids=drafts
-    ):
+    # log_refusal=False: this pass describes an imagined world, not a refusal.
+    kept = len(drafts) == len(candidates) and not _publish_blockers(
+        db,
+        client_id,
+        recorded,
+        synthesized,
+        selection=selection,
+        ignore_ids=drafts,
+        log_refusal=False,
+    )
+    names = [b.kind for b in candidates]
+    _log.info(
+        "risk_publish_discard_decision",
+        client_id=str(client_id),
+        kept=names if kept else [],
+        demoted=[] if kept else names,
+    )
+    if kept:
         return blockers
     return [replace(b, remedy=RELEASE_NEWER) if b.remedy == DISCARD_DRAFT else b for b in blockers]

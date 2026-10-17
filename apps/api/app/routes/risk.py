@@ -3001,7 +3001,9 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
     # The unit is the REGISTER, not one input: "discard that draft, then
     # publish again" is true only when every blocker is such a draft. Beside any
     # other blocker, publishing after the discard is still refused, so the draft
-    # is told to be released instead (the waiting sentence).
+    # is told to be released instead (the waiting sentence). `publish_blockers`
+    # already demotes such a draft, so no current writer sends one beside another
+    # blocker: this guards a direct caller of this function.
     only_discardable = bool(blockers) and all(
         b.reason == "changed" and b.remedy == DISCARD_DRAFT for b in blockers
     )

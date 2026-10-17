@@ -362,3 +362,72 @@ def test_following_discard_publishes_for_tech_debt(app_client) -> None:  # noqa:
     assert d.status_code == 200, d.text
     ok = _publish(c, bearer, cid)
     assert ok.status_code == 200, ok.text
+
+
+def _attack_revision(c, bearer, cid, s) -> str:
+    r = c.post(
+        f"/attack/services/{s.attack_service}/assessments/{s.attack_assessment}/revisions",
+        headers=_h(bearer, cid),
+        json={"reason": "Client asked for a correction."},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_following_discard_of_two_drafts_in_two_services_publishes(
+    app_client,  # noqa: F811
+) -> None:
+    # Both ATT&CK and ZT have a draft directly over the released record the
+    # register drew on. Discarding BOTH publishes, so the discard sentence is
+    # kept; the counterfactual must remove every candidate, not only the first.
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_released(c, bearer, cid)
+    _gen(c, provider, bearer, cid)
+    attack_draft = _attack_revision(c, bearer, cid, s)
+    zt_draft = _revise(c, bearer, cid, s.zt_service, s.zt_assessment, approve=False)
+    p = _publish(c, bearer, cid)
+    assert {b["input"] for b in _blockers(p)} == {"attack", "zt"}
+    assert p.json()["error"]["message"] == _DISCARD
+    h = _h(bearer, cid)
+    assert c.post(f"/attack/assessments/{attack_draft}/discard", headers=h).status_code == 200
+    assert _publish(c, bearer, cid).status_code == 409  # one draft left: still refused
+    assert c.post(f"/zt/assessments/{zt_draft}/discard", headers=h).status_code == 200
+    ok = _publish(c, bearer, cid)
+    assert ok.status_code == 200, ok.text
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def info(self, event: str, **kw) -> None:
+        self.events.append((event, kw))
+
+    def __getattr__(self, _name):
+        return self.info
+
+
+def test_one_refusal_logs_the_real_blockers_once_and_the_discard_decision(
+    app_client,  # noqa: F811
+    monkeypatch,
+) -> None:
+    # ATT&CK draft over released, ZT only approved at generate: the counterfactual
+    # pass must not log its imagined blockers as a refusal, and the kept-or-demoted
+    # decision is logged once.
+    import app.risk.inputs as inputs
+
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    release(c, bearer, cid, "attack", s.attack_service)  # ZT stays approved
+    _gen(c, provider, bearer, cid)
+    _attack_revision(c, bearer, cid, s)
+    recorder = _Recorder()
+    monkeypatch.setattr(inputs, "_log", recorder)
+    assert _publish(c, bearer, cid).status_code == 409
+    blocked = [kw for (e, kw) in recorder.events if e == "risk_publish_inputs_blocked"]
+    assert [sorted(k for k, _r in kw["blockers"]) for kw in blocked] == [["attack", "zt"]], blocked
+    decisions = [kw for (e, kw) in recorder.events if e == "risk_publish_discard_decision"]
+    assert len(decisions) == 1, decisions
+    assert (decisions[0]["kept"], decisions[0]["demoted"]) == ([], ["attack"]), decisions
