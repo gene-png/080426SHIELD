@@ -26,6 +26,7 @@ export function BlankAnswersWarning({
   total,
   noun,
   disabled,
+  disabledReason,
   onGoTo,
   onSubmitAnyway,
 }: {
@@ -33,10 +34,14 @@ export function BlankAnswersWarning({
   total: number;
   noun: BlankAnswersNoun;
   disabled: boolean;
+  /** Why "Submit anyway" is off, when the cause is one the client can fix. */
+  disabledReason?: string;
   onGoTo: (code: string) => void;
   onSubmitAnyway: () => void;
 }): JSX.Element {
   const ref = React.useRef<HTMLDivElement>(null);
+  const messageId = React.useId();
+  const reasonId = React.useId();
   // Move focus here when it appears, so a keyboard user who pressed Submit
   // lands on the warning rather than on a button that did nothing visible.
   React.useEffect(() => {
@@ -48,10 +53,11 @@ export function BlankAnswersWarning({
     <div
       ref={ref}
       role="status"
+      aria-labelledby={messageId}
       tabIndex={-1}
       className="flex flex-col gap-3 rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm text-status-warning-fg"
     >
-      <p>{blankAnswersMessage(blank, total, noun)}</p>
+      <p id={messageId}>{blankAnswersMessage(blank, total, noun)}</p>
       <div className="flex flex-wrap items-center gap-2">
         {withBlanks.map((a) => (
           <button
@@ -67,11 +73,15 @@ export function BlankAnswersWarning({
           type="button"
           onClick={onSubmitAnyway}
           disabled={disabled}
+          aria-describedby={disabled && disabledReason ? reasonId : undefined}
           className="rounded-md bg-brand-500 px-4 py-1.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {SUBMIT_ANYWAY}
         </button>
       </div>
+      {disabled && disabledReason ? (
+        <p id={reasonId}>{disabledReason}</p>
+      ) : null}
     </div>
   );
 }

@@ -47,6 +47,11 @@ import type {
 
 import type { JSX } from "react";
 
+// The Submit button's title, and the reason the blank-answer warning gives
+// when "Submit anyway" is off for the same cause.
+const PILLAR_REQUIRED_REASON =
+  "Answer at least one capability in every pillar first.";
+
 export function ZtSelfAssessment({
   serviceId,
   framework,
@@ -94,6 +99,13 @@ export function ZtSelfAssessment({
   // #1173: Submit with blanks shows the warning instead of submitting.
   const [blankWarning, setBlankWarning] = React.useState(false);
   const pillarRef = React.useRef<HTMLElement>(null);
+  // Bumped by the warning's "Go to" only: the pillar section takes focus once
+  // it has rendered as the chosen pillar (#1191), so its accessible name is
+  // the new pillar's when focus lands, never the previous one's.
+  const [focusRequest, setFocusRequest] = React.useState(0);
+  React.useEffect(() => {
+    if (focusRequest > 0) pillarRef.current?.focus();
+  }, [focusRequest]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -319,6 +331,10 @@ export function ZtSelfAssessment({
       behavior: "smooth",
       block: "start",
     });
+    // #1191: scrolling alone leaves focus on the button just pressed, so the
+    // next Tab lands on "Submit anyway". Focus the pillar's section instead,
+    // after the render (the effect above).
+    setFocusRequest((n) => n + 1);
   }
 
   return (
@@ -479,6 +495,7 @@ export function ZtSelfAssessment({
           {pillar && stat ? (
             <section
               ref={pillarRef}
+              tabIndex={-1}
               aria-label={`${pillar.code} ${pillar.name}`}
               className="flex flex-col gap-4 rounded-md border border-border-subtle bg-surface-card p-4"
             >
@@ -658,6 +675,9 @@ export function ZtSelfAssessment({
           total={capabilityTotal}
           noun="capabilities"
           disabled={submitting || !everyPillarStarted || savesInFlight > 0}
+          disabledReason={
+            everyPillarStarted ? undefined : PILLAR_REQUIRED_REASON
+          }
           onGoTo={goToPillar}
           onSubmitAnyway={() => void onSubmit()}
         />
@@ -682,11 +702,7 @@ export function ZtSelfAssessment({
           type="button"
           onClick={onSubmitClick}
           disabled={submitting || !everyPillarStarted || savesInFlight > 0}
-          title={
-            everyPillarStarted
-              ? undefined
-              : "Answer at least one capability in every pillar first."
-          }
+          title={everyPillarStarted ? undefined : PILLAR_REQUIRED_REASON}
           className="rounded-md bg-brand-500 px-5 py-2.5 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Submitting…" : "Submit for review"}
