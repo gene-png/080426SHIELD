@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
+from app.deliverable_priority import floored_priority, priority_text
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     AiModeStamp,
@@ -28,7 +29,7 @@ from app.xlsx_export import safe_text_row
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
-from app.zt.scoring import GapAnalysis, ScoreResult
+from app.zt.scoring import GapAnalysis, ScoreResult, pillar_weight
 from app.zt.target_caps import stage_above_max_sentences, target_cap_sentences
 
 if TYPE_CHECKING:
@@ -369,7 +370,9 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 g.current_stage,
                 g.target_stage,
                 g.gap_size,
-                g.priority_score,
+                # One decimal, rounded down, as the admin screen shows it
+                # (#736 6220638526 item 3; shared with CSF's deliverable).
+                floored_priority(g.gap_size, pillar_weight(g.pillar_code)),
                 g.notes or "",
             ],
         )
@@ -473,7 +476,7 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
                     g.pillar_code,
                     g.name,
                     f"S{g.current_stage} → S{g.target_stage}",
-                    f"{g.priority_score:.2f}",
+                    priority_text(g.gap_size, pillar_weight(g.pillar_code)),
                 ]
                 for g in ctx.gap.gaps
             ],
@@ -584,7 +587,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
                     g.pillar_code,
                     g.name,
                     f"S{g.current_stage} → S{g.target_stage}",
-                    f"{g.priority_score:.2f}",
+                    priority_text(g.gap_size, pillar_weight(g.pillar_code)),
                 ]
             )
         gap_table = Table(
