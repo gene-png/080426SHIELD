@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 from app.assessment_targets import BELOW_FLOOR, MIN_TARGET_STAGE
 from app.maturity_percent import maturity_percent
@@ -69,8 +70,8 @@ class PillarScoreResult:
     capability_count: int
     answered_count: int
     average_stage: float | None
-    # average_stage normalized to a percentage of the framework's max level
-    # (so a DoD pillar at "3" and a CISA pillar at "4" both read 100%).
+    # average_stage as a percentage of the framework scale, (avg - 1) / (top - 1)
+    # (a DoD pillar at "3" and a CISA pillar at "4" both read 100%, #1183).
     maturity_pct: float | None
     coverage_pct: float
     weakest_capability_codes: tuple[str, ...]
@@ -171,18 +172,18 @@ def _capped(stage: int | None, framework: ZtFrameworkCode, code: str) -> int | N
     return min(stage, capability_max_stage(framework, capability_by_code(code)))
 
 
-def _maturity_pct(avg: float | None, framework: ZtFrameworkCode) -> float | None:
-    """Average stage as a percentage of the framework's scale (#1183):
+def _maturity_pct(values: list[int], framework: ZtFrameworkCode) -> float | None:
+    """The scored stages as a percentage of the framework's scale (#1183):
     (avg - 1) / (top - 1), floored to one decimal, by the helper the CSF
     dashboard shares. Stage 1 is 0%, the top stage 100%.
 
-    `avg` is the two-decimal average this result displays beside it, so the
-    two agree, as CSF does. Whether to floor the exact average instead is with
-    the advisor (#736 6226057732 question 1); that is a change to what the two
-    callers in `compute` pass here."""
-    if avg is None:
+    Taken from the EXACT average (a `Fraction` of the stages), never from the
+    two-decimal average shown beside it: flooring a displayed average that was
+    rounded up can print a figure above the truth (advisor, #736 6228351462
+    item 5). CSF does the same (`csf/scoring.py::_exact_average`)."""
+    if not values:
         return None
-    return maturity_percent(avg, level_count(framework))
+    return maturity_percent(Fraction(sum(values), len(values)), level_count(framework))
 
 
 def _label_from_average(avg: float | None, framework: ZtFrameworkCode) -> str:
@@ -229,7 +230,7 @@ def compute(framework: ZtFrameworkCode, answers: Mapping[str, int | None]) -> Sc
                 capability_count=pillar_total,
                 answered_count=len(scored_pairs),
                 average_stage=pillar_avg,
-                maturity_pct=_maturity_pct(pillar_avg, framework),
+                maturity_pct=_maturity_pct([s for _, s in scored_pairs], framework),
                 coverage_pct=_coverage_pct(len(scored_pairs), pillar_total),
                 weakest_capability_codes=weakest,
             )
@@ -242,7 +243,7 @@ def compute(framework: ZtFrameworkCode, answers: Mapping[str, int | None]) -> Sc
         answered_capabilities=answered,
         coverage_pct=_coverage_pct(answered, total),
         average_stage=avg_overall,
-        maturity_pct=_maturity_pct(avg_overall, framework),
+        maturity_pct=_maturity_pct(overall_values, framework),
         overall_stage_label=_label_from_average(avg_overall, framework),
         by_pillar=tuple(pillar_results),
     )
