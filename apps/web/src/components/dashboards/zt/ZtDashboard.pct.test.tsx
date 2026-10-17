@@ -93,7 +93,7 @@ describe("ZtDashboard prints the API's one-decimal percentages (#1183)", () => {
       },
     ];
     const { container } = render(<ZtDashboard data={data} />);
-    expect(screen.getByText("Unscored · —")).toBeVisible();
+    expect(screen.getByText("Unscored Â· â€”")).toBeVisible();
     // A pillar scored at stage 1 is 0.0% and fills `width: 0%`; one with no
     // score has no fill at all.
     expect(container.querySelector('div[style*="width: 0%"]')).toBeNull();
