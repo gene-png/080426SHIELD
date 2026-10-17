@@ -27,8 +27,10 @@ const MaturityRadar = dynamic(
   { ssr: false, loading: () => <div style={{ height: 380 }} aria-hidden /> },
 );
 
+/** #1183: the API floors each percentage to one decimal; print it as given.
+ *  Rounding it again here printed 66.6 as "67", a figure nothing else states. */
 function pctText(n: number | null): string {
-  return n === null ? "—" : `${Math.round(n)}`;
+  return n === null ? "—" : n.toFixed(1);
 }
 
 function MaturityBar({
@@ -56,7 +58,7 @@ function MaturityBar({
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {/* #700: the pillar's own scored count beside its percentage, as the
               CSF dashboard does per function. */}
-          {`+${Math.round(pillar.gap_pct)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
+          {`+${pillar.gap_pct.toFixed(1)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
         </span>
       </div>
       <div
@@ -180,9 +182,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
           value={String(data.total_gap_count)}
           sub={
             data.largest_gap_pillar
-              ? `Largest: ${data.largest_gap_pillar} · +${Math.round(
-                  data.largest_gap_pct,
-                )} points`
+              ? `Largest: ${data.largest_gap_pillar} · +${data.largest_gap_pct.toFixed(1)} points`
               : "Across all pillars"
           }
           accent={C.amber}
