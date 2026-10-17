@@ -33,6 +33,7 @@ from app.ai.engine import get_job, run_job
 from app.ai.failures import ai_call_boundary
 from app.ai.isolation import RedactionRefused, redaction_scope
 from app.ai.llm import LLMClient
+from app.ai.session_marks import end_read_transaction
 from app.attack.catalog import technique_by_id
 from app.attack.catalog_version import catalog_mismatch_message, require_current_catalog
 from app.attack.computed import Capabilities, InPlace, effective_coverage
@@ -2105,6 +2106,11 @@ def _run_risk_synthesize_batched(
     # is not `app.ai.batching.run_batches`, so a rejected key still costs one
     # call per batch. Risk is synchronous (#504) and set aside since
     # 2026-09-27; moving it onto `run_batches` brings the stop with it.
+    #
+    # #1025 holder 2, #1026: the REQUEST's session read the inputs, the hints
+    # and the payloads above; its read transaction ends before the workers
+    # call the provider. Refuses loudly if generate wrote anything first.
+    end_read_transaction(db, where="risk.generate")
     with ThreadPoolExecutor(max_workers=_RISK_MAX_WORKERS) as pool:
         # Each worker runs inside a COPY of the request's context. A pool thread
         # starts with an empty one, so `correlation_id_var` read None there and

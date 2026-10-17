@@ -45,7 +45,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/llm-key call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/llm-key call", "POST");
   }
 }
 
@@ -71,6 +71,6 @@ export async function DELETE(): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/llm-key call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/llm-key call", "DELETE");
   }
 }

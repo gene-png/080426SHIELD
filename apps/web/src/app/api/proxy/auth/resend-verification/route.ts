@@ -35,6 +35,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream resend-verification call");
+    return upstreamOutcomeUnknown(
+      err,
+      "Upstream resend-verification call",
+      "POST",
+    );
   }
 }

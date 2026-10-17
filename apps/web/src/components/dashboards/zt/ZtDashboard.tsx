@@ -14,6 +14,7 @@ import {
   pillarsByGap,
   scoredNote,
   targetNote,
+  unrecordedTargetLines,
   type ZtDashboardData,
   type ZtPillar,
 } from "@/lib/dashboards/zt";
@@ -127,6 +128,7 @@ function MaturityBar({
 
 export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
   const ordered = pillarsByGap(data.pillars);
+  const unrecorded = unrecordedTargetLines(data);
   return (
     <DashShell
       aiSource={data.ai_source}
@@ -306,6 +308,24 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
             </div>
           ))}
         </div>
+        {/* #1343: the applied targets whose origin is not recorded, under the
+            pillars they feed, one line per code as the deliverable prints
+            them. */}
+        {unrecorded.length > 0 ? (
+          <ul
+            data-testid="zt-unrecorded-targets"
+            style={{
+              margin: "14px 0 0",
+              paddingLeft: 20,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            {unrecorded.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
       </Section>
 
       <DashResponsiveStyle />

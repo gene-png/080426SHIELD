@@ -35,6 +35,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream inbox call");
+    return upstreamOutcomeUnknown(err, "Upstream inbox call", "GET");
   }
 }

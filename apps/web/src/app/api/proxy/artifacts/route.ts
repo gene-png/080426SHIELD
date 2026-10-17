@@ -96,7 +96,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     body = await upstream.text();
   } catch (err) {
-    return upstreamOutcomeUnknown(err, "artifacts upload");
+    return upstreamOutcomeUnknown(err, "artifacts upload", "POST");
   }
   return new NextResponse(body, {
     status: upstream.status,
@@ -121,7 +121,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
     body = await upstream.text();
   } catch (err) {
-    return upstreamOutcomeUnknown(err, "artifacts list");
+    return upstreamOutcomeUnknown(err, "artifacts list", "GET");
   }
   return new NextResponse(body, {
     status: upstream.status,
