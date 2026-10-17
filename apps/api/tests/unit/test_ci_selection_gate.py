@@ -229,14 +229,22 @@ def test_the_gates_selector_is_exactly_the_one_ci_runs() -> None:
         str(step.get("run", "")).strip()
         for job in ci["jobs"].values()
         for step in job.get("steps", [])
-        if str(step.get("run", "")).strip().startswith("pytest ")
+        if str(step.get("run", "")).strip().startswith(("pytest ", "python -m pytest "))
         and "tests/unit" in str(step.get("run", ""))
     ]
     # CI_RUN is CI_SELECTOR plus CI_RUN_OPTIONS, and the options are written
     # out HERE, not read back from the module: four xdist workers and a junit
-    # report select nothing. A `-k` or `--deselect` in either half is refused.
-    assert gate.CI_RUN_OPTIONS == ("-n", "4", '--junitxml="$RUNNER_TEMP/pytest-unit.xml"')
-    assert f"pytest {' '.join(gate.CI_SELECTOR + gate.CI_RUN_OPTIONS)}" == gate.CI_RUN
+    # report select nothing, and the ONLY narrowing is the leg deal,
+    # `-p scripts.shard_deselect` (test_shard_deselect.py pins what it deselects).
+    # A `-k` or `--deselect` in either half is refused.
+    assert gate.CI_RUN_OPTIONS == (
+        "-n",
+        "4",
+        "-p",
+        "scripts.shard_deselect",
+        '--junitxml="$RUNNER_TEMP/pytest-unit.xml"',
+    )
+    assert f"python -m pytest {' '.join(gate.CI_SELECTOR + gate.CI_RUN_OPTIONS)}" == gate.CI_RUN
     assert runs == [gate.CI_RUN], runs
 
 

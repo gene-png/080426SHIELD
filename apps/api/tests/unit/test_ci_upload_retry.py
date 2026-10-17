@@ -34,9 +34,9 @@ from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
-# The required checks that download artifacts. The Python check is one job
-# (xdist on one runner) and reads no artifact, so only E2E is here.
-AGGREGATES = ("E2E (Playwright smoke suite)",)
+# The required checks that download artifacts: E2E (its shard lists) and Python
+# (each unit leg's selection, dealt list and junit).
+AGGREGATES = ("E2E (Playwright smoke suite)", "Python (ruff + black + pytest + bandit)")
 _RETRY_IF = re.compile(r"(always\(\) && )?steps\.([A-Za-z0-9_-]+)\.outcome == 'failure'")
 
 
@@ -128,6 +128,7 @@ def test_every_gate_input_is_found() -> None:
     names = {name for _, name in found}
     assert "e2e-list-full" in names, names
     assert any(n.startswith("e2e-list-shard-") for n in names), names
+    assert any(n.startswith("python-shard-") for n in names), names
 
 
 def test_each_gate_input_is_uploaded_by_contiguous_identical_attempts() -> None:
