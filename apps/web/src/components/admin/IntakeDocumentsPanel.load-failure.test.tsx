@@ -54,6 +54,17 @@ describe("IntakeDocumentsPanel: the document list failed to load (#1223)", () =>
     },
   );
 
+  it("treats a 200 with no item list as a failed load, never as 'no uploads'", async () => {
+    respond(200, "{}");
+    render(
+      <IntakeDocumentsPanel onExtract={() => undefined} extracting={false} />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load documents.",
+    );
+    expect(screen.queryByText(/didn't upload any files/)).toBeNull();
+  });
+
   it("keeps #550's outcome sentence off this read (RR-2)", async () => {
     respond(
       504,
