@@ -19,7 +19,7 @@ from tests._pool_count import pool_count
 from tests.unit.test_ai_runs_attack import (  # noqa: F401  (app_parts: fixture)
     app_parts,
 )
-from tests.unit.test_attack_name_hints import DANA, _tenant_user
+from tests.unit.test_attack_name_hints import DANA, _create, _tenant_user, _tool
 from tests.unit.test_attack_run_ai import app_client  # noqa: F401  (fixture)
 from tests.unit.test_attack_scenario_routes import EDR, SIEM, _flags, _run_to_completion, _world
 
@@ -96,3 +96,29 @@ def test_the_what_if_run_builds_its_hinted_forms_holding_no_connection(
     hinted = [n for n, hints in held_at_child_calls if hints]
     assert hinted, "setup: the run asked the child with name hints"
     assert set(hinted) == {0}, held_at_child_calls
+
+
+def test_the_what_if_run_checks_an_added_tool_for_collision_holding_no_connection(
+    app_parts, monkeypatch, held_at_child_calls  # noqa: F811
+) -> None:
+    """A scenario that ADDS a tool: the run's collision check (`validate_added`,
+    F4) asks the child too, besides the spellings and the shown forms. The
+    removal-only test above never reaches it, because `_collision_in` returns
+    when nothing was added."""
+    from app.routes import attack_scenarios
+
+    monkeypatch.setattr(attack_scenarios, "_MAX_WORKERS", 1)
+    w = _world(app_parts)
+    _tenant_user(w, DANA, "dana.whitfield@acme.example")
+    w.answer({w.a: [_flags(w.a, SIEM, d=True)]})
+    r = _create(w, [_tool("Plain Scanner")])
+    assert r.status_code == 201, r.text
+    held_at_child_calls.clear()
+    body = _run_to_completion(w, r.json()["id"])
+    assert body["run_status"] == "completed", body["run_error"]
+    hinted = [n for n, hints in held_at_child_calls if hints]
+    # Four asks: the run ROUTE's collision check, then the job's collision
+    # check, removal spellings and shown forms. The route's first ask holds the
+    # request's read (pre-existing, filed as #1437); the job's three do not.
+    assert len(hinted) == 4, held_at_child_calls
+    assert set(hinted[1:]) == {0}, held_at_child_calls
