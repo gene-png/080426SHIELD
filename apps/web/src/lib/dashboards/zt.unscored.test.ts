@@ -42,7 +42,11 @@ describe("pillarsByGap with an unscored pillar (#1183)", () => {
       pillar({ name: "Data", current_pct: null, gap_pct: null }),
       pillar({ name: "Identity", gap_pct: 66.7 }),
       pillar({ name: "Networks", gap_pct: 10 }),
+      // A scored pillar already at its target (gap 0.0) still outranks an
+      // unscored one: null must not be read as 0, or the stable sort keeps
+      // Data above it.
+      pillar({ name: "Devices", gap_pct: 0 }),
     ]).map((p) => p.name);
-    expect(names).toEqual(["Identity", "Networks", "Data"]);
+    expect(names).toEqual(["Identity", "Networks", "Devices", "Data"]);
   });
 });
