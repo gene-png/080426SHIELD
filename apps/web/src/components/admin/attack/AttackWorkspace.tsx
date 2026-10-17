@@ -988,6 +988,7 @@ export function AttackWorkspace({
                     (runResult.batches_failed ?? 0) +
                     (runResult.reask_batches_failed ?? 0)
                   }
+                  techniquesAsked={runResult.techniques_asked}
                   catalog={catalog.techniques}
                 />
               ) : runResult ? (
