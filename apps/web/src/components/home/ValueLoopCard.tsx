@@ -124,7 +124,7 @@ function buildMetrics(summary: ValueSummary): Metric[] {
           ? null
           : summary.tech_debt_savings_cost_known
             ? `${USD.format(savings)} / yr`
-            : `${USD.format(savings)}+ / yr`,
+            : `≥ ${USD.format(savings)} / yr`,
       hint:
         savings !== null && !summary.tech_debt_savings_cost_known
           ? "A floor — some retired tools had no cost on file."

@@ -157,3 +157,53 @@ def unconfirmed_exclusions(cap_list) -> list[int]:
         for e in (getattr(cap_list, "excluded_rows", None) or [])
         if e.get("confirmed") is not True
     ]
+
+
+SpendCompleteness = Literal["complete", "partial", "unknown"]
+
+
+def spend_completeness(
+    *,
+    source_rows_total: int | None,
+    included_count: int,
+    excluded_count: int,
+    spend_cost_known: bool,
+    exclusion_state: str,
+) -> SpendCompleteness:
+    """Whether a list's total annual cost is exact, a floor, or unchecked.
+
+    THE ONE RULE (#1427): the client dashboard states it as
+    `spend_completeness` and the PDF, DOCX and XLSX put "≥" on the cost value
+    exactly when this says "partial", so no surface can call a figure a floor
+    that another calls exact.
+
+    THREE states. "unknown" is not a hedge, it is the pre-0036 population and
+    every list not cut by an extraction: `source_rows_total` is NULL and no
+    reconciliation was ever recorded, so neither "complete" nor "partial" is a
+    claim the data supports. It is deliberately NOT worded as a floor.
+    `services/stages.py` already reads NULL there as un-analysed, "the
+    conservative direction"; this agrees with it.
+
+    "partial" is a floor: an exclusion, an uncosted included tool, an exclusion
+    count the extraction could not attribute (never "complete": a row may have
+    been excluded that the arithmetic floors to zero, #193), or the unbalanced
+    case.
+
+    THE UNBALANCED CASE must not reach "complete". `excluded_count` is
+    `max(source_rows_total - included_count, 0)`, so when more items exist than
+    there were source rows (two items sharing one `source_row_index`) the
+    subtraction floors to zero and the earlier tests fall through; with every
+    cost known that landed on "complete", whose definition ("every source row is
+    accounted for and every item is costed") is false. It is "partial" rather
+    than "unknown" because completeness WAS recorded, it just does not
+    reconcile; this is a fourth state wearing a three-state label, and only one
+    of the three is safe. Telling the truth about WHY needs
+    `attribution_complete` persisted, which is a migration.
+    """
+    if source_rows_total is None:
+        return "unknown"
+    if excluded_count or not spend_cost_known or exclusion_state == "unknown":
+        return "partial"
+    if included_count > source_rows_total:
+        return "partial"
+    return "complete"

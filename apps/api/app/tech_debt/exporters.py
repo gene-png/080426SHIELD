@@ -37,7 +37,7 @@ from app.tech_debt.components import (
     source_items,
 )
 from app.tech_debt.overlap import no_cost_items
-from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.reconcile import exclusion_count_state, spend_completeness
 from app.tech_debt.savings import estimated_savings as estimated_savings_of
 from app.xlsx_export import safe_text_row
 
@@ -161,6 +161,32 @@ def _names(ctx: DeliverableContext) -> dict:
 def _cost_text(item: CapabilityItem) -> str:
     """A non-part row's cost cell in the PDF and DOCX: its cost, or "—"."""
     return f"${float(item.annual_cost_usd):,.0f}" if item.annual_cost_usd is not None else "—"
+
+
+def total_cost_is_floor(ctx: DeliverableContext) -> bool:
+    """#1427: whether the total cost takes "≥" on its VALUE.
+
+    Exactly when the client dashboard calls the same spend "partial", because
+    both call `reconcile.spend_completeness`. A never-reconciled list is
+    "unknown", which the dashboard deliberately does not word as a floor, and
+    neither do the files (their label says "may not be complete").
+    """
+    return (
+        spend_completeness(
+            source_rows_total=ctx.source_rows_total,
+            included_count=ctx.included_count,
+            excluded_count=ctx.excluded_count,
+            spend_cost_known=ctx.spend_cost_known,
+            exclusion_state=ctx.exclusion_state,
+        )
+        == "partial"
+    )
+
+
+def total_cost_text(ctx: DeliverableContext) -> str:
+    """The total cost as the PDF and DOCX print it: "≥ $X" on a floor."""
+    prefix = "≥ " if total_cost_is_floor(ctx) else ""
+    return f"{prefix}${ctx.total_cost:,.0f}"
 
 
 def cost_label(ctx: DeliverableContext) -> str:
@@ -417,7 +443,11 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
         ).font = Font(italic=True)
         summary_row += 3
     ws.cell(row=summary_row, column=1, value=cost_label(ctx)).font = Font(bold=True)
-    ws.cell(row=summary_row, column=5, value=ctx.total_cost).number_format = "$#,##0"
+    # #1427: the "≥" is ON the total when it is a floor, as on the savings cell
+    # below: the cell stays NUMERIC and only its number format carries the
+    # marker, so a copied cell carries it too. Ruled on #736 (6229792065).
+    total_cell = ws.cell(row=summary_row, column=5, value=ctx.total_cost)
+    total_cell.number_format = '"≥ "$#,##0' if total_cost_is_floor(ctx) else "$#,##0"
     ws.cell(row=summary_row + 1, column=1, value="Estimated annual savings").font = Font(bold=True)
     savings_cell = ws.cell(row=summary_row + 1, column=5, value=ctx.estimated_savings)
     # #1094: the "≥" is ON the value when the savings are a floor, as the PDF and
@@ -507,7 +537,7 @@ def render_pdf(ctx: DeliverableContext) -> bytes:
         Paragraph(
             # for #835: source items, not a split bundle's parts.
             f"Capabilities reviewed: <b>{ctx.included_count}</b> · "
-            f"{cost_label(ctx)}: <b>${ctx.total_cost:,.0f}</b> · "
+            f"{cost_label(ctx)}: <b>{total_cost_text(ctx)}</b> · "
             f"Estimated annual savings: <b>{savings}</b>",
             body,
         )
@@ -604,7 +634,7 @@ def render_docx(ctx: DeliverableContext) -> bytes:
     ) + [
         # for #835: source items, not a split bundle's parts.
         f"Capabilities reviewed: {ctx.included_count}",
-        f"{cost_label(ctx)}: ${ctx.total_cost:,.0f}",
+        f"{cost_label(ctx)}: {total_cost_text(ctx)}",
         # TD-10 (for #1048): directly after the cost line it qualifies.
         *no_cost_lines(ctx),
         f"Estimated annual savings: {savings}",

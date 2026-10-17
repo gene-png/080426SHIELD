@@ -142,7 +142,7 @@ from app.tech_debt.components import (
     source_items,
 )
 from app.tech_debt.overlap import no_cost_items
-from app.tech_debt.reconcile import exclusion_count_state
+from app.tech_debt.reconcile import exclusion_count_state, spend_completeness
 from app.tech_debt.savings import estimated_savings
 from app.zt.catalog import capability_by_code as zt_capability_by_code
 from app.zt.maturity import ZtFrameworkCode
@@ -1942,50 +1942,18 @@ def tech_debt_dashboard(
     excluded_count = (
         max(source_rows_total - included_count, 0) if source_rows_total is not None else 0
     )
-    # THREE states. "unknown" is not a hedge, it is the pre-0036 population and
-    # every list not cut by an extraction: `source_rows_total` is NULL and no
-    # reconciliation was ever recorded, so neither "complete" nor "partial" is a
-    # claim the data supports. `services/stages.py`, in the helper returning
-    # `getattr(cap_list, "source_rows_total", None) is not None`, already reads
-    # NULL here as un-analysed and calls that the conservative direction; this
-    # agrees with it rather than contradicting it.
     # #177/#193: THE ONE READER, as the deliverable and the admin list call it.
     # "exact" licenses `excluded_count` as the count; "unknown" makes it a
     # FLOOR, and never "complete".
     exclusion_state = exclusion_count_state(cl)
-    if source_rows_total is None:
-        spend_completeness = "unknown"
-    elif excluded_count or not spend_cost_known or exclusion_state == "unknown":
-        # An unknown exclusion count is never "complete": a row may have been
-        # excluded that the arithmetic floors to zero (#193).
-        spend_completeness = "partial"
-    elif included_count > source_rows_total:
-        # THE UNBALANCED CASE, and it must not reach "complete".
-        #
-        # `excluded_count` is `max(source_rows_total - included_count, 0)`, so
-        # when more items exist than there were source rows -- two items sharing
-        # one `source_row_index`, say -- the subtraction FLOORS TO ZERO and the
-        # first two branches both fall through. With every cost known that
-        # landed on "complete", whose definition in `schemas/clients.py` is
-        # "every source row is accounted for and every item is costed". The
-        # accounting demonstrably does not balance, so that claim is false.
-        #
-        # `build_context` already records this case for the exporter and pins
-        # it with a test; the dashboard derived `excluded_count` "the same way"
-        # and inherited the hole WITHOUT the caveat -- and it is strictly worse
-        # here, because the exporter merely fails to disclose while this makes
-        # the affirmative claim.
-        #
-        # "partial" rather than "unknown": completeness WAS recorded for this
-        # list, it just does not reconcile, and "unknown" is defined as never
-        # recorded. Neither word fits exactly -- this is a fourth state wearing
-        # a three-state label -- but only one of the three is safe, and
-        # CLAUDE.md's rule is that missing or unreliable data defaults to
-        # UNCONFIRMED. Telling the truth about WHY needs `attribution_complete`
-        # persisted, which is a migration this change does not carry.
-        spend_completeness = "partial"
-    else:
-        spend_completeness = "complete"
+    # #1427: the one rule, shared with the files that put "≥" on the cost value.
+    spend_completeness_state = spend_completeness(
+        source_rows_total=source_rows_total,
+        included_count=included_count,
+        excluded_count=excluded_count,
+        spend_cost_known=spend_cost_known,
+        exclusion_state=exclusion_state,
+    )
 
     return TechDebtDashboardResponse(
         service_id=service_id,
@@ -2001,7 +1969,7 @@ def tech_debt_dashboard(
         identified_savings_usd=round(savings, 2),
         savings_cost_known=savings_cost_known,
         excluded_count_exact=exclusion_state == "exact",
-        spend_completeness=spend_completeness,
+        spend_completeness=spend_completeness_state,
         source_rows_total=source_rows_total,
         included_count=included_count,
         excluded_count=excluded_count,

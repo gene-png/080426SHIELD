@@ -275,7 +275,14 @@ export function TechDebtDashboard({
         />
         <KpiCard
           label="Annual license spend"
-          value={usdFull(data.annual_spend_usd)}
+          // #1427: "≥" ON the value when the spend is a floor (the API's
+          // "partial"). "unknown" is deliberately not worded as one: the
+          // sub-line says it may not be complete.
+          value={
+            data.spend_completeness === "partial"
+              ? `≥ ${usdFull(data.annual_spend_usd)}`
+              : usdFull(data.annual_spend_usd)
+          }
           sub={spendSub(data)}
           accent={C.accent2}
         />
