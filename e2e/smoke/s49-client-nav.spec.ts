@@ -54,9 +54,9 @@ test("a client's frame: overview, rail, and sections with their own URLs", async
       .getByRole("navigation", { name: "Service sections" })
       .getByRole("link", { name: "Review", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  // Frame first: the existing CSF workspace renders inside the section.
+  // CSF is split (#1378): the section shows its own header.
   await expect(
-    page.getByRole("heading", { name: "NIST CSF 2.0 Assessment" }),
+    page.getByRole("heading", { level: 1, name: "Review", exact: true }),
   ).toBeVisible({ timeout: LOAD_MS });
 });
 

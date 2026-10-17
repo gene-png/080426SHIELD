@@ -55,7 +55,14 @@ function Workspace({
         <AttackWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />
       );
     case "nist_csf":
-      return <CsfWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />;
+      // #1378: CSF is split; each section shows only its own blocks.
+      return (
+        <CsfWorkspace
+          serviceId={serviceId}
+          serviceTitle={serviceTitle}
+          section={section}
+        />
+      );
     case "zero_trust_cisa":
       return (
         <ZtWorkspace

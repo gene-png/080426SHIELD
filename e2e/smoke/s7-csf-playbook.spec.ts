@@ -12,6 +12,7 @@ import {
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 
 /**
  * SMOKE_TEST.md section 7 (T7): the NIST CSF 2.0 full Playbook (Work Order D4).
@@ -97,7 +98,7 @@ async function openWorkspaceOnDraft(
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${csfServiceId}/csf`);
   await expect(
-    page.getByRole("heading", { name: "NIST CSF 2.0 Assessment" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
   const created = await page.request.post(
     `/api/proxy/csf/services/${csfServiceId}/assessments`,
@@ -155,6 +156,8 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   const csfServiceId = await openWorkspaceOnDraft(page, request);
 
   // --- Seed Working Profiles -> 106 subcategories across 3 tiers -----------
+  // CSF is split (#1378): Seed and Run AI are in AI draft.
+  await openSection(page, "AI draft");
   // A fresh draft is always unseeded (the branch guards a crashed re-entry).
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
   const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
@@ -209,9 +212,12 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
     expect(enterprise.tiers_in_use.sort()).toEqual(["high", "low", "moderate"]);
   }
   // Text spans nested <span>s, so filter on the containing element (T6 lesson).
+  // The counts line is read with the table, in Review.
+  await openSection(page, "Review");
   await expect(
     page.locator("span", { hasText: /3 tier\(s\) in use/ }).first(),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "AI draft");
 
   // --- One answer's notes, before Run AI (#806, #736 comment 6075712436) ----
   // The approved prompt scores an unanswered subcategory 0 on every dimension,
@@ -327,6 +333,8 @@ test("Seed Working Profiles (~106 subcats), Run AI drafts dimensions + narrative
   ).toBeVisible({ timeout: 30000 });
 
   // --- Dimension editor: live total/level/cap math --------------------------
+  // The editor is in Review.
+  await openSection(page, "Review");
   // High tier is the default tab; the first subcategory is auto-selected.
   const subcatSelect = page.getByRole("combobox", { name: "Subcategory" });
   await expect(subcatSelect).toBeVisible({ timeout: 30000 });
@@ -377,6 +385,7 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   // Its own private service and fresh draft; the seed step below fills it.
   const csfServiceId = await openWorkspaceOnDraft(page, request);
 
+  await openSection(page, "AI draft");
   const seedBtn = page.getByRole("button", { name: "Seed Working Profiles" });
   const runBtn = page.getByRole("button", { name: "Run AI", exact: true });
   await expect(seedBtn.or(runBtn)).toBeVisible({ timeout: 30000 });
@@ -391,6 +400,8 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   await page.waitForLoadState("networkidle").catch(() => undefined);
 
   // --- Force a deterministic gap: target L5 on the second subcategory ------
+  // The dimension editor and the table are in Review.
+  await openSection(page, "Review");
   const subcatSelect = page.getByRole("combobox", { name: "Subcategory" });
   await expect(subcatSelect).toBeVisible({ timeout: 30000 });
   await expect
@@ -515,6 +526,8 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   // gap we just created, so its card is present with the code-computed default
   // priority. Characterize + set an owner (each auto-saves via a gap-actions
   // PUT), reload, and confirm the values persisted.
+  // The gap actions are in Analysis.
+  await openSection(page, "Analysis");
   const gapCard = page.getByTestId(`gap-action-${code!}`);
   await expect(gapCard).toBeVisible({ timeout: 30000 });
   const charSelect = gapCard.getByRole("combobox", {
@@ -536,6 +549,8 @@ test("Enterprise roll-up shows tier levels/rule/target/priority and Export produ
   ).toHaveValue("Priya Nair", { timeout: 30000 });
 
   // --- Export: 5 files, each link streaming the right content-type ---------
+  // Export is in Review.
+  await openSection(page, "Review");
   const exportDone = page.waitForResponse(
     (r) =>
       r.url().includes("/playbook/export") &&

@@ -87,11 +87,11 @@ describe("section page: Tech Debt renders the URL's section (#1376)", () => {
     },
   );
 
-  it("CSF is not split yet: its workspace is given no section", async () => {
+  it("CSF is split (#1378): its workspace is given the URL's section", async () => {
     await renderSection("csf", "ai-draft", CSF_A);
     expect(screen.getByTestId("workspace")).toHaveAttribute(
       "data-section-prop",
-      "none",
+      "ai-draft",
     );
   });
 });
