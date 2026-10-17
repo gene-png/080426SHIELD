@@ -1,0 +1,14 @@
+{
+ "incident": "ADVERSARIAL: the literal is edited as approved, and in the same line == becomes >=. A reader looking at the changed number sees an expected-literal edit; only comparing the non-literal tokens sees the weaker matcher.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "a change outside literals"
+}

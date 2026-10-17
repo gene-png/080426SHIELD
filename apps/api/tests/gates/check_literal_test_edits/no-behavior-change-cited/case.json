@@ -1,0 +1,14 @@
+{
+ "incident": "A literal edit with no approved behavior change cited is a test changed to match the code, which is the thing the rule exists to refuse.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "no approved behavior change is cited"
+}

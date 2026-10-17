@@ -1,0 +1,14 @@
+{
+ "incident": "Control: the class the pre-approval exists for -- two expected literals changed on their existing assertion lines, with a cited behavior change.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "clean -- 2 literal edit(s)"
+}

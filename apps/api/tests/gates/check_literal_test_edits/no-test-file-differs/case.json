@@ -1,0 +1,14 @@
+{
+ "incident": "An empty read must be could-not-look. Old and new trees equal means the diff was not read, or the PR changes no test, and `clean` over that would certify nothing.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "no test file differs"
+}

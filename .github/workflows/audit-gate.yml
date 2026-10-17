@@ -358,6 +358,38 @@ jobs:
           cat /tmp/compose.txt >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
+  literal-only-test-edits:
+    # #736 6234238148 item 1: a test edit that changes only expected literals, after
+    # a behavior change the advisor approved, may merge on this checker passing.
+    # The job runs the checker ONLY for a PR whose body declares it with the line
+    # `Literal-only-test-edits: yes`; any other PR prints NOT RUN and exits 0, so a
+    # green here proves the checker ran only when the log says "clean". The body is
+    # passed through the environment and a file, never spliced into shell source.
+    # Exit 1 (not a literal-only edit) and 2 (could not look) both fail the job.
+    # NOT a required check: the advisor audits every merge made on it.
+    name: Literal-only test edits (checked when declared)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The checker reads the merge base and the head.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check a declared literal-only test edit
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          if ! grep -qE '^Literal-only-test-edits: yes[[:space:]]*$' "$RUNNER_TEMP/pr-body.md"; then
+            echo "NOT RUN: the PR body has no 'Literal-only-test-edits: yes' line, so this check says nothing about this PR."
+            exit 0
+          fi
+          python apps/api/scripts/check_literal_test_edits.py --repo . --base "origin/${{ github.base_ref }}" --head HEAD --body "$RUNNER_TEMP/pr-body.md"
+
   # A SEPARATE job, so it reports as its own check rather than folding a
   # different failure into "Adversarial audit recorded". It shares this
   # workflow's `edited` trigger, which this check needs more than the audit gate
