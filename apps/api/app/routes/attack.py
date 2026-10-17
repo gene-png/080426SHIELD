@@ -3356,6 +3356,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         reasked_count=reask.asked,
         reask_batches_total=reask.batches_total,
         reask_batches_failed=reask.batches_failed,
+        techniques_asked=len(req.preview.inputs.get("technique_codes") or []),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),
