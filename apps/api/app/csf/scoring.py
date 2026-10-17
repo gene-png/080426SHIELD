@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 
 from app.csf.catalog import (
     FUNCTIONS,
@@ -40,6 +41,9 @@ class FunctionScoreResult:
     subcategory_count: int
     answered_count: int
     average_tier: float | None
+    # The unrounded mean, for callers deriving a percentage (#1183): flooring the
+    # two-decimal `average_tier` can print a figure above the truth.
+    average_exact: Fraction | None
     coverage_pct: float
     weakest_subcategory_codes: tuple[str, ...]
 
@@ -50,6 +54,9 @@ class ScoreResult:
     answered_subcategories: int
     coverage_pct: float
     average_tier: float | None
+    # The unrounded mean, for callers deriving a percentage (#1183): flooring the
+    # two-decimal `average_tier` can print a figure above the truth.
+    average_exact: Fraction | None
     overall_maturity_label: str
     by_function: tuple[FunctionScoreResult, ...]
 
@@ -58,6 +65,12 @@ def _coverage_pct(answered: int, total: int) -> float:
     if total == 0:
         return 0.0
     return round(answered / total * 100, 1)
+
+
+def _exact_average(values: list[int]) -> Fraction | None:
+    if not values:
+        return None
+    return Fraction(sum(values), len(values))
 
 
 def _round_average(values: list[int]) -> float | None:
@@ -129,6 +142,7 @@ def compute(answers: Mapping[str, int | None]) -> ScoreResult:
                 subcategory_count=total,
                 answered_count=answered,
                 average_tier=_round_average([t for _, t in scored_pairs]),
+                average_exact=_exact_average([t for _, t in scored_pairs]),
                 coverage_pct=_coverage_pct(answered, total),
                 weakest_subcategory_codes=weakest,
             )
@@ -140,6 +154,7 @@ def compute(answers: Mapping[str, int | None]) -> ScoreResult:
         answered_subcategories=overall_answered,
         coverage_pct=_coverage_pct(overall_answered, overall_total),
         average_tier=avg_overall,
+        average_exact=_exact_average(overall_values),
         overall_maturity_label=_label_from_average(avg_overall),
         by_function=tuple(per_function),
     )

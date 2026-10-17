@@ -64,6 +64,7 @@ from app.csf.scoring import compute as csf_compute
 from app.db.session import get_db
 from app.dependencies import current_client, current_user
 from app.logging import get_logger
+from app.maturity_percent import maturity_percent
 from app.mode_stamp import UNKNOWN_AI_MODE_REGISTER, ai_mode_for
 from app.models.artifact import Artifact
 from app.models.attack_assessment import (
@@ -2315,14 +2316,15 @@ def csf_dashboard(
     gap = csf_analyze_gaps(answers, target_tier=target_tier)
 
     max_tier = CSF_MAX_TIER
-    target_pct = round(target_tier / max_tier * 100, 1)
+    # #1183: (avg - 1) / (top - 1), floored to one decimal (`maturity_percent`).
+    target_pct = maturity_percent(target_tier, max_tier)
 
     functions: list[CsfFunctionDashboard] = []
     largest_gap_function: str | None = None
     largest_gap_pct = 0.0
     for fn in score.by_function:
         current_pct = (
-            round(fn.average_tier / max_tier * 100, 1) if fn.average_tier is not None else None
+            maturity_percent(fn.average_exact, max_tier) if fn.average_exact is not None else None
         )
         gap_pct = round(max(0.0, target_pct - (current_pct or 0.0)), 1)
         if current_pct is not None and gap_pct > largest_gap_pct:
@@ -2371,8 +2373,8 @@ def csf_dashboard(
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(
-            round(score.average_tier / max_tier * 100, 1)
-            if score.average_tier is not None
+            maturity_percent(score.average_exact, max_tier)
+            if score.average_exact is not None
             else None
         ),
         coverage_pct=score.coverage_pct,
