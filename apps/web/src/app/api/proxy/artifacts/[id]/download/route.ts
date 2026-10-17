@@ -60,7 +60,7 @@ export async function GET(
       cache: "no-store",
     });
   } catch (err) {
-    return upstreamOutcomeUnknown(err, "artifact download");
+    return upstreamOutcomeUnknown(err, "artifact download", "GET");
   }
   if (!upstream.ok) {
     // The refusal's body is read here, so a reset mid-body is the same "we
@@ -72,7 +72,7 @@ export async function GET(
     try {
       text = await upstream.text();
     } catch (err) {
-      return upstreamOutcomeUnknown(err, "artifact download");
+      return upstreamOutcomeUnknown(err, "artifact download", "GET");
     }
     return new NextResponse(text, {
       status: upstream.status,

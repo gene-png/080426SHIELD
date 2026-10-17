@@ -595,6 +595,12 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #1343: capabilities whose APPLIED per-capability target has no recorded
+    # origin (stored before migration 0076; some set by earlier AI runs), from
+    # the one predicate the deliverable uses (`zt/target_origin.py`). The web
+    # renders the approved sentence beside each code. Empty when every applied
+    # target's origin is recorded.
+    unrecorded_target_codes: list[str] = []
     # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
     # (`zt/target_caps.py`), rendered as given.
     target_cap_notes: list[str] = []

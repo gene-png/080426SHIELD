@@ -246,8 +246,15 @@ test("workspace controls are keyboard-reachable and operable", async ({
   await expect(radios.nth(radioCount - 1)).toBeFocused();
   await expect(radios.nth(radioCount - 1)).toHaveAttribute("tabindex", "0");
 
-  // A primary action button in the same workspace is reachable + operable.
-  await expect(
-    page.getByRole("button", { name: "Submit for review" }),
-  ).toBeEnabled();
+  // A primary action button in the same workspace is reachable. With one
+  // answer in one function, #1171's lock holds Submit (every function needs
+  // an answer first), and the button says why in its title (L2, #736
+  // 6216024281).
+  const submit = page.getByRole("button", { name: "Submit for review" });
+  await expect(submit).toBeVisible();
+  await expect(submit).toBeDisabled();
+  await expect(submit).toHaveAttribute(
+    "title",
+    "Answer at least one outcome in every function first.",
+  );
 });

@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  UPSTREAM_OUTCOME_UNKNOWN,
+  UPSTREAM_OUTCOME_UNKNOWN_MESSAGE,
+} from "@/lib/upstream-outcome";
+
 import type {
   AssessmentCreateRequest,
   AssessmentResponse,
@@ -35,10 +40,11 @@ function scoped(path: string, clientId?: string): string {
 
 export async function fetchIntake(): Promise<IntakeStateResponse> {
   const res = await fetch("/api/proxy/intake", { cache: "no-store" });
-  if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+  const payload = await safeJson(res);
+  if (!res.ok || typeof payload === "string") {
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as IntakeStateResponse;
+  return payload as IntakeStateResponse;
 }
 
 export async function patchIntake(
@@ -73,20 +79,25 @@ export async function submitIntake(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const payload = await safeJson(res);
   if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as IntakeStateResponse;
+  if (typeof payload === "string") {
+    throw new ProxyError(res.status, unreadableWrite(res.status));
+  }
+  return payload as IntakeStateResponse;
 }
 
 export async function fetchAssessments(): Promise<AssessmentResponse[]> {
   const res = await fetch("/api/proxy/intake/assessments", {
     cache: "no-store",
   });
-  if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+  const payload = await safeJson(res);
+  if (!res.ok || typeof payload === "string") {
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as AssessmentResponse[];
+  return payload as AssessmentResponse[];
 }
 
 export async function createAssessment(
@@ -97,10 +108,38 @@ export async function createAssessment(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const payload = await safeJson(res);
   if (!res.ok) {
-    throw new ProxyError(res.status, await safeJson(res));
+    throw new ProxyError(res.status, payload);
   }
-  return (await res.json()) as AssessmentResponse;
+  if (typeof payload === "string") {
+    throw new ProxyError(res.status, unreadableWrite(res.status));
+  }
+  return payload as AssessmentResponse;
+}
+
+/**
+ * #1213 (#1093 item 2's rule): a 2xx whose body is not JSON. The intake
+ * proxies answer a 2xx with JSON (the intake routes re-serialise it, and turn
+ * an api 2xx they cannot read into the typed 504; the artifacts route passes
+ * the api's body through, and the api answers it with JSON), so this came
+ * from something in front of the app (a captive portal, a proxy's block page)
+ * and the request may never have arrived. A WRITE's outcome is therefore
+ * unknown: it is thrown carrying the #550 envelope, so a caller that renders
+ * through `clientFacingError` shows the approved sentence, never its own
+ * failure copy and never success. A READ changed nothing, so it is thrown with
+ * its status and the raw body. Not every caller reports that as a failed load
+ * yet: Step 6's upload list shows a failed read as an empty one, which #1223
+ * fixes.
+ */
+export function unreadableWrite(status: number): { error: object } {
+  return {
+    error: {
+      code: status,
+      reason: UPSTREAM_OUTCOME_UNKNOWN,
+      message: UPSTREAM_OUTCOME_UNKNOWN_MESSAGE,
+    },
+  };
 }
 
 async function safeJson(res: Response): Promise<unknown> {

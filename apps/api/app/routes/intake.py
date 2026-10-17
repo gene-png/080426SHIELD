@@ -686,12 +686,16 @@ def create_engagement(
     # `.strip()` HERE TOO, matching the submit guard, and the earlier version of
     # this comment argued the opposite. It said a stored name is always NULL or
     # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
-    # every row written from this branch onward and FALSE of rows already in the
-    # database: `ClientProfilePatch` carries no validator, so any pre-branch
+    # every row written since the D-080 branch and FALSE of rows already in the
+    # database: `ClientProfilePatch` carried no validator then (it has had a
+    # blank normaliser since #1093), so any pre-D-080
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
-    # sentinel. The branch introduces a write-time invariant and ships nothing
-    # that establishes it for existing data.
+    # sentinel. The D-080 branch introduced a write-time invariant and shipped nothing
+    # that establishes it for existing data. Migration 0050 has since NULLed
+    # every blank `legal_name` (with Python's `.strip()`), so no stored row
+    # holds one today: the strip stays as a RATCHET against a future writer or
+    # restore that brings a blank back.
     #
     # What that cost, before the strip: `"   "` is truthy, so this guard passed
     # and `provision_self_assessment_service` raised `ValueError` on the very
@@ -729,8 +733,8 @@ def create_engagement(
     #
     # The general shape, which is the part worth keeping: an invariant enforced
     # at every WRITER still does not hold for rows that predate the enforcement.
-    # Either backfill them or keep reading defensively. This does the second,
-    # because the first cannot distinguish `"   "` from a name someone meant.
+    # Backfill them, and keep reading defensively. Both are done here: 0050
+    # backfilled the blanks, and this strip is the ratchet.
     if not (client.legal_name or "").strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

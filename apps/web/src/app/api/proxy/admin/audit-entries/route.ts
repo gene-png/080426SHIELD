@@ -33,6 +33,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream audit-entries call");
+    return upstreamOutcomeUnknown(err, "Upstream audit-entries call", "GET");
   }
 }

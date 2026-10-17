@@ -34,6 +34,6 @@ export async function DELETE(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/domains call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/domains call", "DELETE");
   }
 }

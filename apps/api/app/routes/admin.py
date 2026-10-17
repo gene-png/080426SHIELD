@@ -24,6 +24,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.ai import keystore
+from app.ai.session_marks import end_read_transaction
 from app.attack.catalog_version import is_stale_attack_deliverable
 from app.audit import audit
 from app.client_naming import org_display_name
@@ -1059,6 +1060,11 @@ def set_llm_key(
             detail={"reason": "llm_key_empty", "message": "Paste an API key first."},
         )
 
+    # #1363 (a #1025 holder-2 twin outside `invoke`): validating is a real
+    # provider call. The request's reads (the admin's own row) are done, so
+    # the read transaction ends before it and no connection is held while the
+    # provider answers. Refuses loudly if anything was written first.
+    end_read_transaction(db, where="admin.set_llm_key")
     ok, why = validate(provider, s.shield_llm_model, api_key)
     if not ok:
         logger.info("admin.llm_key.rejected provider=%s by=%s", provider, admin.id)

@@ -22,13 +22,13 @@ function unauthorized(): NextResponse {
   );
 }
 
-function mapError(err: unknown): NextResponse {
+function mapError(err: unknown, method: string): NextResponse {
   if (err instanceof ApiError) {
     return NextResponse.json(err.payload ?? { error: { code: err.status } }, {
       status: err.status,
     });
   }
-  return upstreamOutcomeUnknown(err, "Upstream admin/domains call");
+  return upstreamOutcomeUnknown(err, "Upstream admin/domains call", method);
 }
 
 export async function GET(
@@ -45,7 +45,7 @@ export async function GET(
     );
     return NextResponse.json(result);
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "GET");
   }
 }
 
@@ -74,6 +74,6 @@ export async function POST(
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "POST");
   }
 }
