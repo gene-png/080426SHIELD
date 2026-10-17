@@ -8,8 +8,11 @@ import { auth } from "@/lib/auth/options";
 
 export default async function AdminLayout({
   children,
+  rail,
 }: {
   children: React.ReactNode;
+  /** #1385: the `@rail` slot, a client's rail under `/admin/clients/<id>`. */
+  rail: React.ReactNode;
 }) {
   const session = await auth();
   if (!session) {
@@ -52,5 +55,9 @@ export default async function AdminLayout({
       </div>
     );
   }
-  return <AdminShell email={session.user?.email}>{children}</AdminShell>;
+  return (
+    <AdminShell email={session.user?.email} rail={rail}>
+      {children}
+    </AdminShell>
+  );
 }

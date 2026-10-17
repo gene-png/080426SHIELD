@@ -109,7 +109,7 @@ export function ClientRail({
   services: FrameService[];
 }): JSX.Element {
   return (
-    <aside className="flex w-56 shrink-0 flex-col gap-3">
+    <aside className="flex flex-col gap-3">
       <div className="flex flex-col gap-2">
         <p className="text-base font-semibold text-ink-primary">
           {client.label}
