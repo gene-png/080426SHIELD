@@ -42,12 +42,12 @@ CHANGED = (
 )
 
 
-#: PENDING the advisor's approval as seen in the PR (#736 6220094031 item 6,
-#: proposed verbatim there): a repair re-release whose parent did not flip.
+#: Approved verbatim at #736 comment 6225076633 item 11: a repair re-release
+#: whose parent did not flip.
 DELIVERED = (
     "This report is already with the client, but its assessment changed after "
-    "the report was built, so the assessment's status was not updated. Generate "
-    "a new version to release the change."
+    "the report was built, so the assessment's status was not updated. Approve "
+    "the assessment again, then re-finalize and release."
 )
 
 

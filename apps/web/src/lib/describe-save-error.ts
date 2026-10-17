@@ -118,8 +118,11 @@ export function isCatalogWithheld(err: unknown): boolean {
  * #550: the proxy never saw the api's answer (its `fetch` rejected), so the
  * write may have landed. ONE predicate for every surface that must not call
  * this a failure, keyed on the code's VALUE (never on whether a reason
- * arrived). The status is not checked: the reason is the contract, and the
- * builder in `upstream-outcome-unknown.ts` is its only writer.
+ * arrived). The status is not checked: the reason is the contract. It has
+ * TWO writers, so a change to the envelope must reach both: the proxy builder
+ * in `upstream-outcome-unknown.ts`, and `unreadableWrite` in
+ * `lib/intake/client.ts`, which gives an intake write answered by a 2xx it
+ * cannot read the same reason (#1213).
  */
 export function isUpstreamOutcomeUnknown(err: unknown): boolean {
   return serverReasonCode(err) === UPSTREAM_OUTCOME_UNKNOWN;
@@ -264,6 +267,11 @@ export function serverReason(err: unknown): string | null {
  * finished...") is withheld: it exists for a WRITE whose outcome is unknown,
  * and a read that failed changed nothing, so there is nothing to "check before
  * trying again". The caller shows its own fallback instead.
+ *
+ * Since #1130 no GET proxy answers that code (a read gets
+ * `upstream_read_failed` and its own sentence, which passes through here), so
+ * the withholding is a ratchet: it fires again only if a read is ever routed
+ * through a write's builder.
  *
  * Not `clientFacingError` and not `dashboardLoadReason`: both let that
  * sentence through.

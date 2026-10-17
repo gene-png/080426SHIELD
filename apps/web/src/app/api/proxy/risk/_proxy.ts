@@ -68,6 +68,10 @@ export async function proxyJson<T = unknown>(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream Risk Register call");
+    return upstreamOutcomeUnknown(
+      err,
+      "Upstream Risk Register call",
+      init.method,
+    );
   }
 }
