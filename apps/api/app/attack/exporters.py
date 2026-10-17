@@ -172,14 +172,23 @@ def subset_sentences(ctx: AttackDeliverableContext) -> list[str]:
     tool list to check against; the count of rows crediting a tool outside it
     (C1) when there are any; [] otherwise, and when nobody asked.
 
-    The rows counted are this context's own rows, so the sentence counts the
-    rows the document prints."""
+    The rows counted are this context's own rows THAT HAVE A STATUS, in the
+    catalogue (#1010; advisor, #736 6216024281): C1 says their status "may
+    count a tool", and an unscored row has none. Gap, N/A, Outside and Not
+    verified rows still count (#889: a Gap is a judgement too). An unscored
+    row's tools are still printed and marked (C3), which is true of them."""
     if ctx.subset is None:
         return []
     if not ctx.subset.checked:
         # R4: C5b where every list is empty, C5 otherwise.
         return [not_checked_sentence(ctx.subset.not_checked_reason)]
-    rows = len(ctx.subset.outside_codes() & {c.technique_code for c in ctx.coverage})
+    catalogue = {t.id for t in TECHNIQUES}
+    with_status = {
+        c.technique_code
+        for c in ctx.coverage
+        if c.technique_code in catalogue and not _is_unscored(c)
+    }
+    rows = len(ctx.subset.outside_codes() & with_status)
     # R4 (C9): one sentence per Tech Debt service that fell back.
     return ([outside_rows_sentence(rows)] if rows else []) + [
         fallback_sentence(f) for f in used_fallbacks(ctx.subset.fallbacks)
