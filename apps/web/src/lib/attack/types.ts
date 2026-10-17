@@ -289,6 +289,12 @@ export interface AttackRunAiResponse {
   reasked_count?: number;
   reask_batches_total?: number;
   reask_batches_failed?: number;
+  /**
+   * #1325. How many techniques the run's first pass asked about, failed
+   * batches included; the "of {total}" in the Mapping done line. Optional: a
+   * run stored before #1325 has none, which is "not recorded", not zero.
+   */
+  techniques_asked?: number | null;
 }
 
 /**
