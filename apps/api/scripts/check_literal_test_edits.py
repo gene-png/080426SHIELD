@@ -75,7 +75,8 @@ _TEST_PATH = re.compile(
 _DECIDES_TESTS = re.compile(
     r"(^|/)(pyproject\.toml|package\.json|\.?pytest\.(ini|toml)|setup\.cfg|tox\.ini|conftest\.py|"
     r"(vitest|playwright)(\.setup|\.config|\.workspace)[^/]*)$"
-    r"|^\.github/workflows/|^tests/gates/|^scripts/|^apps/api/scripts/"
+    r"|^\.github/|^tests/gates/|^scripts/|^apps/api/scripts/|(^|/)(pnpm-lock\.yaml|package-lock\.json)$"
+    r"|^apps/web/.*(\.testkit\.|/__mocks__/|/test-?utils?/|/testing/|/fixtures?/|\.setup\.)"
 )
 #: A line of its own in the PR body. Digits only, long enough to be a comment id.
 _CITATION = re.compile(r"^Approved-behavior-comment:[ \t]*(\d{7,})[ \t]*$", re.MULTILINE)
