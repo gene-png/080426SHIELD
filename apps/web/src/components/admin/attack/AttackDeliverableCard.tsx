@@ -24,6 +24,16 @@ import type {
 import type { JSX } from "react";
 import { formatInstantUtc } from "@/lib/dates";
 
+import { ATTACK_SECTION_COPY } from "./attackSections";
+
+/**
+ * #1377: which section's controls to show. "generate" is the status, the
+ * downloads and Finalize; "preview" is the client dashboard link; "release"
+ * is the status and Release with its confirm. Absent, the whole card, as
+ * before. The handlers are the same in every part.
+ */
+export type AttackDeliverablePart = "generate" | "preview" | "release";
+
 export interface AttackDeliverableCardProps {
   serviceId: string;
   assessmentStatus: AttackAssessmentStatus | null;
@@ -33,6 +43,7 @@ export interface AttackDeliverableCardProps {
    *  refuses to finalize it or release its deliverable, so neither is offered;
    *  the step above says why. */
   catalogStale?: boolean;
+  part?: AttackDeliverablePart;
 }
 
 // UTC, naming the zone -- the same instant the admin deliverables table shows.
@@ -57,6 +68,7 @@ export function AttackDeliverableCard({
   deliverable,
   onChange,
   catalogStale = false,
+  part,
 }: AttackDeliverableCardProps): JSX.Element {
   const [busy, setBusy] = React.useState<"finalize" | "release" | null>(null);
   const [confirmingRelease, setConfirmingRelease] = React.useState(false);
@@ -100,15 +112,33 @@ export function AttackDeliverableCard({
     }
   }
 
+  const showGenerate = part === undefined || part === "generate";
+  const showPreview = part === undefined || part === "preview";
+  const showRelease = part === undefined || part === "release";
+  const copy = ATTACK_SECTION_COPY.deliverable;
+
+  if (part === "preview" && !deliverable) {
+    return <p className="text-sm text-ink-secondary">{copy.previewNone}</p>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Deliverable</CardTitle>
-        <CardDescription>
-          Render the PDF + XLSX from the approved coverage assessment. The PDF
-          includes the per-tactic coverage table + top-50 gap list; the XLSX
-          carries the full ~600-row coverage matrix.
-        </CardDescription>
+        {part === "release" ? (
+          <>
+            <CardTitle>{copy.releaseTitle}</CardTitle>
+            <CardDescription>{copy.releaseDescription}</CardDescription>
+          </>
+        ) : (
+          <>
+            <CardTitle>Deliverable</CardTitle>
+            <CardDescription>
+              Render the PDF + XLSX from the approved coverage assessment. The
+              PDF includes the per-tactic coverage table + top-50 gap list; the
+              XLSX carries the full ~600-row coverage matrix.
+            </CardDescription>
+          </>
+        )}
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -132,7 +162,7 @@ export function AttackDeliverableCard({
           )}
         </div>
 
-        {deliverable ? (
+        {showGenerate && deliverable ? (
           <ul className="space-y-1 text-sm">
             {deliverable.pdf_artifact_id ? (
               <li>
@@ -159,7 +189,7 @@ export function AttackDeliverableCard({
 
         {/* Issue 4: the admin's own view of the dashboard, live as soon as
             the deliverable is finalized — before release. */}
-        {deliverable ? (
+        {showPreview && deliverable ? (
           <Link
             href={`/dashboards/attack/${serviceId}`}
             className="w-fit rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
@@ -168,19 +198,21 @@ export function AttackDeliverableCard({
           </Link>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void onFinalize()}
-            disabled={!canFinalize || busy !== null}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy === "finalize"
-              ? "Finalizing…"
-              : deliverable
-                ? "Re-finalize"
-                : "Finalize"}
-          </button>
-          {!canFinalize && !deliverable ? (
+          {showGenerate ? (
+            <button
+              type="button"
+              onClick={() => void onFinalize()}
+              disabled={!canFinalize || busy !== null}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "finalize"
+                ? "Finalizing…"
+                : deliverable
+                  ? "Re-finalize"
+                  : "Finalize"}
+            </button>
+          ) : null}
+          {showGenerate && !canFinalize && !deliverable ? (
             <span className="text-xs text-ink-tertiary">
               Approve the assessment to enable finalize.
             </span>
@@ -188,7 +220,12 @@ export function AttackDeliverableCard({
 
           {/* Issue 4: release to the client — the moment they can first see
               this work, so it sits behind an explicit confirm. */}
-          {deliverable && !released ? (
+          {showRelease && part === "release" && !deliverable ? (
+            <span className="text-sm text-ink-secondary">
+              {copy.releaseNone}
+            </span>
+          ) : null}
+          {showRelease && deliverable && !released ? (
             confirmingRelease ? (
               <span className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-ink-secondary">
