@@ -165,7 +165,10 @@ OUTSIDE_LEGEND = (
 
 def outside_rows_sentence(rows: int) -> str:
     """C1: #851's approved S1, with a period in place of its colon. Counts
-    ROWS, as the approve refusal does: one tool on two rows is two."""
+    ROWS: one tool on two rows is two. Since #1010 its caller counts only rows
+    with a status (`exporters.subset_sentences`); the approve refusal counts
+    every row, unscored ones included, because its remedy is removing the tool
+    wherever it is credited."""
     if rows == 1:
         return (
             "1 technique row credits a tool that is not in the client's security tool "

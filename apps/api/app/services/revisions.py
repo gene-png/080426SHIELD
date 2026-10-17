@@ -414,7 +414,10 @@ def latest_released_version(db: Session, model: type, released: Any, service_id)
 
 def refuse_mint_over_released(version: int) -> HTTPException:
     """#1123 item 1, approved verbatim at #736 comment 6216024281: a plain
-    "create assessment" over a RELEASED latest version is refused. It used to
+    "create assessment" is refused while ANY version of the service is
+    released, even when a newer version (an approved revision, say) sits on
+    top of it. All three callers key on `latest_released_version`, the newest
+    RELEASED version, and `version` is that one. It used to
     mint a blank version+1 draft that is not a revision, so the client doors
     (`client_facing`) did not apply and the client was handed a blank
     questionnaire over their released answers. Start a revision is the one

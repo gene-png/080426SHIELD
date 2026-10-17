@@ -104,7 +104,9 @@ def test_state_b_carries_no_reason(app_parts, tmp_path, world: str) -> None:  # 
 def test_state_a_carries_no_reason(app_parts, tmp_path) -> None:  # noqa: F811
     _with_storage(app_parts, tmp_path)
     w = _world(app_parts)
-    _cover(w, _codes(w)[0], [EDR, LEGACY])
+    # #1016: LEGACY is the row's only tool, so its Covered status rests on
+    # it, and the home card's "relies on" holds once LEGACY leaves the list.
+    _cover(w, _codes(w)[0], [LEGACY])
     _release(w, _approve_finalize(w))
     w.confirm_not_security(LEGACY)
     body = _value_summary(w)
