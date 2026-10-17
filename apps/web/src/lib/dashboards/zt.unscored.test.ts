@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { radarData, type ZtPillar } from "./zt";
+import { pillarsByGap, radarData, type ZtPillar } from "./zt";
 
 // #1183: stage 1 is now 0%, so a pillar with nothing scored (null) must not be
 // plotted at 0, where a pillar scored at the lowest stage sits.
@@ -33,5 +33,16 @@ describe("radarData with an unscored pillar (#1183)", () => {
     ]);
     expect(r.labels).toEqual(["Identity", "Data"]);
     expect(r.current).toEqual([0, null]);
+  });
+});
+
+describe("pillarsByGap with an unscored pillar (#1183)", () => {
+  it("puts a pillar with an unknown gap last, not first", () => {
+    const names = pillarsByGap([
+      pillar({ name: "Data", current_pct: null, gap_pct: null }),
+      pillar({ name: "Identity", gap_pct: 66.7 }),
+      pillar({ name: "Networks", gap_pct: 10 }),
+    ]).map((p) => p.name);
+    expect(names).toEqual(["Identity", "Networks", "Data"]);
   });
 });

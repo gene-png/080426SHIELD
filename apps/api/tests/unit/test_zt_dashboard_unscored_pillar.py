@@ -31,5 +31,7 @@ def test_an_unscored_pillar_is_never_the_largest_gap(app_client) -> None:  # noq
     identity = body["pillars"][0]
     assert (identity["code"], identity["answered_count"]) == ("ID", 0), identity  # positive first
     assert identity["current_pct"] is None, identity
+    # Its gap is unknown, not the whole target: 100.0 would read as a stage-1 pillar's.
+    assert identity["gap_pct"] is None, identity
     assert body["largest_gap_pillar"] != identity["name"], body["largest_gap_pillar"]
     assert body["largest_gap_pct"] == 33.4, body["largest_gap_pct"]
