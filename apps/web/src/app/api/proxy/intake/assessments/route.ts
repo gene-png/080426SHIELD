@@ -33,7 +33,7 @@ export async function GET(): Promise<NextResponse> {
     const result = await apiFetch<unknown>("/intake/engagements", { bearer });
     return NextResponse.json(result);
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "GET");
   }
 }
 
@@ -57,15 +57,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
-    return mapError(err);
+    return mapError(err, "POST");
   }
 }
 
-function mapError(err: unknown): NextResponse {
+function mapError(err: unknown, method: string): NextResponse {
   if (err instanceof ApiError) {
     return NextResponse.json(err.payload ?? { error: { code: err.status } }, {
       status: err.status,
     });
   }
-  return upstreamOutcomeUnknown(err, "Upstream assessments call");
+  return upstreamOutcomeUnknown(err, "Upstream assessments call", method);
 }

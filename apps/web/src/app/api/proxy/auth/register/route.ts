@@ -42,6 +42,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream registration");
+    return upstreamOutcomeUnknown(err, "Upstream registration", "POST");
   }
 }

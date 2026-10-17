@@ -39,7 +39,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/clients call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/clients call", "GET");
   }
 }
 
@@ -72,6 +72,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/clients call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/clients call", "POST");
   }
 }

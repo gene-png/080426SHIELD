@@ -268,6 +268,11 @@ export function serverReason(err: unknown): string | null {
  * and a read that failed changed nothing, so there is nothing to "check before
  * trying again". The caller shows its own fallback instead.
  *
+ * Since #1130 no GET proxy answers that code (a read gets
+ * `upstream_read_failed` and its own sentence, which passes through here), so
+ * the withholding is a ratchet: it fires again only if a read is ever routed
+ * through a write's builder.
+ *
  * Not `clientFacingError` and not `dashboardLoadReason`: both let that
  * sentence through.
  */

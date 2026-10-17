@@ -31,6 +31,6 @@ export async function GET(): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream ai-status call");
+    return upstreamOutcomeUnknown(err, "Upstream ai-status call", "GET");
   }
 }
