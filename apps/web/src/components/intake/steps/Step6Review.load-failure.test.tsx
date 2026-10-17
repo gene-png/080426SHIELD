@@ -106,7 +106,7 @@ describe("Step6Review: the uploads list failed to load (#1223)", () => {
       }),
     );
     renderStep();
-    expect(await screen.findByText("Failed to load uploads.")).toBeVisible();
+    expect(await screen.findByText(LIST_FAILED)).toBeVisible();
     expect(screen.queryByText(/not bound to a client/)).toBeNull();
   });
 
