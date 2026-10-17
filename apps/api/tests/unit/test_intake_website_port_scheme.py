@@ -48,6 +48,12 @@ def _patch_website(client, bearer: str, website: str):
         # The "//" missing before a real dotted quad: the prefix made its host
         # "https", so it is refused too.
         "https:1.2.3.4",
+        # #1230 item 1: the dotted quad must be the HOST the client typed, not
+        # text anywhere else in the value.
+        "8080/0.0.31.144",
+        "8080?0.0.31.144",
+        "https:/8080#0.0.31.144",
+        "8080\\0.0.31.144",  # a backslash cuts the authority too
         "https:\uff18\uff10\uff18\uff10",  # full-width "8080"
     ],
 )
@@ -94,6 +100,10 @@ def test_scheme_then_digit_names_its_guard(app_client, typed) -> None:  # noqa: 
         ("https://1.2.3.4", "https://1.2.3.4/"),
         ("http://1.2.3.4", "http://1.2.3.4/"),
         ("1.2.3.4:8080", "https://1.2.3.4:8080/"),
+        # A dotted quad in the PATH after a real host is not the host at all.
+        ("example.com/1.2.3.4", "https://example.com/1.2.3.4"),
+        ("https://1.2.3.4/0.0.0.1", "https://1.2.3.4/0.0.0.1"),
+        ("//1.2.3.4", "https://1.2.3.4/"),  # leading slashes, no scheme
     ],
 )
 def test_a_host_with_a_port_is_still_accepted(app_client, typed, stored) -> None:  # noqa: F811

@@ -420,7 +420,11 @@ def render_xlsx(ctx: DeliverableContext) -> bytes:
     ws.cell(row=summary_row, column=5, value=ctx.total_cost).number_format = "$#,##0"
     ws.cell(row=summary_row + 1, column=1, value="Estimated annual savings").font = Font(bold=True)
     savings_cell = ws.cell(row=summary_row + 1, column=5, value=ctx.estimated_savings)
-    savings_cell.number_format = "$#,##0"
+    # #1094: the "≥" is ON the value when the savings are a floor, as the PDF and
+    # DOCX print it. The cell stays NUMERIC (a sum over it still works); only
+    # its number format carries the marker, so a copied cell carries it too.
+    # An exact figure keeps the plain format. Ruled on #736 (6229200940).
+    savings_cell.number_format = "$#,##0" if ctx.savings_cost_known else '"≥ "$#,##0'
     if not ctx.savings_cost_known:
         ws.cell(
             row=summary_row + 1,

@@ -876,7 +876,14 @@ def draft_dashboard(
         run_id=run.id,
         run_finished_at=run.finished_at,
         batches_failed=stored.batches_failed,
-        omitted_count=stored.omitted_count,
+        # #1337: a result stored before #853 never measured this; the field's
+        # default of 0 would say "nothing omitted". `reasked_count` is a true 0
+        # for such a run (no re-ask existed), and `batches_failed` is in every
+        # stored result (the job writes every field; batching predates
+        # `ai_runs.result`), so only this one can be unmeasured.
+        omitted_count=(
+            stored.omitted_count if "omitted_count" in stored.model_fields_set else None
+        ),
         reasked_count=stored.reasked_count,
     )
 
@@ -2852,6 +2859,12 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
     # and an exact-match frozenset beside it would be a second, laxer answer to
     # the same question. The field stays on the request because the preview
     # payload and its tests read it.
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads are done (the
+    # request above carries everything the run needs), so the read transaction
+    # ends here and no connection is held while the redaction child builds the
+    # hinted resolver below (#1380) or while the provider answers. Refuses
+    # loudly if anything was written.
+    end_read_transaction(db, where="attack.run_ai")
     # The client's legal name, so a tool named after the client resolves from the
     # placeholder the model was actually shown (#33 finding 5). `client_org_name`
     # is None for an UNNAMED org -- `legal_name` NULL, nobody has named it yet
@@ -2892,10 +2905,6 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
-    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
-    # done, so the read transaction ends here and no connection is held
-    # while the provider answers. Refuses loudly if anything was written.
-    end_read_transaction(db, where="attack.run_ai")
     batched = _mitre_map_batches(
         db,
         ctx.llm,
@@ -3356,6 +3365,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         reasked_count=reask.asked,
         reask_batches_total=reask.batches_total,
         reask_batches_failed=reask.batches_failed,
+        techniques_asked=len(req.preview.inputs.get("technique_codes") or []),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

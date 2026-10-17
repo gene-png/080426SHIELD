@@ -13,6 +13,7 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -83,14 +84,24 @@ export function IntakeDocumentsPanel({
     listArtifacts(workspaceClientId ?? undefined)
       .then((res) => {
         if (cancelled) return;
+        // A 200 with no item list is a failed load, never an empty one (as on
+        // Steps 5 and 6): `res.items.filter` would throw into the handler
+        // below only by accident.
+        if (!Array.isArray(res.items)) {
+          setError("Couldn't load documents.");
+          return;
+        }
         setDocs(res.items.filter((a) => a.origin === "client_upload"));
         setError(null);
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't load documents.",
-          );
+          // #1223: never the error's own message, which for this READ was
+          // `ArtifactUploadError`'s "Upload failed: <status>". #1225: nor a
+          // plain-string api detail ("X-Client-Id header is required for
+          // this role."), which arrives with no `reason` and is internal
+          // text. Only a TYPED sentence (D-016 {reason, message}) is copy.
+          setError(typedReadFailure(err) ?? "Couldn't load documents.");
         }
       });
     return () => {
