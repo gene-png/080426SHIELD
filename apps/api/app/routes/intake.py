@@ -686,7 +686,7 @@ def create_engagement(
     # `.strip()` HERE TOO, matching the submit guard, and the earlier version of
     # this comment argued the opposite. It said a stored name is always NULL or
     # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
-    # every row written from this branch onward and FALSE of rows already in the
+    # every row written since the D-080 branch and FALSE of rows already in the
     # database: `ClientProfilePatch` carried no validator then (it has had a
     # blank normaliser since #1093), so any pre-branch
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
