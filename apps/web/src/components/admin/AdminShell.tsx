@@ -8,14 +8,16 @@ import { SHELL_COPY } from "@/components/service-shell/shellCopy";
 import { SignOutButton } from "@/components/site/SignOutButton";
 import { SkipToContent } from "@/components/site/SkipToContent";
 
+import { isClientFramePage, isWorkspace } from "./frameWidth";
+
 import type { JSX } from "react";
 
 /**
  * Admin shell (Navigation_Spec §2): a header carrying the signed-in identity,
  * one top bar of admin links at every width, and a skip-to-content link. #1385:
  * the bar replaced the left sidebar, so the left column is free for the
- * CLIENT: a page under a client's frame passes the client's rail as `rail`,
- * and every other page has no left column.
+ * CLIENT: a page under a client's frame shows that client's rail as its left
+ * column (the frame's own layout renders it), and every other page has none.
  */
 
 interface NavItem {
@@ -106,31 +108,15 @@ function WithClientParam({
   return <>{children(params?.get("client") ?? null)}</>;
 }
 
-/**
- * #1050: a service workspace (`/admin/services/<id>/...`) carries wide
- * editable tables, so it runs full-width. List and form pages keep the
- * readable `max-w-6xl` cap. T6: a section of the client frame
- * (`/admin/clients/<id>/services/<slug>/<section>`) wraps that workspace, so
- * it runs full-width too.
- */
-function isWorkspace(pathname: string): boolean {
-  return (
-    /^\/admin\/services\/[^/]+\/.+/.test(pathname) ||
-    /^\/admin\/clients\/[^/]+\/services\/[^/]+\/[^/]+/.test(pathname)
-  );
-}
-
 export function AdminShell({
   email,
-  rail,
   children,
 }: {
   email?: string | null;
-  /** The client's rail, for a page under a client's frame; none otherwise. */
-  rail?: React.ReactNode;
   children: React.ReactNode;
 }): JSX.Element {
   const pathname = usePathname();
+  const clientFrame = isClientFramePage(pathname);
 
   return (
     <div className="min-h-screen bg-surface-sunken">
@@ -161,31 +147,25 @@ export function AdminShell({
           </WithClientParam>
         </Suspense>
       </nav>
-      <div className="flex min-h-screen flex-col md:flex-row">
-        {rail ? (
-          <div
-            data-testid="admin-left-column"
-            className="shrink-0 border-b border-border-subtle bg-surface-card px-4 py-6 md:w-64 md:border-b-0 md:border-r"
-          >
-            {rail}
-          </div>
-        ) : null}
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className={
-            "mx-auto w-full min-w-0 flex-1 px-6 py-8 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500 " +
-            (isWorkspace(pathname) ? "" : "max-w-6xl")
-          }
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className={
+          "w-full min-w-0 focus:outline-2 focus:outline-offset-4 focus:outline-brand-500 " +
+          (clientFrame
+            ? ""
+            : "mx-auto px-6 py-8 " + (isWorkspace(pathname) ? "" : "max-w-6xl"))
+        }
+      >
+        {/* Issue 2: shell-level so the warning is visible on every admin
+            page including the landing one, not just one workspace. */}
+        <div
+          className={clientFrame ? "px-6 pt-6 empty:p-0" : "mb-6 empty:mb-0"}
         >
-          {/* Issue 2: shell-level so the warning is visible on every admin
-              page including the landing one, not just one workspace. */}
-          <div className="mb-6 empty:mb-0">
-            <AiStatusBanner />
-          </div>
-          {children}
-        </main>
-      </div>
+          <AiStatusBanner />
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

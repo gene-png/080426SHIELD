@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * #1385: the admin links move from the left column to one bar under the page
  * header, at every width. Risk Register leaves the bar (each client's own list
  * links to its register; the URL keeps working). The left column is for the
- * CLIENT: a page with a client shows the rail the route hands the shell, and a
- * page with none shows no column at all.
+ * CLIENT: a page under a client's frame runs edge to edge so the frame's rail
+ * is that column; a page with no client has no column.
  */
 
 const nav = vi.hoisted(() => ({ pathname: "/admin/queue", search: "" }));
@@ -33,14 +33,10 @@ const LINKS = [
   ["Management", "/admin/management"],
 ] as const;
 
-function at(path: string, rail?: React.ReactNode, search = ""): void {
+function at(path: string, search = ""): void {
   nav.pathname = path;
   nav.search = search;
-  render(
-    <AdminShell email="a@b.example" rail={rail}>
-      page
-    </AdminShell>,
-  );
+  render(<AdminShell email="a@b.example">page</AdminShell>);
 }
 
 beforeEach(() => {
@@ -89,7 +85,7 @@ describe("the admin top bar (#1385)", () => {
   });
 
   it("carries ?client to the twin pages from a twin page, as before", () => {
-    at("/admin/messages", undefined, "client=abc");
+    at("/admin/messages", "client=abc");
     const bar = screen.getByRole("navigation", { name: "Primary" });
     expect(
       within(bar).getByRole("link", { name: "Deliverables" }),
@@ -109,22 +105,26 @@ describe("the admin top bar (#1385)", () => {
   });
 });
 
-describe("the left column is the client (#1385)", () => {
-  it("shows the rail the route passes, before the page's main", () => {
-    at(
-      "/admin/clients/c-1/services/csf/overview",
-      <div data-testid="the-rail">rail</div>,
-    );
-    const column = screen.getByTestId("admin-left-column");
-    expect(within(column).getByTestId("the-rail")).toBeVisible();
-    const main = screen.getByRole("main");
-    expect(
-      column.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+describe("a client's page runs edge to edge, the frame owns its padding (#1385)", () => {
+  it.each([
+    "/admin/clients/c-1",
+    "/admin/clients/c-1/services/csf/overview",
+    "/admin/clients/c-1/services/tech-debt",
+  ])("%s: main has no padding and no cap", (path) => {
+    at(path);
+    const classes = screen.getByRole("main").className.split(/\s+/);
+    expect(classes).not.toContain("max-w-6xl");
+    expect(classes).not.toContain("px-6");
+    expect(classes).toContain("w-full");
   });
 
-  it("shows no column on a page with no client", () => {
-    at("/admin/queue");
-    expect(screen.queryByTestId("admin-left-column")).toBeNull();
-  });
+  it.each(["/admin/clients", "/admin/queue", "/admin/audit"])(
+    "%s: no client, so main keeps its padding and the readable cap",
+    (path) => {
+      at(path);
+      const classes = screen.getByRole("main").className.split(/\s+/);
+      expect(classes).toContain("max-w-6xl");
+      expect(classes).toContain("px-6");
+    },
+  );
 });
