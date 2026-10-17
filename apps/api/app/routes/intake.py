@@ -688,7 +688,7 @@ def create_engagement(
     # non-empty-and-trimmed, so a bare `not` was the whole test. That is true of
     # every row written since the D-080 branch and FALSE of rows already in the
     # database: `ClientProfilePatch` carried no validator then (it has had a
-    # blank normaliser since #1093), so any pre-branch
+    # blank normaliser since #1093), so any pre-D-080
     # `PATCH /intake` could store `"   "`, and migration 0049 does not NULL it --
     # its three predicates are domain-match, display-name-match, and the literal
     # sentinel. The D-080 branch introduced a write-time invariant and shipped nothing

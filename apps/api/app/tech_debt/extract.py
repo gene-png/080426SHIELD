@@ -877,7 +877,7 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     # field, which writes `""` rather than NULL". Both halves were false: the
     # wizard then sent `undefined` (`saveField(..., e.target.value || undefined)`,
     # which `exclude_unset` dropped), and `_apply_patch_to_client` maps `""`
-    # and `"   "` to NULL anyway. Since #1093 the wizard sends null for an
+    # and `"   "` to NULL anyway. Since #1093 the organisation step sends null for an
     # emptied field, and `ClientProfilePatch` normalises blanks to None, so a
     # blank still never reaches the column.
     #
