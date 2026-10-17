@@ -53,12 +53,24 @@ import { DiscardDraftButton } from "@/components/admin/DiscardDraftButton";
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 
+import {
+  SECTIONS,
+  type SectionKey,
+} from "@/components/service-shell/SectionBar";
+import { SectionHeader } from "@/components/service-shell/SectionHeader";
+
 import { ZtDeliverableCard } from "./ZtDeliverableCard";
 import { lostValueCount, ZtRunAiAccounting } from "./ZtRunAiAccounting";
 import { ZtGapList } from "./ZtGapList";
 import { ZtRoadmapCard } from "./ZtRoadmapCard";
 import { ZtQuestionnaire } from "./ZtQuestionnaire";
 import { ZtScoreCard } from "./ZtScoreCard";
+import {
+  showsBlock,
+  ZT_SECTION_COPY,
+  ZT_SECTION_VISIBILITY,
+  type ZtBlock,
+} from "./ztSections";
 
 import type { JSX } from "react";
 import { ProgressStages } from "../ProgressStages";
@@ -80,6 +92,42 @@ export interface ZtWorkspaceProps {
   serviceId: string;
   framework: ZtFramework;
   serviceTitle: string;
+  /**
+   * #1379: the client frame's section. Only that section's blocks render
+   * (`ZT_BLOCK_SECTIONS`), under the shared section header. Absent, the whole
+   * page, as before (the old `/admin/services/...` page and the unit tests).
+   */
+  section?: SectionKey;
+}
+
+/**
+ * #1379: a step's frame inside a section. The numbered card is the whole-page
+ * form; a section has its own header, so the number, title and done mark go,
+ * and the description and the blocked reason stay as plain text.
+ */
+function SectionStep({
+  description,
+  blockedReason,
+  children,
+}: {
+  number: number;
+  title: string;
+  description: string;
+  blockedReason?: string | null;
+  done?: boolean;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="max-w-prose text-sm text-ink-secondary">{description}</p>
+      {blockedReason ? (
+        <p className="text-sm text-ink-tertiary" role="note">
+          {blockedReason}
+        </p>
+      ) : null}
+      <div className={blockedReason ? "opacity-60" : undefined}>{children}</div>
+    </div>
+  );
 }
 
 /** Mirrors `DEFAULT_TARGET_STAGE` in `app/zt/scoring.py`; valid on both ladders. */
@@ -186,6 +234,7 @@ export function ZtWorkspace({
   serviceId,
   framework,
   serviceTitle,
+  section,
 }: ZtWorkspaceProps): JSX.Element {
   const [catalog, setCatalog] = React.useState<ZtCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<ZtAssessment | null>(null);
@@ -868,24 +917,61 @@ export function ZtWorkspace({
     answeredCount === 1 ? "" : "s"
   }, including client-entered data, will be discarded.`;
 
+  // #1379: in a section only that section's blocks render (`ztSections.ts`);
+  // with no `section` every block does, exactly as before.
+  if (section === "inputs") {
+    throw new Error("ZtWorkspace: Zero Trust has no Inputs section");
+  }
+  const inSection = section !== undefined;
+  const shows = (block: ZtBlock): boolean => showsBlock(section, block);
+  const Step = inSection ? SectionStep : WorkflowStep;
+  const sectionLabel =
+    section === undefined
+      ? undefined
+      : SECTIONS.find((x) => x.key === section)?.label;
+  if (section !== undefined && !sectionLabel) {
+    throw new Error(`ZtWorkspace: no section "${section}"`);
+  }
+  const released =
+    section === "approve-and-release" && deliverable?.released_at
+      ? { version: deliverable.version, releasedAt: deliverable.released_at }
+      : undefined;
+  const sectionHeader =
+    section !== undefined && sectionLabel ? (
+      <SectionHeader
+        section={section}
+        title={sectionLabel}
+        purpose={ZT_SECTION_COPY.header[section].purpose}
+        canDo={ZT_SECTION_COPY.header[section].canDo}
+        visibility={released ? "released" : ZT_SECTION_VISIBILITY[section]}
+        release={released}
+      />
+    ) : null;
+
   return (
-    <div className="flex flex-col gap-6">
+    <div
+      className="flex flex-col gap-6"
+      data-zt-section={inSection ? section : undefined}
+    >
+      {sectionHeader}
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-            {FRAMEWORK_NAME[framework]}
-          </p>
-          <h1 className="text-3xl font-semibold text-ink-primary">
-            {serviceTitle}
-          </h1>
-          <p className="max-w-prose text-sm text-ink-secondary">
-            Score each capability against the 4-stage maturity model. Coverage +
-            per-pillar rollup update on every edit; prioritized remediation gaps
-            surface alongside the score.
-          </p>
-        </div>
+        {inSection ? null : (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+              {FRAMEWORK_NAME[framework]}
+            </p>
+            <h1 className="text-3xl font-semibold text-ink-primary">
+              {serviceTitle}
+            </h1>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              Score each capability against the 4-stage maturity model. Coverage
+              + per-pillar rollup update on every edit; prioritized remediation
+              gaps surface alongside the score.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
-          {assessment ? (
+          {assessment && shows("statusPill") ? (
             <StatusPill
               tone={
                 assessment.status === "approved" ||
@@ -905,12 +991,12 @@ export function ZtWorkspace({
                     ? `Approved v${assessment.version}`
                     : `Released v${assessment.version}`}
             </StatusPill>
-          ) : (
+          ) : !assessment && shows("statusPill") ? (
             <StatusPill tone="neutral" withDot>
               No assessment yet
             </StatusPill>
-          )}
-          {assessment ? null : (
+          ) : null}
+          {assessment || !shows("startAssessment") ? null : (
             <button
               type="button"
               onClick={() => void onCreateAssessment()}
@@ -920,7 +1006,7 @@ export function ZtWorkspace({
               {busy === "create" ? "Creating…" : "Start assessment"}
             </button>
           )}
-          {assessment ? (
+          {assessment && shows("assessmentActions") ? (
             <DiscardDraftButton
               status={assessment.status}
               destructionSummary={discardSummary}
@@ -930,7 +1016,7 @@ export function ZtWorkspace({
               disabled={busy !== null && busy !== "run"}
             />
           ) : null}
-          {assessment ? (
+          {assessment && shows("assessmentActions") ? (
             <StartRevisionButton
               status={assessment.status}
               version={assessment.version}
@@ -941,13 +1027,13 @@ export function ZtWorkspace({
         </div>
       </header>
 
-      {assessment ? (
+      {assessment && shows("revisionBanner") ? (
         <RevisionBanner
           status={assessment.status}
           revision={assessment.revision}
         />
       ) : null}
-      {stagesPhase === "ready" && serviceStages ? (
+      {stagesPhase === "ready" && serviceStages && shows("progressStages") ? (
         <ProgressStages
           stages={serviceStages.stages}
           kind={serviceStages.kind}
@@ -955,18 +1041,24 @@ export function ZtWorkspace({
         />
       ) : null}
 
-      {assessment?.status === "submitted" ? (
+      {assessment?.status === "submitted" && shows("submittedBanner") ? (
         <div className="rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm text-status-warning-fg">
           <span className="font-semibold">
             Client self-assessment submitted.
           </span>{" "}
-          Review and edit their answers below for completeness and accuracy,
-          then <span className="font-medium">Approve client inputs</span> and
-          send for evaluation in the deliverable section.
+          {inSection ? (
+            ZT_SECTION_COPY.submittedBanner
+          ) : (
+            <>
+              Review and edit their answers below for completeness and accuracy,
+              then <span className="font-medium">Approve client inputs</span>{" "}
+              and send for evaluation in the deliverable section.
+            </>
+          )}
         </div>
       ) : null}
 
-      {refreshMessages.length > 0 ? (
+      {refreshMessages.length > 0 && shows("readFailures") ? (
         <div
           className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
           role="status"
@@ -978,7 +1070,7 @@ export function ZtWorkspace({
         </div>
       ) : null}
 
-      {loadError ? (
+      {loadError && shows("readFailures") ? (
         <Card>
           <CardHeader>
             <CardTitle>Couldn&apos;t load the assessment</CardTitle>
@@ -991,15 +1083,31 @@ export function ZtWorkspace({
         </Card>
       ) : null}
 
-      {!catalog ? (
-        <p className="text-sm text-ink-tertiary" aria-live="polite">
-          Loading catalog…
+      {inSection && shows("recommendationsEmpty") ? (
+        <p className="text-sm text-ink-secondary">
+          {ZT_SECTION_COPY.recommendationsEmpty}
         </p>
+      ) : null}
+
+      {!catalog ? (
+        shows("catalogLoading") ? (
+          <p className="text-sm text-ink-tertiary" aria-live="polite">
+            Loading catalog…
+          </p>
+        ) : null
       ) : !assessment ? (
-        <EmptyState
-          title="No Zero Trust assessment yet"
-          description="Click 'Start assessment' to create a fresh v1 with one empty answer per capability."
-        />
+        // The empty state names the control that exists in THIS section: the
+        // Start button is in Overview, so the others point there.
+        section === "recommendations" ? null : (
+          <EmptyState
+            title="No Zero Trust assessment yet"
+            description={
+              section !== undefined && section !== "overview"
+                ? ZT_SECTION_COPY.noAssessmentDescription
+                : "Click 'Start assessment' to create a fresh v1 with one empty answer per capability."
+            }
+          />
+        )
       ) : (
         <>
           {/* Ordered the way the work is done. This page used to run Run AI ->
@@ -1008,218 +1116,256 @@ export function ZtWorkspace({
               the very bottom, below the deliverable. Analysis output (score,
               gaps, roadmap) and the message thread are reference and now sit
               after the numbered path. */}
-          <WorkflowStep
-            number={1}
-            title="Draft the maturity scoring with AI"
-            description="The AI suggests a current maturity stage for each capability on this framework's scale. It does not suggest targets. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
-            // Not `runResult !== null`: a run that applied NOTHING put a green
-            // success badge and a "— done" heading directly above "AI applied 0
-            // of 74". The step is complete when the AI actually drafted
-            // something, not merely when a request returned.
-            // This rule has now been wrong in three different ways, so it is
-            // written as the three conditions it actually needs rather than as
-            // whichever disjunct fixed the last bug:
-            //
-            //   1. a run happened at all;
-            //   2. the response carried suggestions — `received === 0` is a
-            //      wholly-lost response, and because every drop path also
-            //      increments `received`, `dropped` is then necessarily empty,
-            //      so a "nothing was lost" test passes vacuously and marks the
-            //      step DONE over the red "returned no suggestions at all"
-            //      alert. That was round 4 re-opening round 3's defect;
-            //   3. either the AI drafted something, or nothing was lost — an
-            //      offline run over a fully client-submitted assessment applies
-            //      nothing and preserves everything, which is success. Gating
-            //      on `applied > 0` alone left Step 1 permanently un-done for
-            //      that workflow, which was round 3's defect.
-            done={
-              runResult !== null &&
-              runResult.suggestions_received > 0 &&
-              (runResult.suggestions_applied > 0 ||
-                lostValueCount(runResult) === 0)
-            }
-          >
-            <div className="flex flex-col gap-3">
-              {/* Issue 2: warn before producing canned output when no key is
+          {shows("runAi") ? (
+            <Step
+              number={1}
+              title="Draft the maturity scoring with AI"
+              description="The AI suggests a current maturity stage for each capability on this framework's scale. It does not suggest targets. It drafts; you decide. An offline run leaves alone locked rows, and any answer the AI did not write — a client submission, or one still in progress. It does NOT leave alone an unlocked row the AI wrote: that row stays AI-owned even after you correct it, so running offline again can redraft your correction. A live run may draft over any unlocked row, and shows you the diff."
+              // Not `runResult !== null`: a run that applied NOTHING put a green
+              // success badge and a "— done" heading directly above "AI applied 0
+              // of 74". The step is complete when the AI actually drafted
+              // something, not merely when a request returned.
+              // This rule has now been wrong in three different ways, so it is
+              // written as the three conditions it actually needs rather than as
+              // whichever disjunct fixed the last bug:
+              //
+              //   1. a run happened at all;
+              //   2. the response carried suggestions — `received === 0` is a
+              //      wholly-lost response, and because every drop path also
+              //      increments `received`, `dropped` is then necessarily empty,
+              //      so a "nothing was lost" test passes vacuously and marks the
+              //      step DONE over the red "returned no suggestions at all"
+              //      alert. That was round 4 re-opening round 3's defect;
+              //   3. either the AI drafted something, or nothing was lost — an
+              //      offline run over a fully client-submitted assessment applies
+              //      nothing and preserves everything, which is success. Gating
+              //      on `applied > 0` alone left Step 1 permanently un-done for
+              //      that workflow, which was round 3's defect.
+              done={
+                runResult !== null &&
+                runResult.suggestions_received > 0 &&
+                (runResult.suggestions_applied > 0 ||
+                  lostValueCount(runResult) === 0)
+              }
+            >
+              <div className="flex flex-col gap-3">
+                {/* Issue 2: warn before producing canned output when no key is
                   loaded. The guard shipped on the ATT&CK workspace only, so a
                   fixture run here silently overwrote a real client
                   self-assessment in the 2026-08-04 review. */}
-              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick, statusUnknown }) => (
-                  <div>
-                    <button
-                      type="button"
-                      onClick={onClick}
-                      disabled={
-                        // #645: an unreadable AI status fails closed.
-                        statusUnknown ||
-                        busy !== null ||
-                        readOnly ||
-                        runInProgress ||
-                        runOutcomeUnknown
-                      }
-                      className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {busy === "run" || runInProgress ? "Running…" : "Run AI"}
-                    </button>
-                  </div>
-                )}
-              </RunAiGuard>
-              {runOutcomeUnknown ? (
-                <p className="text-sm text-status-warning-fg" role="alert">
-                  {RUN_OUTCOME_UNKNOWN}
-                </p>
-              ) : null}
-              <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
-              {/* Replaces the old "Updated N fields across M capabilities"
+                <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                  {({ onClick, statusUnknown }) => (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={onClick}
+                        disabled={
+                          // #645: an unreadable AI status fails closed.
+                          statusUnknown ||
+                          busy !== null ||
+                          readOnly ||
+                          runInProgress ||
+                          runOutcomeUnknown
+                        }
+                        className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {busy === "run" || runInProgress
+                          ? "Running…"
+                          : "Run AI"}
+                      </button>
+                    </div>
+                  )}
+                </RunAiGuard>
+                {runOutcomeUnknown ? (
+                  <p className="text-sm text-status-warning-fg" role="alert">
+                    {inSection
+                      ? ZT_SECTION_COPY.runOutcomeUnknown
+                      : RUN_OUTCOME_UNKNOWN}
+                  </p>
+                ) : null}
+                <AiPreviewButton
+                  serviceId={serviceId}
+                  disabled={busy !== null}
+                />
+                {/* Replaces the old "Updated N fields across M capabilities"
                   line, which reported only what LANDED — a run that lost every
                   suggestion rendered identically to one the model had nothing
                   to say about (W1, issue #44). The accounting states the same
                   change counts and the shortfall alongside them. */}
-              <AiRunStatus run={aiRun} />
-              {/* #646: the assessment's AI source, from the derivation the
+                <AiRunStatus run={aiRun} />
+                {/* #646: the assessment's AI source, from the derivation the
                   deliverable and the client dashboard call. */}
-              {assessment ? (
-                <AiSourceNote source={assessment.ai_source} />
-              ) : null}
-              {/* #838: the API's own sentence, from the derivation the
+                {assessment ? (
+                  <AiSourceNote source={assessment.ai_source} />
+                ) : null}
+                {/* #838: the API's own sentence, from the derivation the
                   deliverables call too (`zt/retired.py`), never rebuilt here. */}
-              {assessment?.retired_answers_note ? (
-                <p
-                  className="text-sm text-ink-secondary"
-                  data-testid="zt-retired-answers"
-                >
-                  {assessment.retired_answers_note}
-                </p>
-              ) : null}
-              <LastRunNote run={aiRun.lastCompleted} />
-              {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
+                {assessment?.retired_answers_note ? (
+                  <p
+                    className="text-sm text-ink-secondary"
+                    data-testid="zt-retired-answers"
+                  >
+                    {assessment.retired_answers_note}
+                  </p>
+                ) : null}
+                <LastRunNote run={aiRun.lastCompleted} />
+                {/* Keyed by the run, which is LOAD-BEARING for accessibility: a
                   new run's accounting mounts fresh, so the live region is
                   created anew. Its headline switches between role="alert" and
                   aria-live="polite", and swapping that attribute on a
                   PERSISTENT node is the least reliable live-region transition
                   there is. (This used to be done by clearing the result at the
                   start of a run; the result now lives on the run itself.) */}
-              {runResult && aiRun.lastCompleted ? (
-                <ZtRunAiAccounting
-                  key={aiRun.lastCompleted.id}
-                  result={runResult}
-                />
-              ) : null}
-              {/* Sibling, not a child: the accounting component's severity
+                {runResult && aiRun.lastCompleted ? (
+                  <ZtRunAiAccounting
+                    key={aiRun.lastCompleted.id}
+                    result={runResult}
+                  />
+                ) : null}
+                {/* Sibling, not a child: the accounting component's severity
                   logic stays untouched (#68). */}
-              {runResult ? <AiDraftProvenanceNotice /> : null}
-              {runResult?.preserved_client_answers ? (
-                /* The skip must be visible, not silent. The population is every
+                {runResult ? <AiDraftProvenanceNotice /> : null}
+                {runResult?.preserved_client_answers ? (
+                  /* The skip must be visible, not silent. The population is every
                    answer the AI did not write — `protected_keys` keys on
                    `answer_source !== "ai"`, which also covers in-progress
                    self-assessments and rows a consultant typed, since
                    `update_answer` never writes that field. */
-                <p
-                  className="text-sm text-status-warning-fg"
-                  aria-live="polite"
-                >
-                  {runResult.preserved_client_answers} answer
-                  {runResult.preserved_client_answers === 1 ? "" : "s"} not
-                  written by the AI — submitted, still in progress, or
-                  consultant-entered —{" "}
-                  {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
-                  left untouched by this offline run. Rows you also locked are
-                  reported above as locked rather than preserved, so this count
-                  and the skipped lines above overlap without matching. A run
-                  with a real API key will draft over{" "}
-                  {runResult.preserved_client_answers === 1 ? "it" : "them"} —
-                  except any row you locked, which is respected in every mode.
-                </p>
-              ) : null}
-            </div>
-          </WorkflowStep>
+                  <p
+                    className="text-sm text-status-warning-fg"
+                    aria-live="polite"
+                  >
+                    {runResult.preserved_client_answers} answer
+                    {runResult.preserved_client_answers === 1 ? "" : "s"} not
+                    written by the AI — submitted, still in progress, or
+                    consultant-entered —{" "}
+                    {runResult.preserved_client_answers === 1 ? "was" : "were"}{" "}
+                    left untouched by this offline run. Rows you also locked are
+                    reported above as locked rather than preserved, so this
+                    count and the skipped lines above overlap without matching.
+                    A run with a real API key will draft over{" "}
+                    {runResult.preserved_client_answers === 1 ? "it" : "them"} —
+                    except any row you locked, which is respected in every mode.
+                  </p>
+                ) : null}
+              </div>
+            </Step>
+          ) : null}
 
-          <WorkflowStep
-            number={2}
-            title="Review every capability and adjust"
-            description="Work through the pillars and set the maturity stage you can defend. Where the client filled in their own self-assessment, this is where you check it for completeness and accuracy — their answers are what the report rests on."
-            done={
-              assessment.status !== "draft" && assessment.status !== "submitted"
-            }
-          >
-            <ZtQuestionnaire
-              catalog={catalog}
-              answersByCode={answersByCode}
-              readOnly={readOnly || runInProgress}
-              onAnswerUpdate={onAnswerUpdate}
-            />
-          </WorkflowStep>
-
-          <WorkflowStep
-            number={3}
-            title={
-              assessment.status === "submitted"
-                ? "Approve the client's inputs"
-                : "Approve the assessment"
-            }
-            description="Locks the scoring so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step."
-            done={
-              assessment.status === "approved" ||
-              assessment.status === "released"
-            }
-          >
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={
-                busy !== null ||
-                runInProgress ||
-                (assessment.status !== "draft" &&
-                  assessment.status !== "submitted")
+          {shows("questionnaire") ? (
+            <Step
+              number={2}
+              title="Review every capability and adjust"
+              description="Work through the pillars and set the maturity stage you can defend. Where the client filled in their own self-assessment, this is where you check it for completeness and accuracy — their answers are what the report rests on."
+              done={
+                assessment.status !== "draft" &&
+                assessment.status !== "submitted"
               }
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : assessment.status === "submitted"
-                      ? "Approve client inputs"
-                      : "Approve"}
-            </button>
-          </WorkflowStep>
-
-          <WorkflowStep
-            number={4}
-            title="Generate and release the deliverable"
-            description="Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
-            blockedReason={
-              assessment.status === "draft" || assessment.status === "submitted"
-                ? "Approve the assessment in step 3 before generating a deliverable from it."
-                : null
-            }
-          >
-            <div className="flex flex-col gap-3">
-              <StaleDocsNudge stale={assessment.documents_stale} />
-              <ZtDeliverableCard
-                serviceId={serviceId}
-                assessmentStatus={assessment.status}
-                deliverable={deliverable}
-                onChange={setDeliverable}
+              <ZtQuestionnaire
+                catalog={catalog}
+                answersByCode={answersByCode}
+                readOnly={readOnly || runInProgress}
+                onAnswerUpdate={onAnswerUpdate}
               />
-            </div>
-          </WorkflowStep>
+            </Step>
+          ) : null}
+
+          {shows("approve") ? (
+            <Step
+              number={3}
+              title={
+                assessment.status === "submitted"
+                  ? "Approve the client's inputs"
+                  : "Approve the assessment"
+              }
+              description={
+                inSection
+                  ? ZT_SECTION_COPY.approveNote
+                  : "Locks the scoring so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step."
+              }
+              done={
+                assessment.status === "approved" ||
+                assessment.status === "released"
+              }
+            >
+              <button
+                type="button"
+                onClick={() => void onApprove()}
+                disabled={
+                  busy !== null ||
+                  runInProgress ||
+                  (assessment.status !== "draft" &&
+                    assessment.status !== "submitted")
+                }
+                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {assessment.status === "approved"
+                  ? "Approved"
+                  : assessment.status === "released"
+                    ? "Released"
+                    : busy === "approve"
+                      ? "Approving…"
+                      : assessment.status === "submitted"
+                        ? "Approve client inputs"
+                        : "Approve"}
+              </button>
+            </Step>
+          ) : null}
+
+          {shows("deliverableGenerate") ||
+          shows("deliverablePreview") ||
+          shows("deliverableRelease") ? (
+            <Step
+              number={4}
+              title="Generate and release the deliverable"
+              description="Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
+              blockedReason={
+                assessment.status === "draft" ||
+                assessment.status === "submitted"
+                  ? inSection
+                    ? ZT_SECTION_COPY.generateBlocked
+                    : "Approve the assessment in step 3 before generating a deliverable from it."
+                  : null
+              }
+            >
+              <div className="flex flex-col gap-3">
+                {shows("deliverableGenerate") ? (
+                  <StaleDocsNudge stale={assessment.documents_stale} />
+                ) : null}
+                <ZtDeliverableCard
+                  serviceId={serviceId}
+                  assessmentStatus={assessment.status}
+                  deliverable={deliverable}
+                  onChange={setDeliverable}
+                  part={
+                    !inSection
+                      ? undefined
+                      : shows("deliverableGenerate")
+                        ? "generate"
+                        : shows("deliverablePreview")
+                          ? "preview"
+                          : "release"
+                  }
+                />
+              </div>
+            </Step>
+          ) : null}
 
           {/* Reference, not steps: analysis output and the thread are useful
               throughout and required at no particular point. */}
-          <ZtScoreCard score={score} />
-          <ZtGapList
-            analysis={gap}
-            targetStage={shownTarget}
-            onChangeTargetStage={(s) => void onChangeTargetStage(s)}
-            stages={catalog.stages}
-            targetNote={targetNote}
-          />
-          <ZtRoadmapCard analysis={gap} />
-          <MessageThread serviceId={serviceId} />
+          {shows("scoreCard") ? <ZtScoreCard score={score} /> : null}
+          {shows("gapList") ? (
+            <ZtGapList
+              analysis={gap}
+              targetStage={shownTarget}
+              onChangeTargetStage={(s) => void onChangeTargetStage(s)}
+              stages={catalog.stages}
+              targetNote={targetNote}
+            />
+          ) : null}
+          {shows("roadmap") ? <ZtRoadmapCard analysis={gap} /> : null}
+          {shows("messages") ? <MessageThread serviceId={serviceId} /> : null}
         </>
       )}
     </div>

@@ -21,11 +21,22 @@ import type { ZtAssessmentStatus, ZtDeliverable } from "@/lib/zt/types";
 import type { JSX } from "react";
 import { formatInstantUtc } from "@/lib/dates";
 
+import { ZT_SECTION_COPY } from "./ztSections";
+
+/**
+ * #1379: which section's controls to show. "generate" is the status, the
+ * downloads and Send for evaluation; "preview" is the client dashboard link;
+ * "release" is the status and Release with its confirm. Absent, the whole
+ * card, as before. The handlers are the same in every part.
+ */
+export type ZtDeliverablePart = "generate" | "preview" | "release";
+
 export interface ZtDeliverableCardProps {
   serviceId: string;
   assessmentStatus: ZtAssessmentStatus | null;
   deliverable: ZtDeliverable | null;
   onChange: (next: ZtDeliverable) => void;
+  part?: ZtDeliverablePart;
 }
 
 // UTC, naming the zone -- the same instant the admin deliverables table shows.
@@ -49,6 +60,7 @@ export function ZtDeliverableCard({
   assessmentStatus,
   deliverable,
   onChange,
+  part,
 }: ZtDeliverableCardProps): JSX.Element {
   const [busy, setBusy] = React.useState<"finalize" | "release" | null>(null);
   const [confirmingRelease, setConfirmingRelease] = React.useState(false);
@@ -91,16 +103,35 @@ export function ZtDeliverableCard({
     }
   }
 
+  const showGenerate = part === undefined || part === "generate";
+  const showPreview = part === undefined || part === "preview";
+  const showRelease = part === undefined || part === "release";
+  const copy = ZT_SECTION_COPY.deliverable;
+
+  if (part === "preview" && !deliverable) {
+    return <p className="text-sm text-ink-secondary">{copy.previewNone}</p>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Evaluation &amp; report</CardTitle>
-        <CardDescription>
-          Once you&apos;ve reviewed and approved the inputs, send for evaluation
-          to run the gap analysis and produce the PDF + XLSX report. Reports are
-          admin-only — download and share them outside the app. Re-running on
-          the same day appends <code>_v2</code> to the filename.
-        </CardDescription>
+        {part === "release" ? (
+          <>
+            <CardTitle>{copy.releaseTitle}</CardTitle>
+            <CardDescription>{copy.releaseDescription}</CardDescription>
+          </>
+        ) : (
+          <>
+            <CardTitle>Evaluation &amp; report</CardTitle>
+            <CardDescription>
+              Once you&apos;ve reviewed and approved the inputs, send for
+              evaluation to run the gap analysis and produce the PDF + XLSX
+              report. Reports are admin-only — download and share them outside
+              the app. Re-running on the same day appends <code>_v2</code> to
+              the filename.
+            </CardDescription>
+          </>
+        )}
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -124,7 +155,7 @@ export function ZtDeliverableCard({
           )}
         </div>
 
-        {deliverable ? (
+        {showGenerate && deliverable ? (
           <ul className="space-y-1 text-sm">
             {deliverable.pdf_artifact_id ? (
               <li>
@@ -151,7 +182,7 @@ export function ZtDeliverableCard({
 
         {/* Issue 4: the admin's own view of the dashboard, live as soon as
             the deliverable is finalized — before release. */}
-        {deliverable ? (
+        {showPreview && deliverable ? (
           <Link
             href={`/dashboards/zt/${serviceId}`}
             className="w-fit rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
@@ -160,19 +191,21 @@ export function ZtDeliverableCard({
           </Link>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void onFinalize()}
-            disabled={!canFinalize || busy !== null}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy === "finalize"
-              ? "Sending…"
-              : deliverable
-                ? "Re-run evaluation"
-                : "Send for evaluation"}
-          </button>
-          {!canFinalize && !deliverable ? (
+          {showGenerate ? (
+            <button
+              type="button"
+              onClick={() => void onFinalize()}
+              disabled={!canFinalize || busy !== null}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "finalize"
+                ? "Sending…"
+                : deliverable
+                  ? "Re-run evaluation"
+                  : "Send for evaluation"}
+            </button>
+          ) : null}
+          {showGenerate && !canFinalize && !deliverable ? (
             <span className="text-xs text-ink-tertiary">
               Approve the client inputs to enable evaluation.
             </span>
@@ -180,7 +213,12 @@ export function ZtDeliverableCard({
 
           {/* Issue 4: release to the client — the moment they can first see
               this work, so it sits behind an explicit confirm. */}
-          {deliverable && !released ? (
+          {showRelease && part === "release" && !deliverable ? (
+            <span className="text-sm text-ink-secondary">
+              {copy.releaseNone}
+            </span>
+          ) : null}
+          {showRelease && deliverable && !released ? (
             confirmingRelease ? (
               <span className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-ink-secondary">
