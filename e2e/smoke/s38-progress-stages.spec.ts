@@ -169,7 +169,7 @@ test("the workspace renders the bar with per-service wording and accessible stat
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${td.id}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
 
   const bar = page.getByRole("navigation", { name: "Assessment progress" });

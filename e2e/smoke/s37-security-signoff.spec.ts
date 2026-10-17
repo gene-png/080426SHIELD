@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { extractAfterUpload, watchUpload } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -62,8 +63,9 @@ test("an unconfirmed 'not security' call is provisional; sign-off is what remove
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   // Extract through the UI so the offline Run-AI guard is exercised too.
   const extractDone = page.waitForResponse(
@@ -82,6 +84,7 @@ test("an unconfirmed 'not security' call is provisional; sign-off is what remove
       buffer: Buffer.from(INVENTORY_CSV),
     });
   await extractAfterUpload(page, extractDone, uploadWatch);
+  await openSection(page, "Review");
 
   // 1. The queue surfaces the negative call, and says how many are outstanding.
   await expect(
@@ -171,8 +174,9 @@ test("a wrongly-classified security tool can be overturned back into scope", asy
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   const extractDone = page.waitForResponse(
     (r) =>
@@ -190,6 +194,7 @@ test("a wrongly-classified security tool can be overturned back into scope", asy
       buffer: Buffer.from(INVENTORY_CSV),
     });
   await extractAfterUpload(page, extractDone, uploadWatch);
+  await openSection(page, "Review");
 
   const queueCard = page
     .locator("li", { has: page.getByText(NON_SECURITY_ROW, { exact: true }) })
