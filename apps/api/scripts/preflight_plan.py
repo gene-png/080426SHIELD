@@ -89,7 +89,16 @@ _FROM_FILE = {
 #: The close guard's `--linked FILE`, GitHub's own answer about what a PR closes.
 _LINKED = re.compile(r"[ \t]*(\\\n[ \t]*)?--linked[ \t]+\S+")
 
-UNIT_STEP = re.compile(r"^pytest -m unit tests/unit(\s|$)")
+#: Group 1 is the command the CI step spells (`python -m pytest` since the unit
+#: suite runs in legs, whose `-p` plugin needs the project on sys.path).
+UNIT_STEP = re.compile(r"^((?:python -m )?pytest -m unit) tests/unit(\s|$)")
+
+#: A job that CI splits into legs (`strategy.matrix` with `shard` and `of`, as
+#: the Python unit legs are) runs here as the one leg of one: it is dealt
+#: EVERYTHING, because preflight keeps a single local run of the whole suite.
+#: The aggregate that judges the legs against each other stays on GitHub.
+_LEG_ONE_IF = "matrix.shard == 1"
+_SHARD_VALUES = {"matrix.shard": "1", "matrix.of": "1"}
 
 
 class CouldNotLook(Exception):
@@ -148,13 +157,19 @@ def _job_runs_here(job: dict) -> bool:
     return bool(text.strip()) and not _NOT_IN_API_IMAGE.search(text)
 
 
-def _step_kind(step: dict, where: str) -> str:
+def _is_shard_matrix(job: dict) -> bool:
+    """A matrix of exactly `shard` and `of`, with nothing added or removed."""
+    matrix = (job.get("strategy") or {}).get("matrix")
+    return isinstance(matrix, dict) and set(matrix) == {"shard", "of"}
+
+
+def _step_kind(step: dict, where: str, sharded: bool = False) -> str:
     cond = step.get("if")
     if cond is not None:
         cond = str(cond).strip()
         if cond == _BOT:
             return "na"
-        if cond not in _RUN_IFS:
+        if cond not in _RUN_IFS and not (sharded and cond == _LEG_ONE_IF):
             raise CouldNotLook(f"{where}: an `if:` this planner does not understand: {cond!r}")
     if step.get("continue-on-error"):
         return "advisory"
@@ -177,7 +192,7 @@ def _env_lines(env: dict, values: dict[str, str], where: str) -> list[str]:
 
 def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[str]) -> list[dict]:
     """Every step of every pull-request job, in order, with what to run."""
-    values = _values(base_branch, pr_number)
+    all_values = _values(base_branch, pr_number)
     workflows = sorted(p for p in (root / ".github" / "workflows").glob("*.y*ml") if p.is_file())
     if not workflows:
         raise CouldNotLook(f"no workflows under {root / '.github' / 'workflows'}")
@@ -223,6 +238,8 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
             default_wd = ((job.get("defaults") or {}).get("run") or {}).get(
                 "working-directory", "."
             )
+            sharded = _is_shard_matrix(job)
+            values = {**all_values, **(_SHARD_VALUES if sharded else {})}
             job_env = job.get("env") or {}
             for n, step in enumerate(job.get("steps") or []):
                 where = f"{path.name} {job_id} step {n}"
@@ -240,7 +257,7 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                 if shell is not None and str(shell) not in ("bash", "bash -e {0}"):
                     raise CouldNotLook(f"{where}: shell {shell!r} is not the bash GitHub runs")
                 label = str(step.get("name") or run.strip().splitlines()[0])
-                kind = _step_kind(step, where)
+                kind = _step_kind(step, where, sharded)
                 wd = str(step.get("working-directory", default_wd))
                 if kind == "na":
                     # Excluded for this author: listed, never resolved or run.
@@ -270,9 +287,10 @@ def plan(root: Path, base_branch: str, pr_number: str, unit: str, narrow: list[s
                     label += " [NO PR: --linked dropped, GitHub's linked set NOT verified]"
                 if unit == "narrow" and UNIT_STEP.match(script.strip()):
                     unit_steps += 1
-                    rest = UNIT_STEP.sub("", script.strip(), count=1)
+                    unit_match = UNIT_STEP.match(script.strip())
+                    rest = script.strip()[unit_match.end(1) + len(" tests/unit") :].strip()
                     script = (
-                        " ".join(["pytest -m unit", *map(shlex.quote, narrow), rest]).rstrip()
+                        " ".join([unit_match.group(1), *map(shlex.quote, narrow), rest]).rstrip()
                         + "\n"
                     )
                     label += " [NARROWED by preflight --unit narrow]"

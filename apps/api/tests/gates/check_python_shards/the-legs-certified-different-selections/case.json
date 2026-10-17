@@ -1,0 +1,12 @@
+{
+ "incident": "ADVERSARIAL: each leg deals from the selection ITS runner certified. Two selections that differ (a leg collected a different tree) can each look like a partition on their own; only comparing the selections byte for byte makes this red.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--dir",
+  "{dir}",
+  "--of",
+  "2"
+ ],
+ "stdout_contains": "the legs certified DIFFERENT selections"
+}

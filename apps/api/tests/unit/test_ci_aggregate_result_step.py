@@ -29,10 +29,11 @@ from tests._paths import find_workflows_dir
 
 pytestmark = pytest.mark.unit
 
-# The two required checks, by the exact names branch protection lists.
-# The Python check is one job again (pytest under xdist on one runner), so it
-# aggregates nothing; only the E2E check waits on shard legs.
-AGGREGATES = ("E2E (Playwright smoke suite)",)
+# The two required checks, by the exact names branch protection lists. Both
+# are aggregates over legs: E2E over its Playwright shards and session job, and
+# Python over its two unit legs (`python-shard`, which also carry the lint and
+# the gates, so a red gate on leg 1 reddens the Python check through this step).
+AGGREGATES = ("E2E (Playwright smoke suite)", "Python (ruff + black + pytest + bandit)")
 RESULTS = ("success", "failure", "cancelled", "skipped")
 
 
@@ -112,8 +113,8 @@ def test_the_result_step_passes_only_when_every_dependency_succeeded(name: str) 
         )
         outcomes[combo] = proc.returncode
 
-    # Vacuity guard: every combination ran. The aggregate waits on two jobs
-    # today, so this is 16; it follows the needs count if that changes.
+    # Vacuity guard: every combination ran. E2E waits on two jobs (16
+    # combinations) and Python on one (4); it follows the needs count.
     assert len(outcomes) == len(RESULTS) ** len(deps), len(outcomes)
     wrong = {
         repr(dict(zip(deps, combo, strict=True))): rc

@@ -135,7 +135,7 @@ def test_the_identity_is_the_one_pytest_writes(nodeid: str, expected: tuple[str,
 COUNT_CMD = (
     "python -m scripts.check_junit_counts"
     ' --junit "$RUNNER_TEMP/pytest-unit.xml"'
-    ' --selected "$RUNNER_TEMP/pytest-selection.txt"'
+    ' --selected "$RUNNER_TEMP/pytest-dealt.txt"'
 )
 
 
@@ -147,9 +147,9 @@ def _python_steps() -> list[dict]:
         # checkout" step fails if find_workflows_dir returns None there.
         pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
     jobs = yaml.safe_load((wf / "ci.yml").read_text(encoding="utf-8"))["jobs"]
-    found = [j for j in jobs.values() if j.get("name") == "Python (ruff + black + pytest + bandit)"]
-    assert len(found) == 1, f"expected one job with the required Python name, found {len(found)}"
-    return found[0]["steps"]
+    # The unit run is in the Python LEGS (`python-shard`); the job with the
+    # required Python name is their aggregate and has no pytest step.
+    return jobs["python-shard"]["steps"]
 
 
 def _run(step: dict) -> str:
@@ -158,7 +158,7 @@ def _run(step: dict) -> str:
 
 def test_ci_counts_the_unit_run_immediately_after_it() -> None:
     steps = _python_steps()
-    pytest_at = [i for i, s in enumerate(steps) if _run(s).startswith("pytest ")]
+    pytest_at = [i for i, s in enumerate(steps) if _run(s).startswith("python -m pytest ")]
     assert len(pytest_at) == 1, f"expected one pytest step, found {len(pytest_at)}"
     i = pytest_at[0]
     counted = [s for s in steps if "check_junit_counts" in _run(s)]
@@ -174,7 +174,7 @@ def test_ci_counts_the_unit_run_immediately_after_it() -> None:
 
 def test_the_counted_files_are_the_ones_the_run_and_the_gate_wrote() -> None:
     steps = _python_steps()
-    (i,) = [i for i, s in enumerate(steps) if _run(s).startswith("pytest ")]
+    (i,) = [i for i, s in enumerate(steps) if _run(s).startswith("python -m pytest ")]
     assert '--junitxml="$RUNNER_TEMP/pytest-unit.xml"' in _run(steps[i]).split(), _run(steps[i])
     gate = steps[i - 1]
     assert _run(gate).endswith('--selected-out "$RUNNER_TEMP/pytest-selection.txt"'), _run(gate)
