@@ -1,0 +1,12 @@
+This directory contains a copy of one mapping file from the MITRE Center for
+Threat-Informed Defense "Mappings Explorer" project:
+
+  https://github.com/center-for-threat-informed-defense/mappings-explorer
+  commit a85e55af3c9fa55359a98621745b9b039a088bec (2026-10-04)
+  mappings/nist_800_53/attack-16.1/nist_800_53-rev5/enterprise/
+    nist_800_53-rev5_attack-16.1-enterprise.json
+
+© 2024 MITRE. Approved for public release. Document number(s) CT0104.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE.txt in this
+directory). The file is redistributed unmodified.
