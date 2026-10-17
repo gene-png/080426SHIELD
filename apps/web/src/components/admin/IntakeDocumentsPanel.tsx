@@ -18,6 +18,8 @@ import type { AiServes } from "@/lib/aiRuns/types";
 
 import type { JSX } from "react";
 
+import { TD_SECTION_COPY } from "./techDebtSections";
+
 const SPREADSHEET_MIME = new Set([
   "text/csv",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -51,6 +53,8 @@ export interface IntakeDocumentsPanelProps {
    * from this page until it is reloaded. The workspace says why.
    */
   extractBlocked?: boolean;
+  /** #1376: shown in the Inputs section, where "Discard draft" is in Review. */
+  inSection?: boolean;
 }
 
 /**
@@ -67,6 +71,7 @@ export function IntakeDocumentsPanel({
   reloadKey = 0,
   draftSourceId = null,
   extractBlocked = false,
+  inSection = false,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -126,8 +131,11 @@ export function IntakeDocumentsPanel({
                 data-testid="draft-source-hint"
               >
                 The open draft was extracted from {draftSource.title}. To
-                extract from another document, use &quot;Discard draft&quot; in
-                step 2 first.
+                extract from another document, use &quot;Discard draft&quot;{" "}
+                {inSection
+                  ? TD_SECTION_COPY.draftSourceDiscardWhere
+                  : "in step 2"}{" "}
+                first.
               </p>
             ) : null}
             <ul className="flex flex-col gap-1.5">

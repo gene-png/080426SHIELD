@@ -55,7 +55,7 @@ import type {
 import { draftSourceArtifactId } from "@/lib/tech_debt/draftSource";
 
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
-import { DeliverableCard } from "./DeliverableCard";
+import { DeliverableCard, type DeliverablePart } from "./DeliverableCard";
 import { WorkflowStep } from "@/components/admin/WorkflowStep";
 import { DiscardDraftButton } from "./DiscardDraftButton";
 import { BulkKeepUndecided } from "./BulkKeepUndecided";
@@ -74,6 +74,21 @@ import { useServiceStages } from "@/lib/stages/client";
 import { useRefreshFailures } from "@/components/admin/useRefreshFailures";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import { AiSourceNote } from "@/components/AiSourceNote";
+import { AiResultCard } from "@/components/service-shell/AiResultCard";
+import { InternalOnlyBand } from "@/components/service-shell/InternalOnlyBand";
+import {
+  SECTIONS,
+  type SectionKey,
+} from "@/components/service-shell/SectionBar";
+import { SectionHeader } from "@/components/service-shell/SectionHeader";
+
+import {
+  NEEDS_LIST,
+  showsBlock,
+  TD_SECTION_COPY,
+  TD_SECTION_VISIBILITY,
+  type TdBlock,
+} from "./techDebtSections";
 
 /**
  * #550: what to say when the proxy never saw the extraction's answer. Not a
@@ -87,6 +102,12 @@ const EXTRACT_OUTCOME_UNKNOWN =
 export interface TechDebtWorkspaceProps {
   serviceId: string;
   serviceTitle: string;
+  /**
+   * #1376: the client frame's section. Only that section's blocks render
+   * (`TD_BLOCK_SECTIONS`), under the shared section header. Absent, the whole
+   * page renders as it did before the split.
+   */
+  section?: SectionKey;
 }
 
 /**
@@ -115,7 +136,10 @@ function reconciliationHeading(list: CapabilityList): string {
 export function TechDebtWorkspace({
   serviceId,
   serviceTitle,
+  section,
 }: TechDebtWorkspaceProps): JSX.Element {
+  const inSection = section !== undefined;
+  const shows = (block: TdBlock): boolean => showsBlock(section, block);
   const [list, setList] = React.useState<CapabilityList | null>(null);
   // Derived six-stage progress. Re-reads when this workspace's own
   // state moves, since the derivation is computed from that same state.
@@ -288,10 +312,12 @@ export function TechDebtWorkspace({
       // second time. Missing data defaults to UNCONFIRMED, never to a
       // known negative.
       deliverableAttempt.note(
-        "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
+        inSection
+          ? TD_SECTION_COPY.deliverableReadFailed
+          : "Couldn't check for a finalized deliverable. The section below is not a statement about whether one exists.",
       );
     }
-  }, [serviceId, refreshOverlap, beginRefresh]);
+  }, [serviceId, refreshOverlap, beginRefresh, inSection]);
 
   React.useEffect(() => {
     void (async () => {
@@ -552,8 +578,11 @@ Components carry no cost of their own — this licence keeps its full value.`,
       // Not swallowed: the page still shows the pre-edit approval state, so
       // say it could not be confirmed. Non-blocking (the edit itself saved),
       // and finalize refuses a stale approval on the server either way.
+      const why = proxyMessage(err, "the list could not be reloaded");
       attempt.note(
-        `Your edit was saved, but the approval state could not be re-checked (${proxyMessage(err, "the list could not be reloaded")}). Reload the page before step 4.`,
+        inSection
+          ? TD_SECTION_COPY.approvalRecheckFailed(why)
+          : `Your edit was saved, but the approval state could not be re-checked (${why}). Reload the page before step 4.`,
       );
     }
   }
@@ -675,139 +704,135 @@ Components carry no cost of their own — this licence keeps its full value.`,
     maximumFractionDigits: 0,
   }).format(totalCost);
 
-  return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-            Tech Debt service
-          </p>
-          <h1 className="text-3xl font-semibold text-ink-primary">
-            {serviceTitle}
-          </h1>
-          <p className="max-w-prose text-sm text-ink-secondary">
-            Upload an inventory CSV or XLSX; the AI extracts a structured
-            capability list. Edit any cell to clear that row&apos;s AI
-            confidence badge and mark it human-curated. Approve when the list is
-            ready for the consolidation plan.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {list ? (
-            <StatusPill
-              tone={
-                // `released` is approved-or-better, so it reads "success" like
-                // its siblings do. Previously unreachable, so a released list
-                // showed a blue "info" pill saying "Released".
-                approvalHolds ? "success" : approvalStale ? "warning" : "info"
+  // #1376: every block once, as an element. The whole page (no `section`)
+  // composes them exactly as before; a section composes only its own, per
+  // `TD_BLOCK_SECTIONS`.
+  const statusPill = list ? (
+    <StatusPill
+      tone={
+        // `released` is approved-or-better, so it reads "success" like
+        // its siblings do. Previously unreachable, so a released list
+        // showed a blue "info" pill saying "Released".
+        approvalHolds ? "success" : approvalStale ? "warning" : "info"
+      }
+      withDot
+    >
+      {list.status === "draft"
+        ? `Draft v${list.version}`
+        : approvalStale
+          ? `Edited since approval v${list.version}`
+          : list.status === "approved"
+            ? `Approved v${list.version}`
+            : `Released v${list.version}`}
+    </StatusPill>
+  ) : (
+    <StatusPill tone="neutral" withDot>
+      No list yet
+    </StatusPill>
+  );
+
+  const progressStages =
+    stagesPhase === "ready" && serviceStages ? (
+      <ProgressStages
+        stages={serviceStages.stages}
+        kind={serviceStages.kind}
+        version={serviceStages.version}
+      />
+    ) : null;
+
+  const runStatus = <AiRunStatus run={aiRun} />;
+  // #646: the list's AI source, from the derivation the deliverable and the
+  // client dashboard call.
+  const aiSource = list?.ai_source ? (
+    <AiSourceNote source={list.ai_source} />
+  ) : null;
+  const extractingLine =
+    extracting && !aiRun.running ? (
+      <p className="text-sm text-ink-tertiary" aria-live="polite">
+        Extracting capability list…
+      </p>
+    ) : null;
+  const extractErrorLine = extractError ? (
+    <p className="text-sm text-status-danger-fg" role="alert">
+      {extractError}
+    </p>
+  ) : null;
+  const outcomeUnknownLine = extractOutcomeUnknown ? (
+    <p className="text-sm text-status-warning-fg" role="alert">
+      {inSection
+        ? TD_SECTION_COPY.extractOutcomeUnknown
+        : EXTRACT_OUTCOME_UNKNOWN}
+    </p>
+  ) : null;
+
+  const uploadCard = (
+    <Card>
+      <CardHeader>
+        <CardTitle>Upload inventory and extract</CardTitle>
+        <CardDescription>
+          Drop the inventory CSV or XLSX. The redactor strips PII before the AI
+          sees the rows. Each extraction creates a new versioned list; previous
+          versions stay in the audit log.
+        </CardDescription>
+      </CardHeader>
+      <CardBody className="flex flex-col gap-4">
+        <RedactionDisclosure />
+        <Dropzone
+          onUploaded={(a) => {
+            setDocsReloadKey((k) => k + 1);
+            // Issue 2: uploading auto-started an AI extraction with no click
+            // to intercept, so an offline run could produce canned output
+            // unannounced. When AI is not live (and the admin hasn't already
+            // acknowledged it) the file is just listed — the guarded
+            // "Extract from this" button below is then the way in.
+            //
+            // #509: decided on a SETTLED status. This read `status`, null
+            // while the request is in flight, and a null ran the extraction
+            // -- reachable since #472 made the first status read slow. A
+            // status that cannot be read at all does not auto-run either;
+            // the guarded button remains, and it too is off until a status
+            // read succeeds (#645: RunAiGuard fails closed).
+            void aiSettled().then((s) => {
+              if (s === null) {
+                console.warn(
+                  "[tech-debt] AI status unreadable; not auto-extracting",
+                );
+                return;
               }
-              withDot
-            >
-              {list.status === "draft"
-                ? `Draft v${list.version}`
-                : approvalStale
-                  ? `Edited since approval v${list.version}`
-                  : list.status === "approved"
-                    ? `Approved v${list.version}`
-                    : `Released v${list.version}`}
-            </StatusPill>
-          ) : (
-            <StatusPill tone="neutral" withDot>
-              No list yet
-            </StatusPill>
-          )}
-        </div>
-      </header>
-
-      {stagesPhase === "ready" && serviceStages ? (
-        <ProgressStages
-          stages={serviceStages.stages}
-          kind={serviceStages.kind}
-          version={serviceStages.version}
+              if (!s.ready && !hasAcknowledgedOffline(s)) return;
+              if (extractionStarted.current.has(a.id)) return;
+              void runExtraction(a.id, s.ready ? "live" : "offline");
+            });
+          }}
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
         />
-      ) : null}
+        {shows("runProgress") ? runStatus : null}
+        {/* In a section, the AI source is AI draft's, not Inputs'. */}
+        {shows("aiSource") ? aiSource : null}
+        {shows("runProgress") ? (
+          <>
+            {extractingLine}
+            {extractErrorLine}
+            {outcomeUnknownLine}
+          </>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
 
-      {/* Ordered and labelled the way the work is done. The sequence here was
-          already close to right; what was missing was any statement of what to
-          do first, what each stage is for, or what "done" looks like. Analysis
-          output (consolidation plan, overlap) moves below the numbered path. */}
-      <WorkflowStep
-        number={1}
-        title="Upload the inventory and extract"
-        description="Drop the client's software inventory. The redactor strips PII before anything leaves the platform, then Claude extracts one capability per row. Rows it cannot name are reported as exclusions rather than silently dropped."
-        done={list !== null}
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload inventory and extract</CardTitle>
-            <CardDescription>
-              Drop the inventory CSV or XLSX. The redactor strips PII before the
-              AI sees the rows. Each extraction creates a new versioned list;
-              previous versions stay in the audit log.
-            </CardDescription>
-          </CardHeader>
-          <CardBody className="flex flex-col gap-4">
-            <RedactionDisclosure />
-            <Dropzone
-              onUploaded={(a) => {
-                setDocsReloadKey((k) => k + 1);
-                // Issue 2: uploading auto-started an AI extraction with no click
-                // to intercept, so an offline run could produce canned output
-                // unannounced. When AI is not live (and the admin hasn't already
-                // acknowledged it) the file is just listed — the guarded
-                // "Extract from this" button below is then the way in.
-                //
-                // #509: decided on a SETTLED status. This read `status`, null
-                // while the request is in flight, and a null ran the extraction
-                // -- reachable since #472 made the first status read slow. A
-                // status that cannot be read at all does not auto-run either;
-                // the guarded button remains, and it too is off until a status
-                // read succeeds (#645: RunAiGuard fails closed).
-                void aiSettled().then((s) => {
-                  if (s === null) {
-                    console.warn(
-                      "[tech-debt] AI status unreadable; not auto-extracting",
-                    );
-                    return;
-                  }
-                  if (!s.ready && !hasAcknowledgedOffline(s)) return;
-                  if (extractionStarted.current.has(a.id)) return;
-                  void runExtraction(a.id, s.ready ? "live" : "offline");
-                });
-              }}
-              accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            />
-            <AiRunStatus run={aiRun} />
-            {/* #646: the list's AI source, from the derivation the
-                deliverable and the client dashboard call. */}
-            {list?.ai_source ? <AiSourceNote source={list.ai_source} /> : null}
-            {extracting && !aiRun.running ? (
-              <p className="text-sm text-ink-tertiary" aria-live="polite">
-                Extracting capability list…
-              </p>
-            ) : null}
-            {extractError ? (
-              <p className="text-sm text-status-danger-fg" role="alert">
-                {extractError}
-              </p>
-            ) : null}
-            {extractOutcomeUnknown ? (
-              <p className="text-sm text-status-warning-fg" role="alert">
-                {EXTRACT_OUTCOME_UNKNOWN}
-              </p>
-            ) : null}
-          </CardBody>
-        </Card>
+  const documentsPanel = (
+    <IntakeDocumentsPanel
+      onExtract={(id, serves) => void runExtraction(id, serves)}
+      extracting={extracting || aiRun.running !== null}
+      extractBlocked={extractOutcomeUnknown}
+      reloadKey={docsReloadKey}
+      draftSourceId={draftSourceArtifactId(list)}
+      inSection={inSection}
+    />
+  );
 
-        <IntakeDocumentsPanel
-          onExtract={(id, serves) => void runExtraction(id, serves)}
-          extracting={extracting || aiRun.running !== null}
-          extractBlocked={extractOutcomeUnknown}
-          reloadKey={docsReloadKey}
-          draftSourceId={draftSourceArtifactId(list)}
-        />
-      </WorkflowStep>
-
+  const readFailures = (
+    <>
       {refreshMessages.length > 0 ? (
         <div
           className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
@@ -830,309 +855,606 @@ Components carry no cost of their own — this licence keeps its full value.`,
           </CardBody>
         </Card>
       ) : null}
+    </>
+  );
 
-      {list ? (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-          <NumberCard
-            label="Capabilities"
-            value={sources.length}
-            hint={
-              bundlePartCount > 0
-                ? `${bundlePartCount} bundle ${
-                    bundlePartCount === 1 ? "part" : "parts"
-                  } not counted`
-                : undefined
-            }
-          />
-          <NumberCard
-            label="Annual cost"
-            value={costFmt}
-            hint={noCost ?? undefined}
-          />
-          <NumberCard label="Categories" value={categoryCount} />
-          <NumberCard
-            label="To cut"
-            value={dispositionCounts.consolidate + dispositionCounts.cut}
-            deltaTone="negative"
-          />
-          <NumberCard
-            label="Low-confidence rows"
-            value={lowConfidence}
-            hint="AI confidence < 70%"
-          />
-        </div>
-      ) : null}
+  const emptyList = (
+    <EmptyState
+      title="No capability list yet"
+      description={
+        inSection
+          ? TD_SECTION_COPY.noListDescription
+          : "Upload an inventory above to run the first AI extraction."
+      }
+    />
+  );
 
-      {list ? (
-        <WorkflowStep
-          number={2}
-          title="Review and correct the extracted list"
-          description="Check what the extraction produced against what the client actually runs: fix names and costs, split bundles into their components, and confirm or overturn the security classification on each row. That classification decides what the ATT&CK mapping is allowed to cite, so an error here becomes a fabricated gap there."
-          done={approvalHolds}
-        >
-          <section aria-labelledby="cap-list" className="flex flex-col gap-3">
-            <header className="flex flex-wrap items-end justify-between gap-2">
-              <h2
-                id="cap-list"
-                className="text-lg font-semibold text-ink-primary"
-              >
-                Capability list v{list.version}
-              </h2>
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <StatusPill tone="info">{list.items.length} items</StatusPill>
-                <StatusPill tone={lowConfidence === 0 ? "success" : "warning"}>
-                  {lowConfidence === 0
-                    ? "All rows ≥ 70% confident"
-                    : `${lowConfidence} low-confidence rows`}
-                </StatusPill>
-                <StatusPill tone="neutral">
-                  Total cost: ${totalCost.toLocaleString()}
-                </StatusPill>
-                {noCost ? (
-                  <StatusPill tone="warning">{noCost}</StatusPill>
-                ) : null}
-                <DiscardDraftButton
-                  status={list.status}
-                  destructionSummary={discardSummary}
-                  onConfirm={onDiscard}
-                  disabled={approving || extracting || discarding}
-                />
-              </div>
-            </header>
+  if (!list) return inSection ? sectioned(null) : wholePage(null);
 
-            {/* Sign-off queue for negative security classifications. The
-              extraction is portfolio-wide, so the security call is a property
-              of each row rather than a filter — and it decides what ATT&CK may
-              cite. Nothing leaves that subset without a human agreeing. */}
-            <SecurityClassificationQueue
-              list={list}
-              onUpdated={(next) => {
-                listSeq.current += 1;
-                setList(next);
-              }}
-              // #640: classifications stay editable until release; an edit
-              // to an approved list sends step 3 back to not-done.
-              editable={list.status === "draft" || list.status === "approved"}
-            />
+  const keyFigures = (
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+      <NumberCard
+        label="Capabilities"
+        value={sources.length}
+        hint={
+          bundlePartCount > 0
+            ? `${bundlePartCount} bundle ${
+                bundlePartCount === 1 ? "part" : "parts"
+              } not counted`
+            : undefined
+        }
+      />
+      <NumberCard
+        label="Annual cost"
+        value={costFmt}
+        hint={noCost ?? undefined}
+      />
+      <NumberCard label="Categories" value={categoryCount} />
+      <NumberCard
+        label="To cut"
+        value={dispositionCounts.consolidate + dispositionCounts.cut}
+        deltaTone="negative"
+      />
+      <NumberCard
+        label="Low-confidence rows"
+        value={lowConfidence}
+        hint="AI confidence < 70%"
+      />
+    </div>
+  );
 
-            {/* UX finding 4: rows the extraction could not turn into a
-              capability at all — notes, headers, duplicates. Rare now that the
-              prompt keeps the whole portfolio, but "rare" is not "never", and
-              reporting the survivors as the portfolio hid 45% of the uploaded
-              spend in the 2026-08-04 review. */}
-            {/* Gate on the exclusion RECORD, not on a count comparison. The old
-              test was `source_rows_total > items.length`, which used "fewer
-              items than source rows" as a proxy for "rows were excluded".
-              Splitting a bundle ADDS child items — 26 became 32 against 28
-              source rows — so `28 > 32` went false and this whole block
-              unmounted, permanently. The disclosure disappeared exactly when a
-              consultant used a first-class feature, and stayed gone across a
-              reload (2026-08-07 review). Excluded rows are what makes this
-              honest; count them directly.
-
-              `included` likewise counts SOURCE-derived rows only, so
-              decomposition can never move the reconciliation arithmetic. */}
-            {/* Gate on the DERIVED count, not on the named list. `reconcile.py`
-              withholds the names when the provider did not attribute every item
-              to a source row — so `excluded_rows` is empty in exactly the case
-              where rows WERE excluded and nobody can say which, and measuring
-              the named list concluded nothing was excluded. That is the
-              2026-08-04 defect reachable through the mechanism added to prevent
-              it. The count is `received - source-derived items`, which is exact
-              only when attribution was complete; otherwise it is a floor and
-              the box says the count is unknown (#193, `exclusionUnknown`). The
-              exporter decides it the same way. */}
-            {typeof list.source_rows_total === "number" &&
-            (exclusionUnknown(list) ||
-              list.source_rows_total - sourceItems(list.items).length > 0) ? (
-              <div
-                className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
-                role="status"
-                aria-label="Extraction reconciliation"
-              >
-                <p className="font-semibold text-status-warning-fg">
-                  {reconciliationHeading(list)}
-                </p>
-                {exclusionUnknown(list) ? (
-                  <p className="mt-1 text-ink-secondary">
-                    The AI could not match every extracted capability to one
-                    uploaded row, so the excluded rows cannot be listed and how
-                    many there were is not known exactly.
-                  </p>
-                ) : null}
-                <p className="mt-1 text-ink-secondary">
-                  Totals below cover the included rows only, not the whole
-                  upload.
-                </p>
-                {list.excluded_rows && list.excluded_rows.length > 0 ? (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
-                      Show the {list.excluded_rows.length} excluded row
-                      {list.excluded_rows.length === 1 ? "" : "s"}
-                    </summary>
-                    <ul className="mt-2 flex flex-col gap-1">
-                      {list.excluded_rows.map((row) => (
-                        <li
-                          key={row.index}
-                          className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
-                        >
-                          <span className="font-mono text-ink-tertiary">
-                            row {row.index + 1}
-                          </span>
-                          <span className="min-w-0 flex-1">{row.summary}</span>
-                          {row.confirmed ? (
-                            <span className="text-status-success-fg">
-                              ✓ correctly excluded
-                            </span>
-                          ) : readOnly ? null : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => void onIncludeRow(row)}
-                                className="font-medium text-brand-600 underline hover:text-brand-700"
-                              >
-                                Include…
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void onConfirmRow(row)}
-                                className="text-ink-tertiary underline hover:text-ink-secondary"
-                              >
-                                Correctly excluded
-                              </button>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : (
-                  <p className="mt-1 text-xs text-ink-tertiary">
-                    The provider did not attribute every capability to a source
-                    row, so the excluded rows can&apos;t be listed individually.
-                  </p>
-                )}
-              </div>
-            ) : null}
-            <ExtractionFlags flags={list.extraction_flags} />
-            <ExtractionFindings
-              findings={list.extraction_findings}
-              readOnly={readOnly}
-            />
-            <DispositionHelp />
-            {/* TD-11 (for #1055): every undecided row to Keep, guarded on the
-                server so a decision made since this page loaded is never
-                overwritten. */}
-            <BulkKeepUndecided
-              items={list.items}
-              editable={list.status === "draft" || list.status === "approved"}
-              disabled={approving || extracting || discarding}
-              onKeep={(ids) => onBulkDisposition(ids, "keep", true)}
-            />
-            <EditableCapabilityTable
-              categories={categories === "error" ? null : categories}
-              items={list.items}
-              onItemUpdate={onItemUpdate}
-              onBulkDisposition={readOnly ? undefined : onBulkDisposition}
-              readOnly={readOnly}
-              onSplitBundle={readOnly ? undefined : onSplitBundle}
-            />
-            {categories === "error" ? (
-              // #1176 copy, approved on #736 (6216024281). An alert:
-              // the category column cannot be edited until a reload.
-              <p className="text-sm text-status-danger-fg" role="alert">
-                Categories could not be loaded.
-              </p>
-            ) : null}
-            {splitError ? (
-              <p className="text-sm text-status-danger-fg" role="alert">
-                {splitError}
-              </p>
-            ) : null}
-          </section>
-        </WorkflowStep>
-      ) : (
-        <EmptyState
-          title="No capability list yet"
-          description="Upload an inventory above to run the first AI extraction."
+  const listHeading = (
+    <header className="flex flex-wrap items-end justify-between gap-2">
+      <h2 id="cap-list" className="text-lg font-semibold text-ink-primary">
+        Capability list v{list.version}
+      </h2>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <StatusPill tone="info">{list.items.length} items</StatusPill>
+        <StatusPill tone={lowConfidence === 0 ? "success" : "warning"}>
+          {lowConfidence === 0
+            ? "All rows ≥ 70% confident"
+            : `${lowConfidence} low-confidence rows`}
+        </StatusPill>
+        <StatusPill tone="neutral">
+          Total cost: ${totalCost.toLocaleString()}
+        </StatusPill>
+        {noCost ? <StatusPill tone="warning">{noCost}</StatusPill> : null}
+        <DiscardDraftButton
+          status={list.status}
+          destructionSummary={discardSummary}
+          onConfirm={onDiscard}
+          disabled={approving || extracting || discarding}
         />
-      )}
+      </div>
+    </header>
+  );
 
-      {list ? (
-        <>
+  // Sign-off queue for negative security classifications. The extraction is
+  // portfolio-wide, so the security call is a property of each row rather
+  // than a filter — and it decides what ATT&CK may cite. Nothing leaves that
+  // subset without a human agreeing.
+  const securityQueue = (
+    <SecurityClassificationQueue
+      list={list}
+      onUpdated={(next) => {
+        listSeq.current += 1;
+        setList(next);
+      }}
+      // #640: classifications stay editable until release; an edit
+      // to an approved list sends step 3 back to not-done.
+      editable={list.status === "draft" || list.status === "approved"}
+    />
+  );
+
+  // UX finding 4: rows the extraction could not turn into a capability at
+  // all — notes, headers, duplicates. Rare now that the prompt keeps the whole
+  // portfolio, but "rare" is not "never", and reporting the survivors as the
+  // portfolio hid 45% of the uploaded spend in the 2026-08-04 review.
+  //
+  // Gate on the exclusion RECORD, not on a count comparison. The old test was
+  // `source_rows_total > items.length`, which used "fewer items than source
+  // rows" as a proxy for "rows were excluded". Splitting a bundle ADDS child
+  // items — 26 became 32 against 28 source rows — so `28 > 32` went false and
+  // this whole block unmounted, permanently. The disclosure disappeared
+  // exactly when a consultant used a first-class feature, and stayed gone
+  // across a reload (2026-08-07 review). Excluded rows are what makes this
+  // honest; count them directly.
+  //
+  // `included` likewise counts SOURCE-derived rows only, so decomposition can
+  // never move the reconciliation arithmetic.
+  //
+  // Gate on the DERIVED count, not on the named list. `reconcile.py` withholds
+  // the names when the provider did not attribute every item to a source row
+  // — so `excluded_rows` is empty in exactly the case where rows WERE excluded
+  // and nobody can say which, and measuring the named list concluded nothing
+  // was excluded. That is the 2026-08-04 defect reachable through the
+  // mechanism added to prevent it. The count is `received - source-derived
+  // items`, which is exact only when attribution was complete; otherwise it
+  // is a floor and the box says the count is unknown (#193,
+  // `exclusionUnknown`). The exporter decides it the same way.
+  const reconciliation =
+    typeof list.source_rows_total === "number" &&
+    (exclusionUnknown(list) ||
+      list.source_rows_total - sourceItems(list.items).length > 0) ? (
+      <div
+        className="rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm"
+        role="status"
+        aria-label="Extraction reconciliation"
+      >
+        <p className="font-semibold text-status-warning-fg">
+          {reconciliationHeading(list)}
+        </p>
+        {exclusionUnknown(list) ? (
+          <p className="mt-1 text-ink-secondary">
+            The AI could not match every extracted capability to one uploaded
+            row, so the excluded rows cannot be listed and how many there were
+            is not known exactly.
+          </p>
+        ) : null}
+        <p className="mt-1 text-ink-secondary">
+          {inSection
+            ? TD_SECTION_COPY.reconciliationTotals
+            : "Totals below cover the included rows only, not the whole upload."}
+        </p>
+        {list.excluded_rows && list.excluded_rows.length > 0 ? (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-medium text-ink-tertiary hover:text-ink-secondary">
+              Show the {list.excluded_rows.length} excluded row
+              {list.excluded_rows.length === 1 ? "" : "s"}
+            </summary>
+            <ul className="mt-2 flex flex-col gap-1">
+              {list.excluded_rows.map((row) => (
+                <li
+                  key={row.index}
+                  className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary"
+                >
+                  <span className="font-mono text-ink-tertiary">
+                    row {row.index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">{row.summary}</span>
+                  {row.confirmed ? (
+                    <span className="text-status-success-fg">
+                      ✓ correctly excluded
+                    </span>
+                  ) : readOnly ? null : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void onIncludeRow(row)}
+                        className="font-medium text-brand-600 underline hover:text-brand-700"
+                      >
+                        Include…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onConfirmRow(row)}
+                        className="text-ink-tertiary underline hover:text-ink-secondary"
+                      >
+                        Correctly excluded
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : (
+          <p className="mt-1 text-xs text-ink-tertiary">
+            The provider did not attribute every capability to a source row, so
+            the excluded rows can&apos;t be listed individually.
+          </p>
+        )}
+      </div>
+    ) : null;
+
+  const extractionFindings = (
+    <>
+      <ExtractionFlags flags={list.extraction_flags} />
+      <ExtractionFindings
+        findings={list.extraction_findings}
+        readOnly={readOnly}
+      />
+    </>
+  );
+
+  const reviewTable = (
+    <>
+      <DispositionHelp />
+      {/* TD-11 (for #1055): every undecided row to Keep, guarded on the
+          server so a decision made since this page loaded is never
+          overwritten. */}
+      <BulkKeepUndecided
+        items={list.items}
+        editable={list.status === "draft" || list.status === "approved"}
+        disabled={approving || extracting || discarding}
+        onKeep={(ids) => onBulkDisposition(ids, "keep", true)}
+      />
+      <EditableCapabilityTable
+        categories={categories === "error" ? null : categories}
+        items={list.items}
+        onItemUpdate={onItemUpdate}
+        onBulkDisposition={readOnly ? undefined : onBulkDisposition}
+        readOnly={readOnly}
+        onSplitBundle={readOnly ? undefined : onSplitBundle}
+      />
+      {categories === "error" ? (
+        // #1176 copy, approved on #736 (6216024281). An alert:
+        // the category column cannot be edited until a reload.
+        <p className="text-sm text-status-danger-fg" role="alert">
+          Categories could not be loaded.
+        </p>
+      ) : null}
+      {splitError ? (
+        <p className="text-sm text-status-danger-fg" role="alert">
+          {splitError}
+        </p>
+      ) : null}
+    </>
+  );
+
+  const approveControl = (
+    <>
+      <button
+        type="button"
+        onClick={() => void onApprove()}
+        disabled={approving || !approvable || approvalHolds}
+        className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {list.status === "released"
+          ? "Released"
+          : approving
+            ? "Approving…"
+            : approvalHolds
+              ? "Approved"
+              : approvalStale
+                ? "Approve again"
+                : "Approve list"}
+      </button>
+      {approveError ? (
+        <p className="mt-2 text-sm text-status-danger-fg" role="alert">
+          {approveError}
+        </p>
+      ) : null}
+    </>
+  );
+
+  const capabilityListStatus = list.status;
+  const deliverableCard = (part?: DeliverablePart): JSX.Element => (
+    <DeliverableCard
+      serviceId={serviceId}
+      capabilityListStatus={capabilityListStatus}
+      deliverable={deliverable}
+      onChange={setDeliverable}
+      part={part}
+    />
+  );
+
+  const whatIf =
+    plan && plan.capability_list_id === list.id ? (
+      <SavingsWhatIf
+        list={list}
+        planSavings={plan.estimated_annual_savings}
+        planKnown={plan.savings_cost_known}
+        readOnly={readOnly}
+        onApplied={(next) => {
+          // Applied through the disposition route, as a row edit is;
+          // the plan and its savings refresh in the background.
+          listSeq.current += 1;
+          setList(next);
+          void refreshOverlap();
+        }}
+      />
+    ) : null;
+  const overlapDashboard = (
+    <OverlapDashboard
+      analysis={overlap}
+      loading={overlapLoading && overlap === null}
+      error={overlapError}
+    />
+  );
+
+  const blocks: ListBlocks = {
+    list,
+    keyFigures,
+    listHeading,
+    securityQueue,
+    reconciliation,
+    extractionFindings,
+    reviewTable,
+    approveControl,
+    deliverableCard,
+    whatIf,
+    overlapDashboard,
+  };
+  return inSection ? sectioned(blocks) : wholePage(blocks);
+
+  /** Today's page, unchanged: the numbered steps, then the analysis. */
+  function wholePage(b: ListBlocks | null): JSX.Element {
+    return (
+      <div className="flex flex-col gap-6">
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+              Tech Debt service
+            </p>
+            <h1 className="text-3xl font-semibold text-ink-primary">
+              {serviceTitle}
+            </h1>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              Upload an inventory CSV or XLSX; the AI extracts a structured
+              capability list. Edit any cell to clear that row&apos;s AI
+              confidence badge and mark it human-curated. Approve when the list
+              is ready for the consolidation plan.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">{statusPill}</div>
+        </header>
+
+        {progressStages}
+
+        {/* Ordered and labelled the way the work is done. The sequence here
+            was already close to right; what was missing was any statement of
+            what to do first, what each stage is for, or what "done" looks
+            like. Analysis output (consolidation plan, overlap) moves below the
+            numbered path. */}
+        <WorkflowStep
+          number={1}
+          title="Upload the inventory and extract"
+          description={STEP_DESCRIPTION.upload}
+          done={b !== null}
+        >
+          {uploadCard}
+          {documentsPanel}
+        </WorkflowStep>
+
+        {readFailures}
+
+        {b ? b.keyFigures : null}
+
+        {b ? (
           <WorkflowStep
-            number={3}
-            title="Approve the capability list"
-            description="Records that the inventory was reviewed, so the deliverable is generated from rows a consultant signed off. Any later edit in step 2 means approving again. Approving does not send anything to the client — that is the last step."
+            number={2}
+            title="Review and correct the extracted list"
+            description={STEP_DESCRIPTION.review}
             done={approvalHolds}
           >
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={approving || !approvable || approvalHolds}
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            <section aria-labelledby="cap-list" className="flex flex-col gap-3">
+              {b.listHeading}
+              {b.securityQueue}
+              {b.reconciliation}
+              {b.extractionFindings}
+              {b.reviewTable}
+            </section>
+          </WorkflowStep>
+        ) : (
+          emptyList
+        )}
+
+        {b ? (
+          <>
+            <WorkflowStep
+              number={3}
+              title="Approve the capability list"
+              description="Records that the inventory was reviewed, so the deliverable is generated from rows a consultant signed off. Any later edit in step 2 means approving again. Approving does not send anything to the client — that is the last step."
+              done={approvalHolds}
             >
-              {list.status === "released"
-                ? "Released"
-                : approving
-                  ? "Approving…"
-                  : approvalHolds
-                    ? "Approved"
-                    : approvalStale
-                      ? "Approve again"
-                      : "Approve list"}
-            </button>
-            {approveError ? (
-              <p className="mt-2 text-sm text-status-danger-fg" role="alert">
-                {approveError}
+              {b.approveControl}
+            </WorkflowStep>
+
+            <WorkflowStep
+              number={4}
+              title="Generate and release the deliverable"
+              description={STEP_DESCRIPTION.generate}
+              blockedReason={
+                b.list.status === "draft"
+                  ? "Approve the capability list in step 3 before generating a deliverable from it."
+                  : approvalStale
+                    ? "The list was edited after it was approved. Approve it again in step 3 before generating a deliverable from it."
+                    : null
+              }
+            >
+              {b.deliverableCard()}
+            </WorkflowStep>
+
+            {/* Reference, not steps: analysis output, useful throughout. */}
+            <ConsolidationPlanCard summary={plan} />
+            {b.whatIf}
+            {b.overlapDashboard}
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
+  /**
+   * #1376: one section of the client frame. The section header replaces the
+   * old page title and the numbered steps; the step descriptions that still
+   * hold stay, verbatim, so nothing they said is lost.
+   */
+  function sectioned(b: ListBlocks | null): JSX.Element {
+    if (section === undefined) {
+      throw new Error("TechDebtWorkspace: sectioned() needs a section");
+    }
+    const label = SECTIONS.find((s) => s.key === section)?.label;
+    if (!label) throw new Error(`TechDebtWorkspace: no section "${section}"`);
+    const header = TD_SECTION_COPY.header[section];
+    const release =
+      section === "approve-and-release" && deliverable?.released_at
+        ? { version: deliverable.version, releasedAt: deliverable.released_at }
+        : undefined;
+    return (
+      <div className="flex flex-col gap-6" data-td-section={section}>
+        <SectionHeader
+          section={section}
+          title={label}
+          purpose={header.purpose}
+          canDo={header.canDo}
+          visibility={release ? "released" : TD_SECTION_VISIBILITY[section]}
+          release={release}
+        />
+        {sectionBlocks(b)}
+        {!b && NEEDS_LIST.includes(section) ? emptyList : null}
+      </div>
+    );
+  }
+
+  /**
+   * Every block in one order, each kept only where `TD_BLOCK_SECTIONS` places
+   * it, so the table is the one place that decides. The order is the page's
+   * reading order; no section holds two blocks in a different order.
+   */
+  function sectionBlocks(b: ListBlocks | null): JSX.Element {
+    const blocked =
+      b?.list.status === "draft"
+        ? TD_SECTION_COPY.generateBlockedDraft
+        : approvalStale
+          ? TD_SECTION_COPY.generateBlockedStale
+          : null;
+    return (
+      <>
+        {shows("listStatus") ? (
+          <div className="flex flex-wrap items-center gap-2">{statusPill}</div>
+        ) : null}
+        {shows("readFailures") ? readFailures : null}
+        {shows("progressStages") ? progressStages : null}
+        {shows("keyFigures") && b ? b.keyFigures : null}
+        {shows("upload") ? (
+          <>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              {STEP_DESCRIPTION.upload}
+            </p>
+            {/* The run's progress is inside this card when Inputs shows it. */}
+            {uploadCard}
+          </>
+        ) : null}
+        {shows("documents") ? documentsPanel : null}
+        {shows("reconciliation") && b ? b.reconciliation : null}
+        {shows("runProgress") && !shows("upload") ? (
+          <>
+            {runStatus}
+            {extractingLine}
+            {extractErrorLine}
+            {outcomeUnknownLine}
+          </>
+        ) : null}
+        {shows("aiSource") ? aiSource : null}
+        {shows("resultCard") && b ? extractionResult(b.list) : null}
+        {shows("listHeading") && b ? (
+          <>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              {STEP_DESCRIPTION.review}
+            </p>
+            <section aria-labelledby="cap-list" className="flex flex-col gap-3">
+              {b.listHeading}
+              {shows("securityQueue") ? b.securityQueue : null}
+              {shows("extractionFindings") ? b.extractionFindings : null}
+              {shows("reviewTable") ? b.reviewTable : null}
+            </section>
+          </>
+        ) : null}
+        {shows("approve") && b ? (
+          <div className="flex flex-col gap-2">
+            <p className="max-w-prose text-sm text-ink-secondary">
+              {TD_SECTION_COPY.approveNote}
+            </p>
+            <div>{b.approveControl}</div>
+          </div>
+        ) : null}
+        {shows("consolidationPlan") && b ? (
+          <ConsolidationPlanCard summary={plan} inSection />
+        ) : null}
+        {shows("savingsWhatIf") && b?.whatIf ? (
+          <InternalOnlyBand>{b.whatIf}</InternalOnlyBand>
+        ) : null}
+        {shows("overlap") && b ? b.overlapDashboard : null}
+        {shows("deliverableGenerate") && b ? (
+          <>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              {STEP_DESCRIPTION.generate}
+            </p>
+            {blocked ? (
+              <p className="text-sm text-ink-tertiary" role="note">
+                {blocked}
               </p>
             ) : null}
-          </WorkflowStep>
+            <div className={blocked ? "opacity-60" : undefined}>
+              {b.deliverableCard("generate")}
+            </div>
+          </>
+        ) : null}
+        {shows("deliverablePreview") && b ? b.deliverableCard("preview") : null}
+        {shows("deliverableRelease") && b ? b.deliverableCard("release") : null}
+        {shows("recommendationsEmpty") ? (
+          <p className="text-sm text-ink-secondary">
+            {TD_SECTION_COPY.recommendationsEmpty}
+          </p>
+        ) : null}
+      </>
+    );
+  }
+}
 
-          <WorkflowStep
-            number={4}
-            title="Generate and release the deliverable"
-            description="Renders the PDF, XLSX and DOCX from the approved list. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
-            blockedReason={
-              list.status === "draft"
-                ? "Approve the capability list in step 3 before generating a deliverable from it."
-                : approvalStale
-                  ? "The list was edited after it was approved. Approve it again in step 3 before generating a deliverable from it."
-                  : null
-            }
-          >
-            <DeliverableCard
-              serviceId={serviceId}
-              capabilityListStatus={list.status}
-              deliverable={deliverable}
-              onChange={setDeliverable}
-            />
-          </WorkflowStep>
+/** The step descriptions, shared by the whole page and the sections. */
+const STEP_DESCRIPTION = {
+  upload:
+    "Drop the client's software inventory. The redactor strips PII before anything leaves the platform, then Claude extracts one capability per row. Rows it cannot name are reported as exclusions rather than silently dropped.",
+  review:
+    "Check what the extraction produced against what the client actually runs: fix names and costs, split bundles into their components, and confirm or overturn the security classification on each row. That classification decides what the ATT&CK mapping is allowed to cite, so an error here becomes a fabricated gap there.",
+  generate:
+    "Renders the PDF, XLSX and DOCX from the approved list. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return.",
+} as const;
 
-          {/* Reference, not steps: analysis output, useful throughout. */}
-          <ConsolidationPlanCard summary={plan} />
-          {list && plan && plan.capability_list_id === list.id ? (
-            <SavingsWhatIf
-              list={list}
-              planSavings={plan.estimated_annual_savings}
-              planKnown={plan.savings_cost_known}
-              readOnly={readOnly}
-              onApplied={(next) => {
-                // Applied through the disposition route, as a row edit is;
-                // the plan and its savings refresh in the background.
-                listSeq.current += 1;
-                setList(next);
-                void refreshOverlap();
-              }}
-            />
-          ) : null}
-          <OverlapDashboard
-            analysis={overlap}
-            loading={overlapLoading && overlap === null}
-            error={overlapError}
-          />
-        </>
-      ) : null}
-    </div>
+/** The blocks that exist only once a list does. */
+interface ListBlocks {
+  list: CapabilityList;
+  keyFigures: JSX.Element;
+  listHeading: JSX.Element;
+  securityQueue: JSX.Element;
+  reconciliation: JSX.Element | null;
+  extractionFindings: JSX.Element;
+  reviewTable: JSX.Element;
+  approveControl: JSX.Element;
+  deliverableCard: (part?: DeliverablePart) => JSX.Element;
+  whatIf: JSX.Element | null;
+  overlapDashboard: JSX.Element;
+}
+
+/**
+ * #1376: AI draft's result card (plan v2, rule 8), counted in uploaded rows:
+ * Asked is the rows received, Applied the rows that became a capability, Not
+ * applied the rows left out. Only an EXACT count partitions that way. When
+ * the count is unknown (#193), or included rows exceed received ones, or no
+ * row count is on record, there is no card and a line says why: a card over
+ * a floor would state a number nobody knows.
+ */
+function extractionResult(list: CapabilityList): JSX.Element {
+  const copy = TD_SECTION_COPY.result;
+  const received = list.source_rows_total;
+  if (typeof received !== "number") {
+    return <p className="text-sm text-ink-secondary">{copy.noRowCount}</p>;
+  }
+  const included = sourceItems(list.items).length;
+  if (exclusionUnknown(list) || included > received) {
+    return <p className="text-sm text-ink-secondary">{copy.uncounted}</p>;
+  }
+  const leftOut = received - included;
+  return (
+    <AiResultCard
+      outcome={
+        leftOut === 0
+          ? copy.allIncluded(received)
+          : copy.someLeftOut(included, received)
+      }
+      tone={leftOut === 0 ? "success" : "warning"}
+      figures={{
+        asked: received,
+        applied: included,
+        notApplied: leftOut,
+        notAppliedReasons:
+          leftOut > 0 ? [{ reason: copy.leftOutReason, count: leftOut }] : [],
+        unscored: 0,
+      }}
+      nextStep={copy.next}
+    />
   );
 }
