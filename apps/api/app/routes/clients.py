@@ -104,6 +104,8 @@ from app.risk.engine import (
 )
 from app.risk.zt_capped import capped_target_codes as risk_capped_target_codes
 from app.risk.zt_capped import capped_target_sentence as risk_capped_target_sentence
+from app.risk.zt_target_origin import unrecorded_target_codes as risk_unrecorded_codes
+from app.risk.zt_target_origin import unrecorded_target_lines as risk_unrecorded_lines
 from app.routes.attack import client_retirement_index
 from app.routes.attack import subset_state as attack_subset_state
 from app.schemas.clients import (
@@ -2226,6 +2228,8 @@ def risk_dashboard(
         ],
         # #915: the same reader and sentence as the register and its files.
         zt_capped_target_note=risk_capped_target_sentence(risk_capped_target_codes(reg.provenance)),
+        # #1343: the same reader and lines as the register and its files.
+        zt_unrecorded_target_notes=risk_unrecorded_lines(risk_unrecorded_codes(reg.provenance)),
         csf_source_note=risk_csf_source_note(reg.provenance),
         # #736 6104067136: the files' reader, so the screen and the files agree.
         csf_no_shared_row=risk_csf_no_shared_row(reg.provenance),
