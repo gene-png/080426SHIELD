@@ -189,13 +189,18 @@ describe("CsfSelfAssessment: the blank-answer warning, focus and reasons (#1191)
   it("says why Submit anyway is off when a function has lost every answer", async () => {
     // Each answer comes back under its OWN subcategory code, as the API sends it.
     const codeOf = (answerId: string): string => {
-      const found = assessment(ONE_BLANK).answers.find((a) => a.id === answerId);
+      const found = assessment(ONE_BLANK).answers.find(
+        (a) => a.id === answerId,
+      );
       if (!found) throw new Error(`no answer ${answerId} in the fixture`);
       return found.subcategory_code;
     };
     vi.mocked(csfClient.patchSelfAssessmentAnswer).mockImplementation(
       async (answerId, patch) =>
-        ({ ...answer(answerId, codeOf(answerId), null), ...patch }) as CsfAnswer,
+        ({
+          ...answer(answerId, codeOf(answerId), null),
+          ...patch,
+        }) as CsfAnswer,
     );
     await mountWith(assessment(ONE_BLANK));
     expect(screen.queryByText(FUNCTION_REASON)).toBeNull();

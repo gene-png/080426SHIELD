@@ -189,7 +189,9 @@ describe("ZtSelfAssessment: the blank-answer warning, focus and reasons (#1191)"
   it("says why Submit anyway is off when a pillar has lost every answer", async () => {
     // Each answer comes back under its OWN capability code, as the API sends it.
     const codeOf = (answerId: string): string => {
-      const found = assessment(ONE_BLANK).answers.find((a) => a.id === answerId);
+      const found = assessment(ONE_BLANK).answers.find(
+        (a) => a.id === answerId,
+      );
       if (!found) throw new Error(`no answer ${answerId} in the fixture`);
       return found.capability_code;
     };
