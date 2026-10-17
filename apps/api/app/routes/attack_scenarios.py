@@ -43,6 +43,7 @@ from app.ai.session_marks import end_read_transaction
 from app.attack import added_since_base, scenario, scenario_intent
 from app.attack.citations import Candidate, resolver_names
 from app.attack.computed import awaiting_review_sentence
+from app.attack.exporters import has_status
 from app.attack.pending import row_tools
 from app.attack.rules import parents_computed
 from app.attack.shown_forms import shown_forms
@@ -944,13 +945,16 @@ def list_scenarios(
                 # #851: the same count the workspace discloses, by the same
                 # function. Today's figure is not recomputed.
                 # ROWS, as the workspace's S1 counts them, not tool citations.
+                # #1277: only rows with a status, as C1 counts them (#1010):
+                # the sentence is about what today's figure counts, and an
+                # unscored row has no status in it.
                 citations_outside_subset=len(
                     {
                         o.technique_code
                         for o in outside_subset_citations(
                             db,
                             client.id,
-                            _base_rows(db, base.id),
+                            [r for r in _base_rows(db, base.id) if has_status(r)],
                             parents_computed=parents_computed(base),
                         )
                     }
