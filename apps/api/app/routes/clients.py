@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, NamedTuple
 
@@ -41,6 +42,7 @@ from app.attack.exporters import awaiting_review_text as attack_awaiting_review_
 from app.attack.exporters import build_context as attack_build_context
 from app.attack.exporters import coverage_measured
 from app.attack.exporters import coverage_pct_text as attack_coverage_pct_text
+from app.attack.exporters import has_status as attack_has_status
 from app.attack.exporters import partial_reason_counts as attack_partial_reason_counts
 from app.attack.exporters import retirement_sentences as attack_retirement_sentences
 from app.attack.exporters import subset_sentences as attack_subset_sentences
@@ -1372,7 +1374,18 @@ def attack_dashboard_content(
         if retirement.has_plan
         else None
     )
-    retirement_notes = attack_retirement_sentences(deliverable_ctx) if retirement.has_plan else None
+    # #1277: "could not be determined for {n} cited tools" counts the tools of
+    # the rows THIS PAGE DRAWS, which are the rows with a status; the matrix
+    # skips an unscored row, so a tool only it cites is on no row here. The
+    # documents keep the shared context: they print and mark an unscored row's
+    # tools (the Unscored sheet, C3), so their count includes them.
+    retirement_notes = (
+        attack_retirement_sentences(
+            replace(deliverable_ctx, coverage=[r for r in delivered if attack_has_status(r)])
+        )
+        if retirement.has_plan
+        else None
+    )
     # #554 R1, ruling (i): the deliverable's own count table. Omitted when empty.
     partial_reasons = [
         AttackPartialReasonCount(label=reason.label, sentence=reason.sentence, count=n)
