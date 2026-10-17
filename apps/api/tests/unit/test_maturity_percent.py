@@ -43,3 +43,18 @@ def test_an_exact_average_is_floored_from_its_own_value() -> None:
 def test_an_exact_average_outside_the_scale_raises() -> None:
     with pytest.raises(ValueError):
         maturity_percent(Fraction(9, 10), 4)
+
+
+def test_a_float_average_is_read_by_its_decimal_text() -> None:
+    # 1.9 is not exactly representable: Fraction(1.9) is 1.89999..., which
+    # would floor (1.9 - 1) / 3 = 30% to 29.9.
+    assert maturity_percent(1.9, 4) == 30.0
+
+
+@pytest.mark.parametrize(("avg", "top", "expected"), [(1.15, 4, 5.0), (2.17, 4, 39.0)])
+def test_a_float_product_cannot_shave_a_tenth_off_the_floor(
+    avg: float, top: int, expected: float
+) -> None:
+    # (1.15 - 1) / 3 * 1000 is 49.99999999999999 in floats, so a float floor
+    # reads 4.9; by hand, 0.15 / 3 = 5%.
+    assert maturity_percent(avg, top) == expected

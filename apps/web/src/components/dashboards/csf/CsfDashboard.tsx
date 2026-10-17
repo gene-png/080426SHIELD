@@ -48,7 +48,7 @@ function MaturityBar({ fn }: { fn: CsfFunction }): JSX.Element {
         {/* An unassessed function has NO gap to move — its bar length is an
             artefact of comparing 0 against the target, and it sorts to the top
             of a list headed "largest move required". Say what it is instead of
-            printing "0 gaps · +75 pt move" next to it. */}
+            printing "0 gaps · +66.6 pt move" next to it. */}
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {fn.current_pct === null
             ? `Not assessed · 0 of ${fn.subcategory_count} scored`

@@ -4,8 +4,10 @@
     (avg - 1) / (top - 1), one decimal, ROUNDED DOWN.
 
 The bottom of the scale is 0%, not 1/top: before this, a client at the lowest
-tier everywhere read 25% (CSF, avg / top). Shared by the CSF and Zero Trust
-client dashboards, so the two cannot compute it differently.
+tier everywhere read 25% (CSF, avg / top). Used by the CSF client dashboard.
+The Zero Trust half is PENDING (the ZT dashboard still uses
+`zt/scoring.py::_maturity_pct`, avg / levels): #1183, T2. It will call this too,
+so the two cannot compute it differently.
 """
 
 from __future__ import annotations
