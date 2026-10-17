@@ -127,4 +127,6 @@ def test_the_overall_percentage_is_taken_from_the_exact_average(app_client) -> N
         target_stage=4,
         stage_by_code=lambda code: 3 if code in three else 2,
     )
+    # The 76/37 above depends on CISA having 37 capabilities.
+    assert sum(p["capability_count"] for p in body["pillars"]) == 37, body["pillars"]
     assert body["current_pct"] == 35.1, body["current_pct"]

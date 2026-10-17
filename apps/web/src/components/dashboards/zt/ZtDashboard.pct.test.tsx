@@ -8,9 +8,9 @@ import type { ZtDashboardData } from "@/lib/dashboards/zt";
 import { ZtDashboard } from "./ZtDashboard";
 
 /**
- * #1183: the API floors each maturity percentage to one decimal, so 2/3 of the
- * way up the scale is 66.6. The dashboard prints that figure as given, to one
- * decimal: rounding it again here printed "67", a number the API never sent and
+ * #1183: the API floors each maturity percentage to one decimal, so 5/9 of the
+ * way up the scale is 55.5 (55.55...). The dashboard prints that figure as given, to one
+ * decimal: rounding it again here printed "56", a number the API never sent and
  * the deliverable does not show. The fixture is shaped like
  * `ZtDashboardResponse`.
  */
@@ -31,8 +31,8 @@ function dashboard(): ZtDashboardData {
     deliverable_version: 1,
     framework: "cisa_ztmm_2_0",
     framework_label: "CISA ZTMM 2.0",
-    current_label: "Advanced",
-    current_pct: 66.6,
+    current_label: "Initial",
+    current_pct: 55.5,
     target_label: "Optimal",
     target_pct: 100,
     target_stage: 4,
@@ -41,7 +41,7 @@ function dashboard(): ZtDashboardData {
     engagement_target_capability_count: 7,
     total_gap_count: 7,
     largest_gap_pillar: "Identity",
-    largest_gap_pct: 33.4,
+    largest_gap_pct: 44.5,
     pillars: [
       {
         code: "ID",
@@ -62,21 +62,22 @@ function dashboard(): ZtDashboardData {
 describe("ZtDashboard prints the API's one-decimal percentages (#1183)", () => {
   it("prints the overall and target figures to one decimal", () => {
     render(<ZtDashboard data={dashboard()} />);
-    expect(screen.getByText("Advanced · 66.6")).toBeVisible();
+    // The overall card and the sole pillar's bar both print it.
+    expect(screen.getAllByText("Initial · 55.5")).toHaveLength(2);
     // The overall target card and the pillar bar both print it.
     expect(screen.getAllByText("Optimal · 100.0")).toHaveLength(2);
-    expect(screen.queryByText("Advanced · 67")).toBeNull();
+    expect(screen.queryByText("Initial · 56")).toBeNull();
   });
 
   it("prints each pillar's figures and gap to one decimal", () => {
     render(<ZtDashboard data={dashboard()} />);
-    expect(screen.getByText("Initial · 55.5")).toBeVisible();
+    expect(screen.getAllByText("Initial · 55.5").length).toBeGreaterThan(0);
     expect(screen.getByText("+44.5 pt move · 7/7 scored")).toBeVisible();
     expect(screen.queryByText("Initial · 56")).toBeNull();
   });
 
   it("prints the largest gap to one decimal", () => {
     render(<ZtDashboard data={dashboard()} />);
-    expect(screen.getByText("Largest: Identity · +33.4 points")).toBeVisible();
+    expect(screen.getByText("Largest: Identity · +44.5 points")).toBeVisible();
   });
 });
