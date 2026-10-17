@@ -217,7 +217,7 @@ describe("ZtSelfAssessment: the blank-answer warning, focus and reasons (#1191)"
   it("leaves focus alone on the stepper's Next (only the warning's Go to moves it)", async () => {
     await mountWith(assessment(ONE_BLANK));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /^Next: Devices/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Next: DV/ }));
     });
     const region = screen.getByRole("region", { name: "DV Devices" });
     expect(region).toBeVisible();
