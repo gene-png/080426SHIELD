@@ -152,8 +152,13 @@ test("matrix + heatmap render, Run AI reports updated fields, and the panel show
   // #1182: the workspace states what the run covered (Gene's line).
   const summary = page.getByTestId("attack-mapping-done");
   await expect(summary).toBeVisible({ timeout: 30000 });
+  // #1333: the tool count and its noun agree, built from this run's own
+  // `tools_available` rather than any digits and either noun.
+  const toolsNoun = runBody.tools_available === 1 ? "tool" : "tools";
   await expect(summary).toContainText(
-    /Mapping done for \d+ tools? across \d+ ATT&CK techniques and sub-techniques\./,
+    new RegExp(
+      `Mapping done for ${runBody.tools_available} ${toolsNoun} across \\d+ ATT&CK techniques and sub-techniques\\.`,
+    ),
   );
 
   // A STANDALONE technique (no sub-techniques, no parent) the fixture marked
