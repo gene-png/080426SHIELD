@@ -75,6 +75,23 @@ describe("the Coverage by tactic chart says how it counts (#1324)", () => {
     expect(section).toContainElement(note);
   });
 
+  it("leaves exactly one level-2 heading for the blind-spot section, as the s27 locator reads it", () => {
+    // `e2e/smoke/s27-attack-dashboard.spec.ts` finds the section by this heading
+    // query. The note quotes the title in a paragraph, and the heading's own
+    // text carries the "n uncovered" pill, so a text locator would match the
+    // note or nothing; the heading role matches the section's <h2> alone.
+    render(<AttackDashboard data={data([tech({ code: "T1059" })])} />);
+    expect(screen.getByTestId("attack-tactic-bar-counting")).toBeVisible();
+    const headings = screen.getAllByRole("heading", {
+      level: 2,
+      name: /^What you're blind to today/,
+    });
+    expect(headings).toHaveLength(1);
+    expect(headings[0].textContent).toBe(
+      "What you're blind to today1 uncovered",
+    );
+  });
+
   it("is not shown when nothing is uncovered, since it names a section that is then absent", () => {
     render(
       <AttackDashboard
