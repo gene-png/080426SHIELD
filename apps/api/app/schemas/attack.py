@@ -398,6 +398,11 @@ class AttackRunAiResponse(BaseModel):
     reasked_count: int = 0
     reask_batches_total: int = 0
     reask_batches_failed: int = 0
+    # #1325: how many techniques the run's FIRST pass asked about (every row
+    # but a computed parent), failed batches included. The workspace's "of
+    # {total}" reads it. None on a run stored before #1325: that is "not
+    # recorded", never zero, so a reader falls back instead of printing 0.
+    techniques_asked: int | None = None
 
 
 class AttackCoveragePatch(BaseModel):
