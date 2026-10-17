@@ -27,7 +27,9 @@ import { AiRunStatus, LastRunNote } from "@/components/admin/AiRunStatus";
 import { AiPreviewButton } from "../AiPreviewButton";
 import { AiDraftProvenanceNotice } from "@/components/admin/AiDraftProvenanceNotice";
 import { RunAiGuard } from "../RunAiGuard";
+import type { SectionKey } from "@/components/service-shell/SectionBar";
 import { CsfDimensionEditor } from "./CsfDimensionEditor";
+import { showsCsfBlock, type CsfBlock } from "./csfSections";
 import { CsfGapActionEditor } from "./CsfGapActionEditor";
 import { isUpstreamOutcomeUnknown } from "@/lib/describe-save-error";
 import {
@@ -56,6 +58,11 @@ import type { JSX } from "react";
 
 export interface CsfPlaybookPanelProps {
   serviceId: string;
+  /**
+   * #1378: the client frame's section. Only that section's blocks render
+   * (`CSF_BLOCK_SECTIONS`). Absent, the whole panel, as before.
+   */
+  section?: SectionKey;
   readOnly?: boolean;
   /**
    * #550: an earlier Run AI's outcome is unknown, so Run AI stays off. Owned
@@ -627,6 +634,7 @@ export function CsfPlaybookPanel({
   assessmentId,
   onRunInProgressChange,
   onRunCompleted,
+  section,
 }: CsfPlaybookPanelProps): JSX.Element {
   const [enterprise, setEnterprise] = React.useState<EnterpriseProfile | null>(
     null,
@@ -776,6 +784,9 @@ export function CsfPlaybookPanel({
   }
 
   const seeded = (enterprise?.subcategories.length ?? 0) > 0;
+  // #1378: in a section of the client frame only that section's blocks render
+  // (`CSF_BLOCK_SECTIONS`); absent, the whole panel, as before.
+  const shows = (block: CsfBlock): boolean => showsCsfBlock(section, block);
   const gapCount = enterprise?.subcategories.filter((s) => s.gap).length ?? 0;
   // #762: a row with no target is not a gap, and not "met" either. Counted
   // beside the gaps so the line does not read as covering every row.
@@ -789,180 +800,204 @@ export function CsfPlaybookPanel({
     enterprise?.subcategories.filter((s) => s.target_not_measured === true)
       .length ?? 0;
 
+  const showsCard =
+    shows("playbookRun") ||
+    shows("playbookCoverage") ||
+    shows("playbookTable") ||
+    shows("exportPlaybook");
+  const showsButtonRow =
+    shows("playbookRun") ||
+    shows("exportPlaybook") ||
+    shows("playbookCoverage");
+
   return (
     <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Full Playbook — Working Profiles</CardTitle>
-          <CardDescription>
-            Tiered (HIGH / MODERATE / LOW) five-dimension scoring rolled up to
-            one Enterprise level per subcategory via the weighted-floor rules.
-            {PANEL_DESCRIPTION}
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-4">
-          {error ? (
-            <p className="text-sm text-status-danger-fg" role="alert">
-              {error}
-            </p>
-          ) : null}
-          {runOutcomeUnknown ? (
-            <p className="text-sm text-status-warning-fg" role="alert">
-              {RUN_OUTCOME_UNKNOWN}
-            </p>
-          ) : null}
+      {showsCard ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Full Playbook — Working Profiles</CardTitle>
+            <CardDescription>
+              Tiered (HIGH / MODERATE / LOW) five-dimension scoring rolled up to
+              one Enterprise level per subcategory via the weighted-floor rules.
+              {PANEL_DESCRIPTION}
+            </CardDescription>
+          </CardHeader>
+          <CardBody className="flex flex-col gap-4">
+            {/* A seed, run or export failure shows in the sections holding the
+              controls that can raise it. */}
+            {error && (shows("playbookRun") || shows("exportPlaybook")) ? (
+              <p className="text-sm text-status-danger-fg" role="alert">
+                {error}
+              </p>
+            ) : null}
+            {runOutcomeUnknown && shows("playbookRun") ? (
+              <p className="text-sm text-status-warning-fg" role="alert">
+                {RUN_OUTCOME_UNKNOWN}
+              </p>
+            ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
-            {!seeded ? (
-              <button
-                type="button"
-                onClick={() => void onSeed()}
-                disabled={busy !== null || readOnly || runInProgress}
-                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
-              </button>
-            ) : (
-              /* Issue 2: warn before producing canned output when offline. */
-              <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
-                {({ onClick, statusUnknown }) => (
+            {showsButtonRow ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {!seeded && shows("playbookRun") ? (
                   <button
                     type="button"
-                    onClick={onClick}
-                    disabled={
-                      // #645: an unreadable AI status fails closed.
-                      statusUnknown ||
-                      busy !== null ||
-                      readOnly ||
-                      runInProgress ||
-                      runOutcomeUnknown
-                    }
+                    onClick={() => void onSeed()}
+                    disabled={busy !== null || readOnly || runInProgress}
                     className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {busy === "run" || runInProgress
-                      ? "Running…"
-                      : RUN_AI_LABEL}
+                    {busy === "seed" ? "Seeding…" : "Seed Working Profiles"}
                   </button>
-                )}
-              </RunAiGuard>
-            )}
-            {seeded ? (
-              <button
-                type="button"
-                onClick={() => void onExport()}
-                disabled={busy !== null || runInProgress}
-                className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {busy === "export" ? "Exporting…" : "Export XLSX"}
-              </button>
-            ) : null}
-            {exportResult ? (
-              <span className="flex flex-wrap items-center gap-3 text-sm font-medium">
-                {exportResult.artifacts.map((a) => (
-                  <a
-                    key={a.kind}
-                    href={`/api/proxy/artifacts/${a.artifact_id}/download`}
-                    className="text-brand-500 hover:underline"
-                    title={a.filename}
+                ) : seeded && shows("playbookRun") ? (
+                  /* Issue 2: warn before producing canned output when offline. */
+                  <RunAiGuard onProceed={(serves) => void onRunAi(serves)}>
+                    {({ onClick, statusUnknown }) => (
+                      <button
+                        type="button"
+                        onClick={onClick}
+                        disabled={
+                          // #645: an unreadable AI status fails closed.
+                          statusUnknown ||
+                          busy !== null ||
+                          readOnly ||
+                          runInProgress ||
+                          runOutcomeUnknown
+                        }
+                        className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {busy === "run" || runInProgress
+                          ? "Running…"
+                          : RUN_AI_LABEL}
+                      </button>
+                    )}
+                  </RunAiGuard>
+                ) : null}
+                {seeded && shows("exportPlaybook") ? (
+                  <button
+                    type="button"
+                    onClick={() => void onExport()}
+                    disabled={busy !== null || runInProgress}
+                    className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {a.label}
-                  </a>
-                ))}
-              </span>
+                    {busy === "export" ? "Exporting…" : "Export XLSX"}
+                  </button>
+                ) : null}
+                {exportResult && shows("exportPlaybook") ? (
+                  <span className="flex flex-wrap items-center gap-3 text-sm font-medium">
+                    {exportResult.artifacts.map((a) => (
+                      <a
+                        key={a.kind}
+                        href={`/api/proxy/artifacts/${a.artifact_id}/download`}
+                        className="text-brand-500 hover:underline"
+                        title={a.filename}
+                      >
+                        {a.label}
+                      </a>
+                    ))}
+                  </span>
+                ) : null}
+                {seeded && shows("playbookCoverage") ? (
+                  <span className="text-sm text-ink-secondary">
+                    {enterprise?.tiers_in_use.length ?? 0} tier(s) in use ·{" "}
+                    <span className="font-semibold text-ink-primary">
+                      {gapCount}
+                    </span>{" "}
+                    subcategor{gapCount === 1 ? "y" : "ies"} with a gap
+                    {untargetedCount > 0
+                      ? ` · ${untargetedCount} with no target`
+                      : ""}
+                    {unmeasuredCount > 0
+                      ? ` · ${unmeasuredCount} not measured`
+                      : ""}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
-            {seeded ? (
-              <span className="text-sm text-ink-secondary">
-                {enterprise?.tiers_in_use.length ?? 0} tier(s) in use ·{" "}
-                <span className="font-semibold text-ink-primary">
-                  {gapCount}
-                </span>{" "}
-                subcategor{gapCount === 1 ? "y" : "ies"} with a gap
-                {untargetedCount > 0
-                  ? ` · ${untargetedCount} with no target`
-                  : ""}
-                {unmeasuredCount > 0
-                  ? ` · ${unmeasuredCount} not measured`
-                  : ""}
-              </span>
-            ) : null}
-          </div>
 
-          {/* #852: the API's own sentence (`csf/retired.py`), the one the
+            {/* #852: the API's own sentence (`csf/retired.py`), the one the
               playbook files carry. The table below lists the catalog's rows
               only, so this is where a kept row shows. */}
-          {enterprise?.retired_rows_note ? (
-            <p
-              className="text-sm text-ink-secondary"
-              data-testid="csf-retired-rows"
-            >
-              {enterprise.retired_rows_note}
-            </p>
-          ) : null}
+            {enterprise?.retired_rows_note && shows("playbookCoverage") ? (
+              <p
+                className="text-sm text-ink-secondary"
+                data-testid="csf-retired-rows"
+              >
+                {enterprise.retired_rows_note}
+              </p>
+            ) : null}
 
-          {/* C3 (Options 1 and 3): scored + self-reported + not answered,
+            {/* C3 (Options 1 and 3): scored + self-reported + not answered,
               stated at zero too. The same counts the playbook files state. */}
-          {/* Not on a frozen assessment (rules 1 or 2): its unscored
+            {/* Not on a frozen assessment (rules 1 or 2): its unscored
               subcategories keep the levels it was delivered with, so "not
               scored" counts would contradict the table (#1203 review). */}
-          {seeded &&
-          enterprise?.coverage &&
-          enterprise.evidence_cap === false ? (
-            <p
-              className="text-sm text-ink-secondary"
-              data-testid="csf-coverage"
-            >
-              {coverageLine(enterprise.coverage)}
-            </p>
-          ) : null}
-          {/* E3: only where evidence labels a level. Under a frozen
+            {seeded &&
+            shows("playbookCoverage") &&
+            enterprise?.coverage &&
+            enterprise.evidence_cap === false ? (
+              <p
+                className="text-sm text-ink-secondary"
+                data-testid="csf-coverage"
+              >
+                {coverageLine(enterprise.coverage)}
+              </p>
+            ) : null}
+            {/* E3: only where evidence labels a level. Under a frozen
               assessment's cap it limits the level instead (`evidence_cap`). */}
-          {seeded &&
-          enterprise?.coverage &&
-          enterprise.evidence_cap === false ? (
-            <p
-              className="text-sm text-ink-secondary"
-              data-testid="csf-evidence-coverage"
-            >
-              {evidenceLine(enterprise.coverage)}
-            </p>
-          ) : null}
+            {seeded &&
+            shows("playbookCoverage") &&
+            enterprise?.coverage &&
+            enterprise.evidence_cap === false ? (
+              <p
+                className="text-sm text-ink-secondary"
+                data-testid="csf-evidence-coverage"
+              >
+                {evidenceLine(enterprise.coverage)}
+              </p>
+            ) : null}
 
-          {seeded ? (
-            <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
-          ) : null}
+            {seeded && shows("playbookRun") ? (
+              <AiPreviewButton serviceId={serviceId} disabled={busy !== null} />
+            ) : null}
 
-          <AiRunStatus run={aiRun} />
-          <LastRunNote run={aiRun.lastCompleted} />
-          {runResult ? <RunAiAccounting result={runResult} /> : null}
-          {/* CSF's prompt carries the client's interview answers, so the
-              provenance vector is identical to ZT's (#68). */}
-          {runResult ? <AiDraftProvenanceNotice /> : null}
+            {shows("playbookRun") ? (
+              <>
+                <AiRunStatus run={aiRun} />
+                <LastRunNote run={aiRun.lastCompleted} />
+                {runResult ? <RunAiAccounting result={runResult} /> : null}
+                {/* CSF's prompt carries the client's interview answers, so the
+                  provenance vector is identical to ZT's (#68). */}
+                {runResult ? <AiDraftProvenanceNotice /> : null}
+              </>
+            ) : null}
 
-          {loading ? (
-            <p className="text-sm text-ink-tertiary">Loading…</p>
-          ) : seeded ? (
-            <DataTable
-              columns={COLUMNS}
-              rows={enterprise?.subcategories ?? []}
-              rowKey={(r) => r.subcategory_code}
-            />
-          ) : (
-            <p className="text-sm text-ink-secondary">
-              Seed the Working Profiles to score the ~106 subcategories across
-              the tiers your client uses, then Run AI to draft the dimension
-              scores.
-            </p>
-          )}
-        </CardBody>
-      </Card>
-      {seeded ? (
+            {loading ? (
+              <p className="text-sm text-ink-tertiary">Loading…</p>
+            ) : seeded ? (
+              shows("playbookTable") ? (
+                <DataTable
+                  columns={COLUMNS}
+                  rows={enterprise?.subcategories ?? []}
+                  rowKey={(r) => r.subcategory_code}
+                />
+              ) : null
+            ) : (
+              <p className="text-sm text-ink-secondary">
+                Seed the Working Profiles to score the ~106 subcategories across
+                the tiers your client uses, then Run AI to draft the dimension
+                scores.
+              </p>
+            )}
+          </CardBody>
+        </Card>
+      ) : null}
+      {seeded && shows("dimensionEditor") ? (
         <CsfDimensionEditor
           serviceId={serviceId}
           readOnly={readOnly || runInProgress}
           onChanged={() => void onDimensionChanged()}
         />
       ) : null}
-      {seeded && gapCount > 0 ? (
+      {seeded && gapCount > 0 && shows("gapActions") ? (
         <CsfGapActionEditor serviceId={serviceId} readOnly={readOnly} />
       ) : null}
     </div>

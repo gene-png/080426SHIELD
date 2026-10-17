@@ -60,10 +60,28 @@ import { ProgressStages } from "../ProgressStages";
 import { useServiceStages } from "@/lib/stages/client";
 import { DRAFT_OPEN_REASON, refusalReason } from "@/lib/revisions/refusal";
 import { AiSourceNote } from "@/components/AiSourceNote";
+import { SectionHeader } from "@/components/service-shell/SectionHeader";
+import {
+  SECTIONS,
+  type SectionKey,
+} from "@/components/service-shell/SectionBar";
+import {
+  CSF_NEEDS_ASSESSMENT,
+  CSF_SECTION_COPY,
+  CSF_SECTION_VISIBILITY,
+  showsCsfBlock,
+  type CsfBlock,
+} from "./csfSections";
 
 export interface CsfWorkspaceProps {
   serviceId: string;
   serviceTitle: string;
+  /**
+   * #1378: the client frame's section. Only that section's blocks render
+   * (`CSF_BLOCK_SECTIONS`), under the shared section header. Absent, the whole
+   * page, as before.
+   */
+  section?: SectionKey;
 }
 
 /**
@@ -133,7 +151,9 @@ function describeError(err: unknown): string {
 export function CsfWorkspace({
   serviceId,
   serviceTitle,
+  section,
 }: CsfWorkspaceProps): JSX.Element {
+  const shows = (block: CsfBlock): boolean => showsCsfBlock(section, block);
   const [catalog, setCatalog] = React.useState<CsfCatalog | null>(null);
   const [assessment, setAssessment] = React.useState<CsfAssessment | null>(
     null,
@@ -651,22 +671,95 @@ export function CsfWorkspace({
     answeredCount === 1 ? "" : "s"
   }, including client-entered data, will be discarded.`;
 
-  return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-            NIST CSF 2.0 service
-          </p>
-          <h1 className="text-3xl font-semibold text-ink-primary">
-            {serviceTitle}
-          </h1>
+  /**
+   * #1378: a numbered step on the whole page; in a section, the same content
+   * under the section header, with the step's description kept (verbatim)
+   * where it still holds and its blocked reason in the section's own words.
+   */
+  function step(args: {
+    number: number;
+    title: string;
+    description: string;
+    describeIn: readonly SectionKey[];
+    blockedReason?: string | null;
+    sectionBlockedReason?: string | null;
+    done?: boolean;
+    show: boolean;
+    children: React.ReactNode;
+  }): JSX.Element | null {
+    if (!args.show) return null;
+    if (section === undefined) {
+      return (
+        <WorkflowStep
+          number={args.number}
+          title={args.title}
+          description={args.description}
+          blockedReason={args.blockedReason}
+          done={args.done}
+        >
+          {args.children}
+        </WorkflowStep>
+      );
+    }
+    const blocked = args.sectionBlockedReason ?? null;
+    return (
+      <div className="flex flex-col gap-3" data-csf-block={args.number}>
+        {args.describeIn.includes(section) ? (
           <p className="max-w-prose text-sm text-ink-secondary">
-            Score each of the 106 subcategories against the 4-tier maturity
-            model. Coverage + per-function rollup update on every edit;
-            prioritized remediation gaps surface alongside the score.
+            {args.description}
           </p>
+        ) : null}
+        {blocked ? (
+          <p className="text-sm text-ink-tertiary" role="note">
+            {blocked}
+          </p>
+        ) : null}
+        <div className={blocked ? "opacity-60" : undefined}>
+          {args.children}
         </div>
+      </div>
+    );
+  }
+
+  function sectionHeader(key: SectionKey): JSX.Element {
+    const label = SECTIONS.find((x) => x.key === key)?.label;
+    if (!label) throw new Error(`CsfWorkspace: no section "${key}"`);
+    const header = CSF_SECTION_COPY.header[key];
+    const release =
+      key === "approve-and-release" && deliverable?.released_at
+        ? { version: deliverable.version, releasedAt: deliverable.released_at }
+        : undefined;
+    return (
+      <SectionHeader
+        section={key}
+        title={label}
+        purpose={header.purpose}
+        canDo={header.canDo}
+        visibility={release ? "released" : CSF_SECTION_VISIBILITY[key]}
+        release={release}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6" data-csf-section={section}>
+      {section !== undefined ? sectionHeader(section) : null}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        {section === undefined ? (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+              NIST CSF 2.0 service
+            </p>
+            <h1 className="text-3xl font-semibold text-ink-primary">
+              {serviceTitle}
+            </h1>
+            <p className="max-w-prose text-sm text-ink-secondary">
+              Score each of the 106 subcategories against the 4-tier maturity
+              model. Coverage + per-function rollup update on every edit;
+              prioritized remediation gaps surface alongside the score.
+            </p>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {assessment ? (
             <StatusPill
@@ -693,7 +786,7 @@ export function CsfWorkspace({
               No assessment yet
             </StatusPill>
           )}
-          {assessment ? null : (
+          {assessment || !shows("startAssessment") ? null : (
             <button
               type="button"
               onClick={() => void onCreateAssessment()}
@@ -703,7 +796,7 @@ export function CsfWorkspace({
               {busy === "create" ? "Creating…" : "Start assessment"}
             </button>
           )}
-          {assessment ? (
+          {assessment && shows("discardDraft") ? (
             <DiscardDraftButton
               status={assessment.status}
               destructionSummary={discardSummary}
@@ -711,7 +804,7 @@ export function CsfWorkspace({
               disabled={busy !== null}
             />
           ) : null}
-          {assessment ? (
+          {assessment && shows("startRevision") ? (
             <StartRevisionButton
               status={assessment.status}
               version={assessment.version}
@@ -722,13 +815,13 @@ export function CsfWorkspace({
         </div>
       </header>
 
-      {assessment ? (
+      {assessment && shows("revisionBanner") ? (
         <RevisionBanner
           status={assessment.status}
           revision={assessment.revision}
         />
       ) : null}
-      {stagesPhase === "ready" && serviceStages ? (
+      {stagesPhase === "ready" && serviceStages && shows("progressStages") ? (
         <ProgressStages
           stages={serviceStages.stages}
           kind={serviceStages.kind}
@@ -736,7 +829,7 @@ export function CsfWorkspace({
         />
       ) : null}
 
-      {assessment?.status === "submitted" ? (
+      {assessment?.status === "submitted" && shows("submittedNote") ? (
         <div className="rounded-md border border-status-warning-border bg-status-warning-bg px-4 py-3 text-sm text-status-warning-fg">
           <span className="font-semibold">
             Client self-assessment submitted.
@@ -747,7 +840,7 @@ export function CsfWorkspace({
         </div>
       ) : null}
 
-      {refreshMessages.length > 0 ? (
+      {refreshMessages.length > 0 && shows("readFailures") ? (
         <div
           className="space-y-2 rounded-md border border-status-warning-border bg-status-warning-bg p-3 text-sm text-status-warning-fg"
           role="status"
@@ -759,7 +852,7 @@ export function CsfWorkspace({
         </div>
       ) : null}
 
-      {loadError ? (
+      {loadError && shows("readFailures") ? (
         <Card>
           <CardHeader>
             <CardTitle>Couldn&apos;t load the assessment</CardTitle>
@@ -777,10 +870,17 @@ export function CsfWorkspace({
           Loading CSF 2.0 catalog…
         </p>
       ) : !assessment ? (
-        <EmptyState
-          title="No CSF assessment yet"
-          description="Click 'Start assessment' to create a fresh v1 with 106 empty subcategory rows."
-        />
+        section === undefined || section === "overview" ? (
+          <EmptyState
+            title="No CSF assessment yet"
+            description="Click 'Start assessment' to create a fresh v1 with 106 empty subcategory rows."
+          />
+        ) : CSF_NEEDS_ASSESSMENT.includes(section) ? (
+          <EmptyState
+            title="No CSF assessment yet"
+            description={CSF_SECTION_COPY.noAssessmentDescription}
+          />
+        ) : null
       ) : (
         <>
           {/* Ordered the way the work is done. This page used to run score ->
@@ -788,126 +888,168 @@ export function CsfWorkspace({
               the 106-subcategory review — the actual work — sat at the very
               bottom, below the deliverable. Score, gaps and the thread are
               reference and now sit after the numbered path. */}
-          <WorkflowStep
-            number={1}
-            title="Work the Playbook and draft with AI"
-            description="The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide."
-          >
-            {/* #646: the assessment's AI source, from the derivation the
-                deliverable and the client dashboard call. */}
-            <AiSourceNote source={assessment.ai_source} className="mb-3" />
-            {/* Keyed on the record: the panel and the editors inside it load
-                rows by service and keep them, so a swap to another record (a
-                revision, a discard, a new draft) must remount them, or an edit
-                PATCHes the previous record's rows (#1120). */}
-            <CsfPlaybookPanel
-              key={assessment.id}
-              serviceId={serviceId}
-              readOnly={readOnly}
-              runOutcomeUnknown={runOutcomeUnknown}
-              onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
-              assessmentId={assessment.id}
-              onRunInProgressChange={setRunInProgress}
-              onRunCompleted={onRunCompleted}
-            />
-          </WorkflowStep>
+          {step({
+            number: 1,
+            title: "Work the Playbook and draft with AI",
+            description:
+              "The 10-step CSF 2.0 Playbook builds the working profiles, and Run AI drafts a tier per subcategory from them. It drafts; you decide.",
+            describeIn: ["ai-draft"],
+            show:
+              shows("aiSource") ||
+              shows("playbookRun") ||
+              shows("playbookCoverage") ||
+              shows("playbookTable") ||
+              shows("exportPlaybook") ||
+              shows("dimensionEditor") ||
+              shows("gapActions"),
+            children: (
+              <>
+                {/* #646: the assessment's AI source, from the derivation the
+                    deliverable and the client dashboard call. */}
+                {shows("aiSource") ? (
+                  <AiSourceNote
+                    source={assessment.ai_source}
+                    className="mb-3"
+                  />
+                ) : null}
+                {/* Keyed on the record: the panel and the editors inside it
+                    load rows by service and keep them, so a swap to another
+                    record (a revision, a discard, a new draft) must remount
+                    them, or an edit PATCHes the previous record's rows
+                    (#1120). */}
+                <CsfPlaybookPanel
+                  key={assessment.id}
+                  serviceId={serviceId}
+                  section={section}
+                  readOnly={readOnly}
+                  runOutcomeUnknown={runOutcomeUnknown}
+                  onRunOutcomeUnknown={() => setRunOutcomeUnknown(true)}
+                  assessmentId={assessment.id}
+                  onRunInProgressChange={setRunInProgress}
+                  onRunCompleted={onRunCompleted}
+                />
+              </>
+            ),
+          })}
 
-          <WorkflowStep
-            number={2}
-            title="Review every subcategory and adjust"
-            description="Work through all 106 subcategories and set the tier you can defend. Where the client filled in their own responses, this is where you check them for completeness and accuracy — their answers are what the report rests on."
-            done={
-              assessment.status !== "draft" && assessment.status !== "submitted"
-            }
-          >
-            {/* #852: the API's own sentence, from the derivation the
-                deliverable and the client dashboard call (`csf/retired.py`),
-                never rebuilt here. The questionnaire below iterates the
-                catalog, so this is the only place a kept answer shows. */}
-            {assessment.retired_answers_note ? (
-              <p
-                className="mb-3 text-sm text-ink-secondary"
-                data-testid="csf-retired-answers"
-              >
-                {assessment.retired_answers_note}
-              </p>
-            ) : null}
-            <CsfQuestionnaire
-              catalog={catalog}
-              answersByCode={answersByCode}
-              questionsByCode={interviewByCode}
-              readOnly={readOnly}
-              onAnswerUpdate={onAnswerUpdate}
-            />
-          </WorkflowStep>
+          {step({
+            number: 2,
+            title: "Review every subcategory and adjust",
+            description:
+              "Work through all 106 subcategories and set the tier you can defend. Where the client filled in their own responses, this is where you check them for completeness and accuracy — their answers are what the report rests on.",
+            describeIn: ["ai-draft"],
+            done:
+              assessment.status !== "draft" &&
+              assessment.status !== "submitted",
+            show: shows("questionnaire"),
+            children: (
+              <>
+                {/* #852: the API's own sentence, from the derivation the
+                    deliverable and the client dashboard call
+                    (`csf/retired.py`), never rebuilt here. The questionnaire
+                    below iterates the catalog, so this is the only place a
+                    kept answer shows. */}
+                {assessment.retired_answers_note ? (
+                  <p
+                    className="mb-3 text-sm text-ink-secondary"
+                    data-testid="csf-retired-answers"
+                  >
+                    {assessment.retired_answers_note}
+                  </p>
+                ) : null}
+                <CsfQuestionnaire
+                  catalog={catalog}
+                  answersByCode={answersByCode}
+                  questionsByCode={interviewByCode}
+                  readOnly={readOnly}
+                  onAnswerUpdate={onAnswerUpdate}
+                />
+              </>
+            ),
+          })}
 
-          <WorkflowStep
-            number={3}
-            title={
+          {step({
+            number: 3,
+            title:
               assessment.status === "submitted"
                 ? "Approve the client's inputs"
-                : "Approve the assessment"
-            }
-            description="Locks the tiers so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step."
-            done={
+                : "Approve the assessment",
+            description:
+              "Locks the tiers so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client — that is the last step.",
+            describeIn: ["review"],
+            done:
               assessment.status === "approved" ||
-              assessment.status === "released"
-            }
-          >
-            <button
-              type="button"
-              onClick={() => void onApprove()}
-              disabled={
-                busy !== null ||
-                // #645: approving mid-run would approve rows about to change.
-                runInProgress ||
-                (assessment.status !== "draft" &&
-                  assessment.status !== "submitted")
-              }
-              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {assessment.status === "approved"
-                ? "Approved"
-                : assessment.status === "released"
-                  ? "Released"
-                  : busy === "approve"
-                    ? "Approving…"
-                    : assessment.status === "submitted"
-                      ? "Approve client inputs"
-                      : "Approve"}
-            </button>
-          </WorkflowStep>
+              assessment.status === "released",
+            show: shows("approve"),
+            children: (
+              <button
+                type="button"
+                onClick={() => void onApprove()}
+                disabled={
+                  busy !== null ||
+                  // #645: approving mid-run would approve rows about to change.
+                  runInProgress ||
+                  (assessment.status !== "draft" &&
+                    assessment.status !== "submitted")
+                }
+                className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {assessment.status === "approved"
+                  ? "Approved"
+                  : assessment.status === "released"
+                    ? "Released"
+                    : busy === "approve"
+                      ? "Approving…"
+                      : assessment.status === "submitted"
+                        ? "Approve client inputs"
+                        : "Approve"}
+              </button>
+            ),
+          })}
 
-          <WorkflowStep
-            number={4}
-            title="Generate and release the deliverable"
-            description="Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return."
-            blockedReason={
+          {step({
+            number: 4,
+            title: "Generate and release the deliverable",
+            description:
+              "Renders the report from the approved assessment. Nothing reaches the client until you release it — generating is safe, releasing is the point of no return.",
+            describeIn: ["generate"],
+            blockedReason:
               assessment.status === "draft" || assessment.status === "submitted"
                 ? "Approve the assessment in step 3 before generating a deliverable from it."
-                : null
-            }
-          >
-            <div className="flex flex-col gap-3">
-              <StaleDocsNudge stale={assessment.documents_stale} />
-              <CsfDeliverableCard
-                serviceId={serviceId}
-                assessmentStatus={assessment.status}
-                deliverable={deliverable}
-                onChange={setDeliverable}
-              />
-            </div>
-          </WorkflowStep>
+                : null,
+            sectionBlockedReason:
+              assessment.status === "draft" || assessment.status === "submitted"
+                ? CSF_SECTION_COPY.generateBlocked
+                : null,
+            show: shows("staleDocs") || shows("deliverable"),
+            children: (
+              <div className="flex flex-col gap-3">
+                {shows("staleDocs") ? (
+                  <StaleDocsNudge stale={assessment.documents_stale} />
+                ) : null}
+                {shows("deliverable") ? (
+                  <CsfDeliverableCard
+                    serviceId={serviceId}
+                    assessmentStatus={assessment.status}
+                    deliverable={deliverable}
+                    onChange={setDeliverable}
+                  />
+                ) : null}
+              </div>
+            ),
+          })}
 
           {/* Reference, not steps. */}
-          <CsfScoreCard score={score} />
-          <CsfGapList
-            analysis={gap}
-            targetTier={shownTier}
-            onChangeTargetTier={(t) => void onChangeTargetTier(t)}
-            targetNote={targetNote}
-          />
-          <MessageThread serviceId={serviceId} />
+          {shows("scoreCard") ? <CsfScoreCard score={score} /> : null}
+          {shows("gapList") ? (
+            <CsfGapList
+              analysis={gap}
+              targetTier={shownTier}
+              onChangeTargetTier={(t) => void onChangeTargetTier(t)}
+              targetNote={targetNote}
+            />
+          ) : null}
+          {shows("messages") ? <MessageThread serviceId={serviceId} /> : null}
         </>
       )}
     </div>
