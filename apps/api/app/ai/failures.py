@@ -119,10 +119,13 @@ def is_credential_rejection(exc: BaseException) -> bool:
 def ai_call_boundary(db: Session, llm: LLMClient, *, purpose: str) -> Iterator[None]:
     """Wrap a Run-AI call so a provider failure is typed and leaves evidence.
 
-    ``db.commit()`` on the failure path is deliberate: ``invoke`` has already
-    written the FAILED row into this session, and letting the exception escape
-    would roll it back. The run-AI endpoints only READ before reaching the
-    model, so the audit row is the only pending work at this point.
+    ``db.commit()`` on the failure path is deliberate: when the caller was in a
+    transaction, ``invoke`` wrote the FAILED row into this session, and letting
+    the exception escape would roll it back. Since #1025 holder 2 the callers
+    end their read transaction before the call, so ``invoke`` commits the row
+    from its own short session and this commit has only the audit row to keep.
+    The run-AI endpoints only READ before reaching the model, so the audit row
+    is the only pending work at this point.
     """
     try:
         yield

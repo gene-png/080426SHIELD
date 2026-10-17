@@ -12,9 +12,10 @@ pool for every tenant. Three holders were named:
    length of every provider call, in the job and in every batch worker.
 
 This file pins 1 and 3, which release only what the framework itself opened.
-Holder 2 means ending a CALLER's transaction and is held for the advisor
-(#736 6210805139); the run test below therefore expects exactly one connection
-left during a call, the job session's, and says so.
+Holder 2 is ended by each CALLER before its call (`session_marks.
+end_read_transaction`, advisor #736 6216024281, 3e), so the run test below
+expects no connection held during a call; every caller is pinned in
+`test_ai_read_transaction_ended*.py`.
 
 Every test drives a route or `invoke` itself. CI runs SQLite, so the counts are
 of the SQLAlchemy pool, which is what ran out.
@@ -206,17 +207,17 @@ def test_no_batch_worker_holds_a_transaction_during_its_call_and_the_ledger_row_
     assert statuses and set(statuses) == {LLMCallStatus.COMPLETED}, statuses
 
 
-def test_a_run_holds_only_the_job_sessions_connection_during_a_call(
+def test_a_run_holds_no_connection_during_a_call(
     app_client,  # noqa: F811
     monkeypatch,
 ) -> None:
     """Measured on main: 3 per call (request, job, worker). With holders 1 and
-    3 released, the job session's read is the one left, until the advisor
-    rules on holder 2 (#736 6210805139)."""
+    3 released, the job session's read was the one left; with holder 2 ended
+    by the run before its calls (#736 6216024281, 3e), none is."""
     c, h, svc_id, rows, samples, _ = _attack_world(app_client, monkeypatch)
     result = attack_run_ai(c, svc_id, h)
     assert len(samples) == result["batches_total"] > 1, samples
-    assert [s.held for s in samples] == [1] * len(samples), samples
+    assert [s.held for s in samples] == [0] * len(samples), samples
 
 
 def _invoke_world(app_client):  # noqa: F811

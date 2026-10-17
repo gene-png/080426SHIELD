@@ -39,6 +39,7 @@ from app.ai.runs import (
     running_run,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.attack import added_since_base, scenario, scenario_intent
 from app.attack.citations import Candidate, resolver_names
 from app.attack.computed import awaiting_review_sentence
@@ -730,9 +731,10 @@ def _attempt_call_id(db: Session, *, service_id: uuid.UUID, user_id: uuid.UUID) 
     """The id of the `llm_calls` row this attempt wrote, or None.
 
     QUERIED by purpose, service, requester and the request's correlation id.
-    The query sees this attempt's row (`invoke` adds and flushes it before the
-    provider is called, and marks it FAILED on an error) and also any earlier
-    COMMITTED row under the same id: a parse makes at most one attempt, but a
+    The query sees this attempt's row (`invoke` writes it before the provider
+    is called -- committed from its own session, since this route ends its
+    read transaction first (#1025) -- and marks it FAILED on an error) and
+    also any earlier COMMITTED row under the same id: a parse makes at most one attempt, but a
     client may send an `X-Request-ID` again. More than one match is therefore
     possible, and is reported as unknown rather than guessed. Not read from the
     session's identity map, which holds a clean row only weakly; on a failure it
@@ -794,6 +796,9 @@ def _ai_reading(
     # sent as [NAME] (#863 review, F1). The SAME hints go to the sent text,
     # the call and the reading, so condition 1 checks what was sent.
     hints = name_hints_for_tenant(db, client.id)
+    # #1025 holder 2, #1027: this request's reads are done; its read
+    # transaction ends before the AI call (the audit below opens a new one).
+    end_read_transaction(db, where="attack.scenario.parse")
     sent = scenario_intent.sent_description(
         text,
         cited,
@@ -1244,6 +1249,10 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # may be credited, but they are NOT the client's list: the drift check
     # above judges only `membership`, so they never read as drift.
     tools_you_added = _added_tools(s)
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+    # done, so the read transaction ends here and no connection is held
+    # while the provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.scenario.run")
     inputs = scenario.batch_inputs(
         base_rows,
         affected,

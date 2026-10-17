@@ -32,6 +32,6 @@ export async function POST(): Promise<NextResponse> {
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream mfa/enroll call");
+    return upstreamOutcomeUnknown(err, "Upstream mfa/enroll call", "POST");
   }
 }

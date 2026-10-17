@@ -183,6 +183,17 @@ export const CANNOT_BE_PREVENTED_HEADING =
 export const CANNOT_BE_PREVENTED_SENTENCE =
   "MITRE ATT&CK lists no preventive control for these techniques, so they are assessed on detection and response. A technique here is Covered when it is both detected and responded to.";
 
+/**
+ * #1384: the toggle on the collapsed "Techniques that cannot be prevented"
+ * list. It names the count, because it is what shows in place of the rows.
+ * Copy approved verbatim by the advisor ("Show/Hide the N techniques", and the
+ * singular "Show/Hide the 1 technique").
+ */
+export function cannotBePreventedToggle(n: number, open: boolean): string {
+  const noun = n === 1 ? "technique" : "techniques";
+  return `${open ? "Hide" : "Show"} the ${n} ${noun}`;
+}
+
 export interface Kpi {
   n: number;
   pct: number;

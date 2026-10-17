@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from app.assessment_targets import target_source_sentence
 from app.client_naming import org_display_name
+from app.deliverable_priority import floored_priority, priority_text
 from app.mode_stamp import (
     UNKNOWN_AI_MODE,
     AiModeStamp,
@@ -28,8 +29,9 @@ from app.xlsx_export import safe_text_row
 from app.zt.catalog import capabilities, pillars
 from app.zt.maturity import ZtFrameworkCode, stage_label
 from app.zt.retired import retired_answer_count, retired_sentence
-from app.zt.scoring import GapAnalysis, ScoreResult
+from app.zt.scoring import GapAnalysis, ScoreResult, pillar_weight
 from app.zt.target_caps import stage_above_max_sentences, target_cap_sentences
+from app.zt.target_origin import TARGET_ORIGIN_NOT_RECORDED, unrecorded_target_codes
 
 if TYPE_CHECKING:
     from reportlab.platypus import TableStyle
@@ -55,6 +57,34 @@ class ZtDeliverableContext:
     #: seed pass the real values.
     target_source: str = "client"
     engagement_target_used: bool = True
+
+
+def _unrecorded_codes(ctx: ZtDeliverableContext) -> tuple[str, ...]:
+    """#1343: EVERY capability whose applied per-capability target has no
+    recorded origin (`zt/target_origin.py`), in catalog order -- the set the
+    client ZT dashboard lists. Not only the gap rows shown: a target that keeps
+    a capability OFF the list, or below the shown slice, still decided what the
+    client reads (the missing row, the gap count). Review of 1f659fb7, F1."""
+    return unrecorded_target_codes(ctx.framework, ctx.answers)
+
+
+def _origin_line(code: str) -> str:
+    """`{code}: <sentence>` (placement approved at #736 6225462107)."""
+    return f"{code}: {TARGET_ORIGIN_NOT_RECORDED}"
+
+
+def _unrecorded_origin_lines(ctx: ZtDeliverableContext) -> list[str]:
+    """The DOCX/PDF lines under the gap table, one per code."""
+    return [_origin_line(code) for code in _unrecorded_codes(ctx)]
+
+
+def _gap_notes_cell(notes: str | None, unrecorded: bool) -> str:
+    """The XLSX Gap Plan Notes cell: the row's own notes, with the approved
+    sentence APPENDED when its target's origin is not recorded (#1343; never
+    replacing what is there, per 6225462107)."""
+    if not unrecorded:
+        return notes or ""
+    return f"{notes} {TARGET_ORIGIN_NOT_RECORDED}" if notes else TARGET_ORIGIN_NOT_RECORDED
 
 
 def _gap_plan_caption(gap: GapAnalysis, target_note: str | None = None) -> str:
@@ -359,6 +389,7 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         cell = ws3.cell(row=2, column=col)
         cell.font = bold
         cell.fill = header_fill
+    unrecorded_codes = set(_unrecorded_codes(ctx))
     for g in ctx.gap.gaps:
         safe_text_row(
             ws3,
@@ -369,8 +400,10 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
                 g.current_stage,
                 g.target_stage,
                 g.gap_size,
-                g.priority_score,
-                g.notes or "",
+                # One decimal, rounded down, as the admin screen shows it
+                # (#736 6220638526 item 3; shared with CSF's deliverable).
+                floored_priority(g.gap_size, pillar_weight(g.pillar_code)),
+                _gap_notes_cell(g.notes, g.code in unrecorded_codes),
             ],
         )
     if not ctx.gap.gaps:
@@ -380,6 +413,14 @@ def render_xlsx(ctx: ZtDeliverableContext) -> bytes:
         # the "Name" HEADER italic and dropped its bold, because assigning
         # `.font` replaces the whole Font object rather than merging into it.
         ws3.cell(row=3, column=3).font = italic
+    # #1343: a code with no row of its own gets its line below the plan, so
+    # the header stays row 2 (a shown row carries it in its Notes cell above).
+    shown = {g.code for g in ctx.gap.gaps}
+    rowless = [code for code in _unrecorded_codes(ctx) if code not in shown]
+    if rowless:
+        safe_text_row(ws3, [])
+        for code in rowless:
+            safe_text_row(ws3, [_origin_line(code)])
     # #839: below the plan, so the header stays row 2. One row per capability.
     caps = target_cap_sentences(ctx.gap)
     if caps:
@@ -473,11 +514,13 @@ def render_docx(ctx: ZtDeliverableContext) -> bytes:
                     g.pillar_code,
                     g.name,
                     f"S{g.current_stage} → S{g.target_stage}",
-                    f"{g.priority_score:.2f}",
+                    priority_text(g.gap_size, pillar_weight(g.pillar_code)),
                 ]
                 for g in ctx.gap.gaps
             ],
         )
+    # #1343: under the gap table, or under the "no gaps" line, every code.
+    add_paragraphs(doc, _unrecorded_origin_lines(ctx))
 
     return to_bytes(doc)
 
@@ -584,7 +627,7 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
                     g.pillar_code,
                     g.name,
                     f"S{g.current_stage} → S{g.target_stage}",
-                    f"{g.priority_score:.2f}",
+                    priority_text(g.gap_size, pillar_weight(g.pillar_code)),
                 ]
             )
         gap_table = Table(
@@ -594,6 +637,9 @@ def render_pdf(ctx: ZtDeliverableContext) -> bytes:
         )
         gap_table.setStyle(_table_style())
         story.append(gap_table)
+    # #1343: under the gap table, or under the "no gaps" line, every code.
+    for line in _unrecorded_origin_lines(ctx):
+        story.append(pdf_text(line, styles["BodyText"]))
 
     doc.build(story)
     return out.getvalue()

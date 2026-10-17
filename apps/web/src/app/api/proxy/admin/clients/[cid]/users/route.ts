@@ -36,6 +36,10 @@ export async function GET(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/clients users call");
+    return upstreamOutcomeUnknown(
+      err,
+      "Upstream admin/clients users call",
+      "GET",
+    );
   }
 }

@@ -15,9 +15,10 @@ import {
 import dynamic from "next/dynamic";
 import * as React from "react";
 
-import { DashShell } from "@/components/dashboards/shared";
+import { CollapsibleList, DashShell } from "@/components/dashboards/shared";
 import {
   blindByTactic,
+  cannotBePreventedToggle,
   blindSpotReconciliation,
   blindSpots,
   dprCoverage,
@@ -924,42 +925,47 @@ function CannotBePreventedSection({
       <p style={{ margin: "0 0 10px", fontSize: 13 }}>
         {CANNOT_BE_PREVENTED_SENTENCE}
       </p>
-      <table
-        aria-label={CANNOT_BE_PREVENTED_HEADING}
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}
+      {/* #1384: collapsed by default; the count line below stays outside. */}
+      <CollapsibleList
+        label={(open) => cannotBePreventedToggle(rows.length, open)}
       >
-        <thead>
-          <tr>
-            {["Technique", "Status", "Detect", "Respond"].map((h) => (
-              <th
-                key={h}
-                style={{
-                  color: C.muted,
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  fontWeight: 600,
-                  fontSize: 11,
-                  borderBottom: `1px solid ${C.border}`,
-                }}
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((t) => (
-            <tr key={t.code}>
-              <td style={cell({ mono: true })}>{t.code}</td>
-              <td style={cell()}>
-                <Chip status={t.status} pendingReview={t.pending_review} />
-              </td>
-              <td style={cell({ muted: true })}>{t.in_place?.detect}</td>
-              <td style={cell({ muted: true })}>{t.in_place?.respond}</td>
+        <table
+          aria-label={CANNOT_BE_PREVENTED_HEADING}
+          style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}
+        >
+          <thead>
+            <tr>
+              {["Technique", "Status", "Detect", "Respond"].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    color: C.muted,
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    fontWeight: 600,
+                    fontSize: 11,
+                    borderBottom: `1px solid ${C.border}`,
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.code}>
+                <td style={cell({ mono: true })}>{t.code}</td>
+                <td style={cell()}>
+                  <Chip status={t.status} pendingReview={t.pending_review} />
+                </td>
+                <td style={cell({ muted: true })}>{t.in_place?.detect}</td>
+                <td style={cell({ muted: true })}>{t.in_place?.respond}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CollapsibleList>
       <p style={{ margin: "10px 0 0", fontSize: 13 }}>
         {rows.length === 1
           ? `This is 1 of the ${m} assessed techniques above.`

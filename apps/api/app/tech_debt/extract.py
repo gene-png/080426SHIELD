@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.engine import require_json_object, require_list_at
 from app.ai.llm import LLMClient
+from app.ai.session_marks import end_read_transaction
 from app.models.artifact import Artifact
 from app.models.capability import CapabilityItem, SecurityFunction
 from app.models.client import Client
@@ -778,6 +779,11 @@ def extract_from_rows(
     # Scoped to the model call only: parsing raises UnsupportedInventoryFormat,
     # which the route maps to a 415 and which must not be rewritten as an AI
     # failure.
+    #
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the caller's reads are
+    # done, so its read transaction ends before the call. Refuses loudly if
+    # the caller wrote anything first.
+    end_read_transaction(db, where="tech_debt.extract")
     with ai_call_boundary(db, llm, purpose="extract.capabilities"):
         result = run_job(
             db,
@@ -874,14 +880,18 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     #
     # `not name` rather than `is None`, and the REASON here was wrong when first
     # written. It said the empty-string arm covers "a wizard that clears the
-    # field, which writes `""` rather than NULL". Both halves are false: the
-    # wizard sends `undefined` (`saveField(..., e.target.value || undefined)`,
-    # which `exclude_unset` then drops), and `_apply_patch_to_client` maps `""`
-    # and `"   "` to NULL anyway.
+    # field, which writes `""` rather than NULL". Both halves were false: the
+    # wizard then sent `undefined` (`saveField(..., e.target.value || undefined)`,
+    # which `exclude_unset` dropped), and `_apply_patch_to_client` maps `""`
+    # and `"   "` to NULL anyway. Since #1093 the organisation step sends null for an
+    # emptied field, and `ClientProfilePatch` normalises blanks to None, so a
+    # blank still never reaches the column.
     #
     # The arm stays, with the reason it actually has: rows written BEFORE D-080
-    # can hold `""` or `"   "`, because `ClientProfilePatch` carries no
-    # validator and migration 0049 does not NULL whitespace. Blank is not a
+    # could hold `""` or `"   "`, because `ClientProfilePatch` carried no
+    # validator then and migration 0049 does not NULL whitespace. Migration
+    # 0050 has since NULLed them, so the arm is now a RATCHET against a future
+    # writer or restore that brings a blank back. Blank is not a
     # name to hint with, and handing one to the redactor would ask it to
     # redact nothing while reporting that it had a name.
     name = row.legal_name
