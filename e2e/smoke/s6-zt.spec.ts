@@ -8,6 +8,7 @@ import {
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 import { acknowledgeOfflineAi, waitForRun } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 
 /**
  * SMOKE_TEST.md section 6 (T6): the Zero Trust (DoD ZTRA) admin workspace.
@@ -45,12 +46,10 @@ async function openFreshDraft(
   const ztDodServiceId = svc.id as string;
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${ztDodServiceId}/zero-trust-dod`);
+  // #1379: the old URL lands on Overview, whose section header is the page's
+  // h1; each block is in its own section, opened through the section bar.
   await expect(
-    page.getByRole("heading", {
-      // Renamed in the UX #22 naming pass: one public name per service,
-      // taken from SERVICE_LABELS.
-      name: "Zero Trust Assessment (DoD ZTRA)",
-    }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
 
   const created = await page.request.post(
@@ -76,7 +75,8 @@ test("DoD questionnaire renders by pillar and current/target stages are settable
   test.slow();
   await openFreshDraft(page, request);
 
-  // The questionnaire renders, grouped into pillar tabs.
+  // The questionnaire (in Review) renders, grouped into pillar tabs.
+  await openSection(page, "Review");
   await expect(
     page.getByRole("heading", { name: "Zero Trust questionnaire" }),
   ).toBeVisible({ timeout: 30000 });
@@ -210,7 +210,8 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
   // The setup reached the screen the run reads from (#736 comment
   // 6073312727): each note is visible in its capability's notes field, opened
-  // from its collapsed summary.
+  // from its collapsed summary. The questionnaire is in Review.
+  await openSection(page, "Review");
   for (const code of noted) {
     const field = page.getByLabel(`Notes for ${code}`, { exact: true });
     await page.locator("details", { has: field }).locator("summary").click();
@@ -218,7 +219,8 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     await expect(field).toHaveValue(NOTE);
   }
 
-  // Run the fixture AI and capture the what-changed payload.
+  // Run the fixture AI and capture the what-changed payload (AI draft).
+  await openSection(page, "AI draft");
   const runDone = page.waitForResponse(
     (r) =>
       r.url().includes("/zt/services/") &&
@@ -287,7 +289,9 @@ test("Run AI clamps DoD suggestions to <= 3 and the roadmap groups gaps by month
     page.getByText(/informed by client-submitted input/).first(),
   ).toBeVisible({ timeout: 30000 });
 
-  // Remediation gaps surface and the 12-month roadmap sequences them by month.
+  // Remediation gaps surface and the 12-month roadmap sequences them by month
+  // (Analysis).
+  await openSection(page, "Analysis");
   await expect(
     page.getByRole("heading", { name: "Remediation gaps" }),
   ).toBeVisible({ timeout: 30000 });

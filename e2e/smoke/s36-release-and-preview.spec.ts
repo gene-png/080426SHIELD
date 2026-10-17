@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
+import { openSection } from "../helpers/sections";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -70,6 +71,10 @@ test("admin: a finalized deliverable card exposes both the dashboard and the rel
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/zero-trust-cisa`);
 
+  // #1379: the preview link is in Quality check, the release control in
+  // Approve and release.
+  await openSection(page, "Quality check");
+
   // The dashboard link — the "somewhere the admin can see the dashboard" that
   // was entirely missing before. Labelled a preview until release.
   const dashboardLink = page
@@ -84,6 +89,7 @@ test("admin: a finalized deliverable card exposes both the dashboard and the rel
 
   // The release control exists and is confirm-gated — this is the moment the
   // client can first see the work.
+  await openSection(page, "Approve and release");
   const releaseButton = page.getByRole("button", { name: "Release to client" });
   await expect(releaseButton).toBeVisible();
   await releaseButton.click();
@@ -97,6 +103,7 @@ test("admin: a finalized deliverable card exposes both the dashboard and the rel
   await expect(page.getByText(/^Released v\d+$/).first()).toBeVisible({
     timeout: 60_000,
   });
+  await openSection(page, "Quality check");
   await expect(
     page.getByRole("link", { name: /View dashboard/ }).first(),
   ).not.toContainText("preview");
