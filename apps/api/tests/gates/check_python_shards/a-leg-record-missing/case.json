@@ -1,0 +1,12 @@
+{
+ "incident": "A leg whose record never arrived (it crashed before collection, or its upload was skipped) must be could-not-look, never a leg that ran nothing.",
+ "expect": 2,
+ "adversarial": false,
+ "argv": [
+  "--dir",
+  "{dir}",
+  "--of",
+  "2"
+ ],
+ "stdout_contains": "expected exactly 2 junit files"
+}

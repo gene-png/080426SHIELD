@@ -1,0 +1,1 @@
+<?xml version="1.0"?><testsuites><testsuite name="pytest" time="60"><testcase classname="tests.unit.test_a" name="test_1" time="0.01"/><testcase classname="tests.unit.test_b" name="test_0" time="0.01"/></testsuite></testsuites>

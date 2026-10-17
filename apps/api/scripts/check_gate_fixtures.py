@@ -709,6 +709,13 @@ NON_GATE_SCRIPTS: dict[str, str] = {
         "A scheduled job that performs work. Nothing about its exit status is a "
         "judgement on the tree."
     ),
+    "shard_deselect.py": (
+        "A pytest plugin (`-p scripts.shard_deselect`), loaded INTO the Python CI "
+        "legs' unit run. It has no verdict of its own: it narrows a leg to its "
+        "share, or ends the run with exit 2. Its refusals are executed by "
+        "`tests/unit/test_shard_deselect.py` against real pytest, and the verdict on the "
+        "legs is `check_python_shards.py`, which is a gate and has fixtures."
+    ),
 }
 
 
