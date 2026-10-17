@@ -88,10 +88,6 @@ const OUTCOME_UNKNOWN = proxyRefusal(
   "We couldn't confirm whether this finished. It may still complete; check before trying again.",
 );
 
-/** The proxy's own sentence: what a re-read that got no answer shows. */
-const REREAD_MESSAGE =
-  "We couldn't confirm whether this finished. It may still complete; check before trying again.";
-
 const COPY =
   "We couldn't confirm whether the AI run finished. It may still complete and fill in capability rows. Reload the page later and check Review before running it again. Run AI stays off on this page until you reload.";
 
