@@ -1,0 +1,14 @@
+{
+ "incident": "ADVERSARIAL: only a string literal changes, so token-for-token it is a literal-only edit -- but an empty needle in `in` always matches, so the assertion can no longer fail.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "a string made empty"
+}

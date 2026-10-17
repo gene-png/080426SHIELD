@@ -1,0 +1,14 @@
+{
+ "incident": "ADVERSARIAL (review of #1469): the test file changes by one expected literal, as approved, and pyproject.toml gains an addopts --deselect. A checker that judged test files only would pass a PR that switched a test off.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "a file that decides what tests run"
+}

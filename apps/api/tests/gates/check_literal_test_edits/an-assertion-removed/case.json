@@ -1,0 +1,14 @@
+{
+ "incident": "A removed assertion is the weakening the pre-approval must never cover, whatever the literals around it do.",
+ "expect": 1,
+ "adversarial": false,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "a change outside literals"
+}

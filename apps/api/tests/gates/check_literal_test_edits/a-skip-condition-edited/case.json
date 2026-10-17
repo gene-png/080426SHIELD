@@ -1,0 +1,14 @@
+{
+ "incident": "ADVERSARIAL (review of #1469): the only changed token is a number, so token-for-token it is a literal edit -- but it sits in a skipif condition, and (3, 99) skips the test forever with CI green. Only a literal that is an expected value in an assert counts.",
+ "expect": 1,
+ "adversarial": true,
+ "argv": [
+  "--old-tree",
+  "{dir}/old",
+  "--new-tree",
+  "{dir}/new",
+  "--body",
+  "{dir}/body.md"
+ ],
+ "stdout_contains": "is not an expected value in an `assert`"
+}
