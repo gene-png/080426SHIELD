@@ -17,6 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.assessment_targets import BELOW_FLOOR, MIN_TARGET_STAGE
+from app.maturity_percent import maturity_percent
 from app.zt.catalog import (
     Capability,
     capabilities,
@@ -171,10 +172,17 @@ def _capped(stage: int | None, framework: ZtFrameworkCode, code: str) -> int | N
 
 
 def _maturity_pct(avg: float | None, framework: ZtFrameworkCode) -> float | None:
-    """Average stage as a percentage of the framework's top level."""
+    """Average stage as a percentage of the framework's scale (#1183):
+    (avg - 1) / (top - 1), floored to one decimal, by the helper the CSF
+    dashboard shares. Stage 1 is 0%, the top stage 100%.
+
+    `avg` is the two-decimal average this result displays beside it, so the
+    two agree, as CSF does. Whether to floor the exact average instead is with
+    the advisor (#736 6226057732 question 1); that is a change to what the two
+    callers in `compute` pass here."""
     if avg is None:
         return None
-    return round(avg / level_count(framework) * 100, 1)
+    return maturity_percent(avg, level_count(framework))
 
 
 def _label_from_average(avg: float | None, framework: ZtFrameworkCode) -> str:
