@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as techDebtClient from "@/lib/tech_debt/client";
 
@@ -109,25 +109,6 @@ vi.mock("./EditableCapabilityTable", () => ({
     </button>
   ),
 }));
-
-const extractCapabilities = vi.mocked(techDebtClient.extractCapabilities);
-
-/** What `lib/tech_debt/client.ts` throws: its class, envelope on `.payload`. */
-function proxyRefusal(status: number, reason: string, message: string): Error {
-  const ProxyError = techDebtClient.TechDebtProxyError as unknown as new (
-    m: string,
-  ) => Error;
-  return Object.assign(new ProxyError(`Tech-debt proxy ${status}`), {
-    status,
-    payload: { error: { code: status, reason, message } },
-  });
-}
-
-const OUTCOME_UNKNOWN = proxyRefusal(
-  504,
-  "upstream_outcome_unknown",
-  "We couldn't confirm whether this finished. It may still complete; check before trying again.",
-);
 
 const fetchLatestList = vi.mocked(techDebtClient.fetchLatestList);
 
