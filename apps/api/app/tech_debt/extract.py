@@ -880,14 +880,18 @@ def client_org_name_for_tenant(db: Session, client_id) -> str | None:
     #
     # `not name` rather than `is None`, and the REASON here was wrong when first
     # written. It said the empty-string arm covers "a wizard that clears the
-    # field, which writes `""` rather than NULL". Both halves are false: the
-    # wizard sends `undefined` (`saveField(..., e.target.value || undefined)`,
-    # which `exclude_unset` then drops), and `_apply_patch_to_client` maps `""`
-    # and `"   "` to NULL anyway.
+    # field, which writes `""` rather than NULL". Both halves were false: the
+    # wizard then sent `undefined` (`saveField(..., e.target.value || undefined)`,
+    # which `exclude_unset` dropped), and `_apply_patch_to_client` maps `""`
+    # and `"   "` to NULL anyway. Since #1093 the organisation step sends null for an
+    # emptied field, and `ClientProfilePatch` normalises blanks to None, so a
+    # blank still never reaches the column.
     #
     # The arm stays, with the reason it actually has: rows written BEFORE D-080
-    # can hold `""` or `"   "`, because `ClientProfilePatch` carries no
-    # validator and migration 0049 does not NULL whitespace. Blank is not a
+    # could hold `""` or `"   "`, because `ClientProfilePatch` carried no
+    # validator then and migration 0049 does not NULL whitespace. Migration
+    # 0050 has since NULLed them, so the arm is now a RATCHET against a future
+    # writer or restore that brings a blank back. Blank is not a
     # name to hint with, and handing one to the redactor would ask it to
     # redact nothing while reporting that it had a name.
     name = row.legal_name
