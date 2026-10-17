@@ -153,6 +153,29 @@ describe("ZtSelfAssessment: the blank-answer warning, focus and reasons (#1191)"
     expect(warning).toHaveFocus();
   });
 
+  it("focuses the pillar only once it is named for the pillar chosen", async () => {
+    // Focus lands on the one section the page reuses for every pillar; if it
+    // landed before the render, a screen reader would hear the OLD pillar.
+    const nameAtFocus: Array<string | null> = [];
+    const onFocusIn = (e: FocusEvent): void => {
+      if (e.target instanceof HTMLElement && e.target.tagName === "SECTION") {
+        nameAtFocus.push(e.target.getAttribute("aria-label"));
+      }
+    };
+    document.addEventListener("focusin", onFocusIn);
+    try {
+      await mountWith(assessment(ONE_BLANK));
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Go to Devices (1 blank)" }),
+        );
+      });
+    } finally {
+      document.removeEventListener("focusin", onFocusIn);
+    }
+    expect(nameAtFocus).toEqual(["DV Devices"]);
+  });
+
   it("moves focus into the pillar on Go to", async () => {
     await mountWith(assessment(ONE_BLANK));
     await act(async () => {
@@ -164,9 +187,15 @@ describe("ZtSelfAssessment: the blank-answer warning, focus and reasons (#1191)"
   });
 
   it("says why Submit anyway is off when a pillar has lost every answer", async () => {
+    // Each answer comes back under its OWN capability code, as the API sends it.
+    const codeOf = (answerId: string): string => {
+      const found = assessment(ONE_BLANK).answers.find((a) => a.id === answerId);
+      if (!found) throw new Error(`no answer ${answerId} in the fixture`);
+      return found.capability_code;
+    };
     vi.mocked(ztClient.patchSelfAssessmentAnswer).mockImplementation(
       async (answerId, patch) =>
-        ({ ...answer(answerId, "CISA.ID.01", null), ...patch }) as ZtAnswer,
+        ({ ...answer(answerId, codeOf(answerId), null), ...patch }) as ZtAnswer,
     );
     await mountWith(assessment(ONE_BLANK));
     expect(screen.queryByText(PILLAR_REASON)).toBeNull();
@@ -183,6 +212,16 @@ describe("ZtSelfAssessment: the blank-answer warning, focus and reasons (#1191)"
     const reason = within(warning).getByText(PILLAR_REASON);
     expect(reason).toBeVisible();
     expect(anyway).toHaveAccessibleDescription(PILLAR_REASON);
+  });
+
+  it("leaves focus alone on the stepper's Next (only the warning's Go to moves it)", async () => {
+    await mountWith(assessment(ONE_BLANK));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Next: Devices/ }));
+    });
+    const region = screen.getByRole("region", { name: "DV Devices" });
+    expect(region).toBeVisible();
+    expect(region).not.toHaveFocus();
   });
 
   it("gives no reason while Submit anyway is on", async () => {

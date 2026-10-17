@@ -187,9 +187,15 @@ describe("CsfSelfAssessment: the blank-answer warning, focus and reasons (#1191)
   });
 
   it("says why Submit anyway is off when a function has lost every answer", async () => {
+    // Each answer comes back under its OWN subcategory code, as the API sends it.
+    const codeOf = (answerId: string): string => {
+      const found = assessment(ONE_BLANK).answers.find((a) => a.id === answerId);
+      if (!found) throw new Error(`no answer ${answerId} in the fixture`);
+      return found.subcategory_code;
+    };
     vi.mocked(csfClient.patchSelfAssessmentAnswer).mockImplementation(
       async (answerId, patch) =>
-        ({ ...answer(answerId, "GV.OC-01", null), ...patch }) as CsfAnswer,
+        ({ ...answer(answerId, codeOf(answerId), null), ...patch }) as CsfAnswer,
     );
     await mountWith(assessment(ONE_BLANK));
     expect(screen.queryByText(FUNCTION_REASON)).toBeNull();
@@ -205,6 +211,16 @@ describe("CsfSelfAssessment: the blank-answer warning, focus and reasons (#1191)
     const warning = screen.getByRole("status", { name: /have no answer yet/ });
     expect(within(warning).getByText(FUNCTION_REASON)).toBeVisible();
     expect(anyway).toHaveAccessibleDescription(FUNCTION_REASON);
+  });
+
+  it("leaves focus alone on the stepper's Next (only the warning's Go to moves it)", async () => {
+    await mountWith(assessment(ONE_BLANK));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^Next: Identify/ }));
+    });
+    const tab = screen.getByRole("tab", { name: /^ID/ });
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(tab).not.toHaveFocus();
   });
 
   it("gives no reason while Submit anyway is on", async () => {
