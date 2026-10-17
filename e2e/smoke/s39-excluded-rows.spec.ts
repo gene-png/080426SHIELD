@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { apiExtract, extractAfterUpload, watchUpload } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -53,8 +54,9 @@ test("the workspace discloses what the extraction dropped, and the row can be re
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   const extractDone = page.waitForResponse(
     (r) =>

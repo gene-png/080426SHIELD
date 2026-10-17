@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { extractAfterUpload, watchUpload } from "../helpers/ai";
 import { atlasServiceId } from "../helpers/ids";
+import { openSection } from "../helpers/sections";
 
 /**
  * SMOKE_TEST.md section 4 (T6): the Tech Debt admin workspace.
@@ -84,8 +85,9 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   // renders its header — and it must render before the API calls below so the
   // active-client cookie is set and the proxy requests are tenant-scoped.
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   // Discard any open draft first. Sprint 8 T1 (tech_debt.py:184) added a
   // draft-exists guard: a POST to /extract while a DRAFT is open REUSES that
@@ -113,7 +115,8 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   // The extraction produced a fresh editable draft (never "Released vN").
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
 
-  // Dashboard NumberCards summarize the extracted list.
+  // Dashboard NumberCards summarize the extracted list; they live on Overview.
+  await openSection(page, "Overview");
   await expect(page.getByText("Capabilities", { exact: true })).toBeVisible({
     timeout: 30000,
   });
@@ -124,6 +127,9 @@ test("tech-debt extract builds the dashboard, and editing a cell clears the AI-c
   await expect(
     page.getByText("Low-confidence rows", { exact: true }),
   ).toBeVisible();
+
+  // The table is in Review.
+  await openSection(page, "Review");
 
   // Exactly one extracted row is stamped "AI 60%". Editing any cell in that row
   // must clear the AI badge and re-label the row "Human-curated".
@@ -164,8 +170,9 @@ test("Discard draft throws the open draft away and re-enables a fresh extraction
   const techDebtServiceId = await atlasServiceId(page, "tech_debt");
   await page.goto(`/admin/services/${techDebtServiceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   // Discard any stale open draft, then upload to mint a fresh draft we can throw
   // away through the UI below.
@@ -184,6 +191,7 @@ test("Discard draft throws the open draft away and re-enables a fresh extraction
 
   await uploadAndExtract(page);
   await expect(page.getByText(/Draft v\d+/)).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Review");
 
   // Cancel is a no-op: open the Modal, dismiss it, the draft survives intact.
   await page.getByRole("button", { name: "Discard draft" }).click();
@@ -216,6 +224,7 @@ test("Discard draft throws the open draft away and re-enables a fresh extraction
   await expect(page.getByRole("button", { name: "Discard draft" })).toHaveCount(
     0,
   );
+  await openSection(page, "Inputs");
   await expect(
     page.getByRole("heading", { name: "Upload inventory and extract" }),
   ).toBeVisible();

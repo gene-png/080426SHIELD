@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { extractAfterUpload, watchUpload } from "../helpers/ai";
+import { openSection } from "../helpers/sections";
 import { adminApiToken, API_BASE, atlasClientIdViaApi } from "../helpers/ids";
 
 /**
@@ -50,8 +51,9 @@ test("a security tool marked not in use is signed off in its own group", async (
   await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
   await page.goto(`/admin/services/${serviceId}/tech-debt`);
   await expect(
-    page.getByRole("heading", { name: "Technical Debt Review" }),
+    page.getByRole("heading", { level: 1, name: "Overview", exact: true }),
   ).toBeVisible({ timeout: 30000 });
+  await openSection(page, "Inputs");
 
   const extractDone = page.waitForResponse(
     (r) =>
@@ -69,6 +71,7 @@ test("a security tool marked not in use is signed off in its own group", async (
       buffer: Buffer.from(INVENTORY_CSV),
     });
   await extractAfterUpload(page, extractDone, uploadWatch);
+  await openSection(page, "Review");
 
   // 1. Its own group, with its note shown and the approved wording.
   const group = page.getByTestId("security-signoff-not-in-use");

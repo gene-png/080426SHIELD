@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { ADMIN_EMAIL, ADMIN_PASSWORD, signIn } from "../helpers/auth";
 import { atlasServiceId } from "../helpers/ids";
+import { openSection } from "../helpers/sections";
 
 /**
  * #643 / #685 round 1: the step-2 table's Name column must be READABLE at
@@ -34,6 +35,7 @@ for (const vp of VIEWPORTS) {
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
     const serviceId = await atlasServiceId(page, "tech_debt");
     await page.goto(`/admin/services/${serviceId}/tech-debt`);
+    await openSection(page, "Review");
 
     const names = page.getByRole("textbox", { name: "Name", exact: true });
     await expect(names.first()).toBeVisible({ timeout: 30_000 });
