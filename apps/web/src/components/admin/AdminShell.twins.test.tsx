@@ -26,19 +26,19 @@ vi.mock("@/components/site/SignOutButton", () => ({
 
 import { AdminShell } from "./AdminShell";
 
-const TWINS = ["Deliverables", "Risk Register", "Messages"];
+// #1385: Risk Register left the bar; Deliverables and Messages carry the client.
+const TWINS = ["Deliverables", "Messages"];
 const OTHERS = ["Intake Queue", "Audit", "System Health", "Management"];
 const BASE: Record<string, string> = {
   "Intake Queue": "/admin/queue",
   Deliverables: "/admin/deliverables",
-  "Risk Register": "/admin/risk-register",
   Messages: "/admin/messages",
   Audit: "/admin/audit",
   "System Health": "/admin/health",
   Management: "/admin/management",
 };
 
-/** Every primary nav: the desktop sidebar and the mobile row. */
+/** Every primary nav: the one top bar (#1385). */
 function hrefsIn(label: string): string[] {
   return screen
     .getAllByRole("navigation", { name: "Primary" })
@@ -63,32 +63,32 @@ describe("AdminShell twin links (§3.6)", () => {
   it("on Deliverables with ?client=B, the twin links carry it and the others do not", () => {
     at("/admin/deliverables", "client=b-1");
     expect(screen.getAllByRole("navigation", { name: "Primary" })).toHaveLength(
-      2,
+      1,
     );
     for (const label of TWINS)
       expect(hrefsIn(label)).toEqual(
-        Array(2).fill(`${BASE[label]}?client=b-1`),
+        Array(1).fill(`${BASE[label]}?client=b-1`),
       );
     for (const label of OTHERS)
-      expect(hrefsIn(label)).toEqual(Array(2).fill(BASE[label]));
+      expect(hrefsIn(label)).toEqual(Array(1).fill(BASE[label]));
   });
 
   it("on the Intake Queue with ?client=B, no link carries it", () => {
     at("/admin/queue", "client=b-1");
     for (const label of [...TWINS, ...OTHERS])
-      expect(hrefsIn(label)).toEqual(Array(2).fill(BASE[label]));
+      expect(hrefsIn(label)).toEqual(Array(1).fill(BASE[label]));
   });
 
   it("on Messages with no parameter, no link carries one", () => {
     at("/admin/messages", "");
     for (const label of [...TWINS, ...OTHERS])
-      expect(hrefsIn(label)).toEqual(Array(2).fill(BASE[label]));
+      expect(hrefsIn(label)).toEqual(Array(1).fill(BASE[label]));
   });
 
   it("encodes an id that needs it", () => {
     at("/admin/risk-register", "client=odd%20id%2F1");
     expect(hrefsIn("Messages")).toEqual(
-      Array(2).fill("/admin/messages?client=odd%20id%2F1"),
+      Array(1).fill("/admin/messages?client=odd%20id%2F1"),
     );
   });
 
