@@ -21,6 +21,8 @@ lives in `context/<name>.md`; per-sprint detail lives in `SPRINT_<n>.md`._
 
 **2026-10-16: #1093 item 1, an emptied intake field is cleared.** Emptying a Step 2 field now clears it: the wizard sends null, and the api stores NULL for an empty or whitespace-only string instead of refusing a blank website or storing blanks. Status: the 2026-10-16 #1093 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
+**2026-10-16: #1223 and #1225 item 1, a failed upload list says it failed.** The intake review step no longer shows a failed upload list as "No documents uploaded", the admin documents panel no longer shows "Upload failed: <status>", and none of the three surfaces (Steps 5 and 6, the panel) shows a server sentence unless it is typed (`{reason, message}`). Status: the 2026-10-16 #1223 entry in `DELIVERY_PLAN.md`'s MVP completion path.
+
 **2026-10-16: #1173, the self-assessment warns about blank answers before submit.** On "Submit for review" with any blank answer, the CSF and ZT client self-assessments show the blank count, a button to each function or pillar that has a blank, and "Submit anyway"; a complete assessment submits straight through. Status: the 2026-10-16 #1173 entry in `DELIVERY_PLAN.md`'s MVP completion path.
 
 **2026-10-16: #1230 item 1, the website IPv4 check reads the typed host only.** A dotted quad hidden in a path ("8080/0.0.31.144") no longer passes #1116's check. Status: the 2026-10-16 #1230 entry in `DELIVERY_PLAN.md`'s MVP completion path.
