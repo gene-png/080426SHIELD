@@ -2265,7 +2265,7 @@ def csf_dashboard(
     largest_gap_pct = 0.0
     for fn in score.by_function:
         current_pct = (
-            maturity_percent(fn.average_tier, max_tier) if fn.average_tier is not None else None
+            maturity_percent(fn.average_exact, max_tier) if fn.average_exact is not None else None
         )
         gap_pct = round(max(0.0, target_pct - (current_pct or 0.0)), 1)
         if current_pct is not None and gap_pct > largest_gap_pct:
@@ -2314,8 +2314,8 @@ def csf_dashboard(
         overall_label=score.overall_maturity_label,
         current_tier=score.average_tier,
         current_pct=(
-            maturity_percent(score.average_tier, max_tier)
-            if score.average_tier is not None
+            maturity_percent(score.average_exact, max_tier)
+            if score.average_exact is not None
             else None
         ),
         coverage_pct=score.coverage_pct,

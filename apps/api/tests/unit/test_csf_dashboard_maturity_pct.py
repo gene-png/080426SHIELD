@@ -68,3 +68,15 @@ def test_a_fractional_average_is_floored_to_one_decimal(app_client) -> None:  # 
     _cid, body = _world(app_client, lambda i: 3 if i < 71 else 2)
     assert body["current_tier"] == 2.67, body["current_tier"]
     assert body["current_pct"] == 55.6, body["current_pct"]
+
+
+def test_the_percentage_is_taken_from_the_exact_average_not_the_displayed_one(
+    app_client,  # noqa: F811
+) -> None:
+    # 3 subcategories at tier 3, the other 103 at tier 2: the average is
+    # 215/106 = 2.0283..., shown as 2.03. Exactly, (109/106) / 3 = 34.27...%,
+    # floored 34.2. Flooring the shown 2.03 would give 34.3, a figure higher
+    # than the truth (advisor, #736 6228351462 item 5).
+    _cid, body = _world(app_client, lambda i: 3 if i < 3 else 2)
+    assert body["current_tier"] == 2.03, body["current_tier"]  # positive first
+    assert body["current_pct"] == 34.2, body["current_pct"]

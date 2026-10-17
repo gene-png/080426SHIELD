@@ -3,6 +3,8 @@ rounded down. Expected values are worked out by hand, never by the module."""
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import pytest
 
 from app.maturity_percent import maturity_percent
@@ -29,3 +31,15 @@ def test_the_percentage_is_floored_to_one_decimal(avg: float, top: int, expected
 def test_an_impossible_average_or_scale_raises(avg: float, top: int) -> None:
     with pytest.raises(ValueError):
         maturity_percent(avg, top)
+
+
+def test_an_exact_average_is_floored_from_its_own_value() -> None:
+    # 215/106 = 2.0283..., (109/106) / 3 = 34.27...%: 34.2. The displayed
+    # 2.03 would give 34.3.
+    assert maturity_percent(Fraction(215, 106), 4) == 34.2
+    assert maturity_percent(2.03, 4) == 34.3
+
+
+def test_an_exact_average_outside_the_scale_raises() -> None:
+    with pytest.raises(ValueError):
+        maturity_percent(Fraction(9, 10), 4)

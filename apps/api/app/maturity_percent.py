@@ -13,20 +13,22 @@ from __future__ import annotations
 from fractions import Fraction
 
 
-def maturity_percent(avg: float, top: int) -> float:
+def maturity_percent(avg: float | Fraction, top: int) -> float:
     """`avg` on a 1..`top` scale as a percentage, floored to one decimal.
 
     Computed exactly: `avg` is read through its decimal string
     (`Fraction(str(avg))`), so 2.33 is 233/100 and a float product cannot shave
-    a tenth off the floor. Callers pass the average they display (CSF rounds
-    it to two decimals in `csf/scoring.py`), so the percentage agrees with the
-    tier shown beside it.
+    a tenth off the floor. Pass the EXACT average where one exists (`Fraction`):
+    flooring a displayed
+    average that was rounded up can print a figure above the truth (#1183,
+    advisor 6228351462). A float is read as displayed (CSF rounds
+    it to two decimals in `csf/scoring.py`).
 
     An average outside 1..`top`, or a scale with no width, is a defect
     upstream: it raises rather than print a negative or impossible figure."""
     if top < 2:
         raise ValueError(f"maturity scale 1..{top} has no width")
-    exact = Fraction(str(avg))
+    exact = avg if isinstance(avg, Fraction) else Fraction(str(avg))
     if not 1 <= exact <= top:
         raise ValueError(f"maturity average {avg!r} is outside 1..{top}")
     tenths = (exact - 1) * 1000 // (top - 1)
