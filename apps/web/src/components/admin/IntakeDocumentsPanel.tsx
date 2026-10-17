@@ -13,6 +13,7 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
@@ -88,9 +89,12 @@ export function IntakeDocumentsPanel({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't load documents.",
-          );
+          // #1223: never the error's own message, which for this READ was
+          // `ArtifactUploadError`'s "Upload failed: <status>". #1225: nor a
+          // plain-string api detail ("X-Client-Id header is required for
+          // this role."), which arrives with no `reason` and is internal
+          // text. Only a TYPED sentence (D-016 {reason, message}) is copy.
+          setError(typedReadFailure(err) ?? "Couldn't load documents.");
         }
       });
     return () => {

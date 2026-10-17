@@ -19,7 +19,7 @@ import {
 } from "@/lib/intake/types";
 
 import type { JSX } from "react";
-import { clientFacingError } from "@/lib/describe-save-error";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 
 export interface Step5NotesProps {
   state: IntakeStateResponse;
@@ -60,7 +60,12 @@ export function Step5Notes({
   const [openCards, setOpenCards] = React.useState<
     Partial<Record<ServiceType, boolean>>
   >({});
-  const [artifacts, setArtifacts] = React.useState<ArtifactSummary[]>([]);
+  // #1223: null until the list has LOADED. An empty array means the client
+  // has no uploads; a failed or pending load is not that, and must not show
+  // "No documents uploaded yet".
+  const [artifacts, setArtifacts] = React.useState<ArtifactSummary[] | null>(
+    null,
+  );
   const [listError, setListError] = React.useState<string | null>(null);
 
   // #1262: the client the wizard loaded, never the shared cookie.
@@ -68,10 +73,17 @@ export function Step5Notes({
   const refreshArtifacts = React.useCallback(async () => {
     try {
       const res = await listArtifacts(clientId);
+      // A 200 with no item list is a failed load (as on the review step).
+      if (!Array.isArray(res.items)) {
+        setListError("Failed to load uploads.");
+        return;
+      }
       setArtifacts(res.items);
       setListError(null);
     } catch (err) {
-      setListError(clientFacingError(err, "Failed to load uploads."));
+      // A READ: #550's "couldn't confirm" sentence is for a write, so it is
+      // withheld here (RR-2, #1223), as on the review step.
+      setListError(typedReadFailure(err) ?? "Failed to load uploads.");
     }
   }, [clientId]);
 
@@ -147,7 +159,7 @@ export function Step5Notes({
         <Dropzone
           clientId={clientId}
           onUploaded={(a) => {
-            setArtifacts((prev) => [a, ...prev]);
+            setArtifacts((prev) => [a, ...(prev ?? [])]);
           }}
         />
         {listError ? (
@@ -155,8 +167,11 @@ export function Step5Notes({
             {listError}
           </p>
         ) : null}
-        {artifacts.length === 0 ? (
-          <EmptyArtifactsHint />
+        {artifacts === null || artifacts.length === 0 ? (
+          // The empty-list hint only for a list that loaded empty.
+          artifacts !== null && !listError ? (
+            <EmptyArtifactsHint />
+          ) : null
         ) : (
           <ul aria-label="Uploaded artifacts" className="flex flex-col gap-1">
             {artifacts.map((a) => (
