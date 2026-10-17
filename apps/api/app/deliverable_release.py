@@ -71,13 +71,13 @@ PARENT_CHANGED_DURING_RELEASE = (
 )
 
 
-#: #1123, PENDING the advisor's approval as seen in the PR (proposed verbatim
-#: at #736 comment 6220094031 item 6): the repair re-release of a report the
-#: client already has, whose parent did not flip to RELEASED.
+#: #1123, approved verbatim at #736 comment 6225076633 item 11: the repair
+#: re-release of a report the client already has, whose parent did not flip to
+#: RELEASED. It names the control that repairs it: approve, re-finalize, release.
 PARENT_CHANGED_AFTER_RELEASE = (
     "This report is already with the client, but its assessment changed after "
-    "the report was built, so the assessment's status was not updated. Generate "
-    "a new version to release the change."
+    "the report was built, so the assessment's status was not updated. Approve "
+    "the assessment again, then re-finalize and release."
 )
 
 
