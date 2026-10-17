@@ -422,6 +422,8 @@ describe("the exclusion disclosure reaches every place the totals are read (#137
       list({ source_rows_total: 4, excluded_rows: [] }),
     );
     await renderSettled("overview");
+    // A positive state first: the list has loaded, so the absence means something.
+    expect(await screen.findByText("Low-confidence rows")).toBeVisible();
     expect(
       screen.queryByRole("status", { name: "Totals cover included rows only" }),
     ).toBeNull();

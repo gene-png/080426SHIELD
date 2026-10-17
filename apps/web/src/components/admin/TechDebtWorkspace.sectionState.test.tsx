@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -145,6 +146,44 @@ async function extractInInputs(serviceId: string, err: Error): Promise<void> {
 }
 
 describe("what an extraction left behind survives a section change (#1376)", () => {
+  it("shows an outcome that arrives after the reader moved to an already-open section", async () => {
+    let reject: (err: Error) => void = () => undefined;
+    extractCapabilities.mockReturnValueOnce(
+      new Promise((_, rej) => {
+        reject = rej;
+      }),
+    );
+    const inputs = render(
+      <TechDebtWorkspace
+        serviceId="svc-1376-late"
+        serviceTitle="TD"
+        section="inputs"
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(
+        await screen.findByRole("button", { name: "extract by hand" }),
+      );
+    });
+    // The reader goes to AI draft to watch; Inputs is gone before the answer.
+    const aiDraft = render(
+      <TechDebtWorkspace
+        serviceId="svc-1376-late"
+        serviceTitle="TD"
+        section="ai-draft"
+      />,
+    );
+    inputs.unmount();
+    expect(within(aiDraft.container).queryByText(COPY)).toBeNull();
+
+    await act(async () => {
+      reject(OUTCOME_UNKNOWN);
+    });
+    expect(
+      await within(aiDraft.container).findByText(COPY),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the outcome-unknown lock and its band after leaving Inputs and returning", async () => {
     await extractInInputs("svc-1376-lock", OUTCOME_UNKNOWN);
     expect(await screen.findByText(COPY)).toBeInTheDocument();

@@ -143,6 +143,28 @@ const extractFlags = new Map<
   string,
   { outcomeUnknown: boolean; error: string | null }
 >();
+const extractFlagListeners = new Set<() => void>();
+
+/** Write a service's flags and tell every mounted section, so one that was
+ *  already open when the answer arrived shows it too. Each write is a new
+ *  object: `useSyncExternalStore` compares snapshots by identity. */
+function writeExtractFlags(
+  serviceId: string,
+  patch: Partial<{ outcomeUnknown: boolean; error: string | null }>,
+): void {
+  const was = extractFlags.get(serviceId);
+  extractFlags.set(serviceId, {
+    outcomeUnknown: was?.outcomeUnknown ?? false,
+    error: was?.error ?? null,
+    ...patch,
+  });
+  extractFlagListeners.forEach((listener) => listener());
+}
+
+function subscribeExtractFlags(listener: () => void): () => void {
+  extractFlagListeners.add(listener);
+  return () => extractFlagListeners.delete(listener);
+}
 
 export function TechDebtWorkspace({
   serviceId,
@@ -213,20 +235,24 @@ export function TechDebtWorkspace({
   }, []);
   const [splitError, setSplitError] = React.useState<string | null>(null);
   // Only a sectioned workspace remounts on navigation, so only it reads and
-  // writes `extractFlags`; the whole page keeps its own state, as before.
-  const remembered = inSection ? extractFlags.get(serviceId) : undefined;
-  const [extractError, setExtractErrorState] = React.useState<string | null>(
-    () => remembered?.error ?? null,
+  // writes `extractFlags`, through the store so a section already open sees an
+  // answer that lands after the reader moved; the whole page keeps its own
+  // state, as before.
+  const remembered = React.useSyncExternalStore(
+    subscribeExtractFlags,
+    () => (inSection ? extractFlags.get(serviceId) : undefined),
+    () => undefined,
   );
+  const [localExtractError, setLocalExtractError] = React.useState<
+    string | null
+  >(null);
+  const extractError = inSection
+    ? (remembered?.error ?? null)
+    : localExtractError;
   const setExtractError = React.useCallback(
     (message: string | null): void => {
-      if (inSection) {
-        extractFlags.set(serviceId, {
-          outcomeUnknown: extractFlags.get(serviceId)?.outcomeUnknown ?? false,
-          error: message,
-        });
-      }
-      setExtractErrorState(message);
+      if (inSection) writeExtractFlags(serviceId, { error: message });
+      else setLocalExtractError(message);
     },
     [inSection, serviceId],
   );
@@ -234,10 +260,11 @@ export function TechDebtWorkspace({
   // reload clears it, which the copy says. The ref is what `runExtraction`
   // reads, because the upload's automatic extraction calls it from a closure
   // created before the state changed.
-  const [extractOutcomeUnknown, setExtractOutcomeUnknown] = React.useState(
-    () => remembered?.outcomeUnknown ?? false,
-  );
-  const extractLocked = React.useRef(remembered?.outcomeUnknown ?? false);
+  const [localOutcomeUnknown, setLocalOutcomeUnknown] = React.useState(false);
+  const extractOutcomeUnknown = inSection
+    ? (remembered?.outcomeUnknown ?? false)
+    : localOutcomeUnknown;
+  const extractLocked = React.useRef(false);
   const [approveError, setApproveError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
@@ -481,7 +508,11 @@ Components carry no cost of their own — this licence keeps its full value.`,
     artifactId: string,
     serves: AiServes,
   ): Promise<void> {
-    if (extractLocked.current) {
+    // In a section the lock may have been set by an instance since unmounted.
+    if (
+      extractLocked.current ||
+      (inSection && extractFlags.get(serviceId)?.outcomeUnknown)
+    ) {
       console.warn(
         `[tech-debt] not extracting ${artifactId}: an earlier extraction's outcome is unknown (#550)`,
       );
@@ -521,13 +552,8 @@ Components carry no cost of their own — this licence keeps its full value.`,
     } catch (err) {
       if (isUpstreamOutcomeUnknown(err)) {
         extractLocked.current = true;
-        if (inSection) {
-          extractFlags.set(serviceId, {
-            outcomeUnknown: true,
-            error: extractFlags.get(serviceId)?.error ?? null,
-          });
-        }
-        setExtractOutcomeUnknown(true);
+        if (inSection) writeExtractFlags(serviceId, { outcomeUnknown: true });
+        else setLocalOutcomeUnknown(true);
         // #645: a run may have started. Look once, and follow it if so; the
         // lock and the copy above stand either way.
         void aiRun.reconcile();
