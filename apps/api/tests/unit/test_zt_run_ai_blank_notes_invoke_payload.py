@@ -53,5 +53,8 @@ def test_the_payload_handed_to_invoke_omits_blank_note_capabilities(
     payload = handed[0]
     assert with_notes <= set(payload["capabilities"]), payload["capabilities"]
     assert not blank & set(payload["capabilities"]), payload["capabilities"]
+    # Present as well as absent, so an emptied map cannot satisfy the absence checks.
+    assert with_notes <= set(payload["capability_details"]), sorted(payload["capability_details"])
     assert not blank & set(payload["capability_details"]), sorted(payload["capability_details"])
+    assert with_notes <= set(payload["answers"]), sorted(payload["answers"])
     assert not blank & set(payload["answers"]), sorted(payload["answers"])
