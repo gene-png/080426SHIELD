@@ -324,7 +324,13 @@ def publish_blockers(
         # refused as "(draft)", naming a record it never read, and releasing
         # that draft then met `changed` anyway. Regenerating is the remedy.
         if was is not None and was.get("record_id") != r.record_id:
-            blockers.append(Blocker(kind, "changed", r.status))
+            # The newer record's state is carried only when the register drew on
+            # RELEASED work: the newer-draft remedies (discard it, or release it
+            # and regenerate) need that. A register drawn from unreleased work
+            # is never publishable, whatever becomes of the newer record, so
+            # its only remedy is a new version (review round 3 F1): no state.
+            drew_on_released = was.get("status") == RELEASED
+            blockers.append(Blocker(kind, "changed", r.status if drew_on_released else None))
             continue
         if r.status != RELEASED:
             blockers.append(Blocker(kind, "not_released", r.status))

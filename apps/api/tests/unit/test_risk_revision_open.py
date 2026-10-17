@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests._risk_inputs import seed_released
+from tests._risk_inputs import release, seed_attack_and_zt, seed_released
 from tests.unit.test_risk_publish_inputs import _blockers, _gen, _publish
 from tests.unit.test_risk_register import _admin, app_client  # noqa: F401  (fixture)
 
@@ -78,3 +78,27 @@ def test_a_register_from_released_inputs_names_the_newer_draft(
         "before publishing."
     ), message
     assert "(draft" not in message, message
+
+
+def test_a_register_drawn_from_unreleased_work_is_not_told_to_discard_the_draft(
+    app_client,  # noqa: F811
+) -> None:
+    """Review round 3 F1. ZT was only APPROVED at generate; a revision draft is
+    then opened. Discarding that draft cannot make this register publishable
+    (it drew on unreleased work, and releasing v1 later still meets `changed`),
+    so the discard sentence would name a remedy that fails. The only remedy is
+    a new version, which is the generic changed sentence."""
+    c, provider = app_client
+    bearer, cid = _admin(c)
+    s = seed_attack_and_zt(c, bearer, cid)
+    release(c, bearer, cid, "attack", s.attack_service)  # ZT stays approved
+    _gen(c, provider, bearer, cid)
+    _open_zt_revision(c, bearer, cid, s.zt_service, s.zt_assessment)
+    r = _publish(c, bearer, cid)
+    assert _blockers(r) == [{"input": "zt", "reason": "changed", "status": None}]
+    message = r.json()["error"]["message"]
+    assert message == (
+        "An assessment this register draws on has changed since it was generated: "
+        "Zero Trust. Generate a new version before publishing."
+    ), message
+    assert "Discard" not in message, message

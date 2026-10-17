@@ -8,8 +8,8 @@ refused as not released. Discard is not offered either: an approved or
 submitted version cannot be discarded. So the sentence names the input and
 its state, and says to release that version first.
 
-The copy is PENDING the advisor's ruling (drafted in T1's relay to the
-coordinator, 2026-10-17). Every expected value is typed from the scenario,
+The copy is the advisor's, approved verbatim (#736 6228351462 item 4). Every
+expected value is typed from the scenario,
 never read from the code.
 """
 
