@@ -5,8 +5,7 @@
 0076, and some of those were set by earlier AI runs. The consultant's
 questionnaire discloses it; the client outputs reuse the same approved
 sentence (#736 6225076633): the deliverable and the client dashboard here, and
-the Risk Register once its follow-up PR for #1343 lands (not yet on this
-branch).
+the Risk Register once its follow-up PR for #1343 lands (not yet on main).
 
 ONE predicate for the deliverable and the client ZT dashboard, so they
 cannot disagree about which targets are unrecorded. A target is listed when
