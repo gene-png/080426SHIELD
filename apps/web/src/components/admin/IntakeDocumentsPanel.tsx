@@ -84,6 +84,13 @@ export function IntakeDocumentsPanel({
     listArtifacts(workspaceClientId ?? undefined)
       .then((res) => {
         if (cancelled) return;
+        // A 200 with no item list is a failed load, never an empty one (as on
+        // Steps 5 and 6): `res.items.filter` would throw into the handler
+        // below only by accident.
+        if (!Array.isArray(res.items)) {
+          setError("Couldn't load documents.");
+          return;
+        }
         setDocs(res.items.filter((a) => a.origin === "client_upload"));
         setError(null);
       })
