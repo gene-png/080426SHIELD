@@ -508,6 +508,10 @@ def register(
             )
 
             tokens = _issue_pair(user)
+            # #1366: what the send needs, read BEFORE the commit. Reading it
+            # after would reload the row and hold a pooled connection across
+            # the SMTP send below.
+            verify_to, verify_user_id = user.email, user.id
             db.commit()
             break
         except IntegrityError:
@@ -516,10 +520,12 @@ def register(
                 raise
             log.info("auth.register_domain_race_retry", email_domain=domain_of(email))
 
-    db.refresh(user)
+    # #1366: sent with no transaction open, so no connection is held across
+    # the SMTP call; the row is reloaded for the response afterwards.
+    send_verification_email(to=verify_to, token=verify_raw)
+    log.info("auth.verification_email_issued", user_id=str(verify_user_id))
 
-    send_verification_email(to=user.email, token=verify_raw)
-    log.info("auth.verification_email_issued", user_id=str(user.id))
+    db.refresh(user)
 
     return RegisterResponse(
         user=UserResponse.model_validate(user, from_attributes=True),
@@ -1151,9 +1157,11 @@ def resend_verification(
         raw = _issue_email_token(
             db, user, EmailTokenPurpose.EMAIL_VERIFY, settings.email_verify_token_ttl_seconds
         )
+        # #1366: read before the commit, so the SMTP send holds no connection.
+        to, user_id = user.email, user.id
         db.commit()
-        send_verification_email(to=user.email, token=raw)
-        log.info("auth.verification_email_resent", user_id=str(user.id))
+        send_verification_email(to=to, token=raw)
+        log.info("auth.verification_email_resent", user_id=str(user_id))
     else:
         log.info("auth.resend_verification_noop")
 
@@ -1192,9 +1200,11 @@ def forgot_password(
             target_id=user.id,
             actor_user_id=user.id,
         )
+        # #1366: read before the commit, so the SMTP send holds no connection.
+        to, user_id = user.email, user.id
         db.commit()
-        send_password_reset_email(to=user.email, token=raw)
-        log.info("auth.password_reset_requested", user_id=str(user.id))
+        send_password_reset_email(to=to, token=raw)
+        log.info("auth.password_reset_requested", user_id=str(user_id))
     else:
         log.info("auth.forgot_password_noop")
 

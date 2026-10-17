@@ -12,7 +12,11 @@
  * which lives in `upstream-outcome-unknown.ts`.
  */
 
-/** The typed reason every proxy answers when it could not see the result. */
+/**
+ * The typed reason a proxy answers when it could not see the result of a
+ * WRITE (any method but GET/HEAD). A read answers `UPSTREAM_READ_FAILED`
+ * instead (#1130), so a guard keyed on this code never sees a failed read.
+ */
 export const UPSTREAM_OUTCOME_UNKNOWN = "upstream_outcome_unknown";
 
 /**
@@ -21,3 +25,15 @@ export const UPSTREAM_OUTCOME_UNKNOWN = "upstream_outcome_unknown";
  */
 export const UPSTREAM_OUTCOME_UNKNOWN_MESSAGE =
   "We couldn't confirm whether this finished. It may still complete; check before trying again.";
+
+/**
+ * #1130: the same missing answer, for a READ. Nothing "may still complete"
+ * when the call was a GET, so the sentence above is false there; a read says
+ * it could not load. Its own reason, so no surface keyed on #550's code
+ * (Run AI's "outcome unknown" lock) can mistake a failed read for a write.
+ */
+export const UPSTREAM_READ_FAILED = "upstream_read_failed";
+
+/** Approved verbatim on #736 (issuecomment-6225076633, option b). */
+export const UPSTREAM_READ_FAILED_MESSAGE =
+  "SHIELD's server didn't send a complete answer, so this couldn't be loaded. Reload the page to try again.";

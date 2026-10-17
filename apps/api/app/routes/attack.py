@@ -45,6 +45,7 @@ from app.ai.runs import (
     require_serves,
     start_run,
 )
+from app.ai.session_marks import end_read_transaction
 from app.attack import release_readiness
 from app.attack.after import after_planned_changes
 from app.attack.after import counts as after_counts
@@ -875,7 +876,14 @@ def draft_dashboard(
         run_id=run.id,
         run_finished_at=run.finished_at,
         batches_failed=stored.batches_failed,
-        omitted_count=stored.omitted_count,
+        # #1337: a result stored before #853 never measured this; the field's
+        # default of 0 would say "nothing omitted". `reasked_count` is a true 0
+        # for such a run (no re-ask existed), and `batches_failed` is in every
+        # stored result (the job writes every field; batching predates
+        # `ai_runs.result`), so only this one can be unmeasured.
+        omitted_count=(
+            stored.omitted_count if "omitted_count" in stored.model_fields_set else None
+        ),
         reasked_count=stored.reasked_count,
     )
 
@@ -2541,6 +2549,9 @@ def _reask_omitted(db: Session, ctx: RunContext, req: AttackAiRequest, omitted: 
         )
         return _Reask(skipped_past_deadline=True)
     planned = len(_mitre_batches(codes))
+    # #1025 holder 2: the caller re-read the rows' locks after the first pass,
+    # which opened a new read transaction; it ends before the re-ask's calls.
+    end_read_transaction(db, where="attack.run_ai.reask")
     try:
         out = _mitre_map_batches(
             db,
@@ -2888,6 +2899,10 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
             for code, r in rows.items()
         }
 
+    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
+    # done, so the read transaction ends here and no connection is held
+    # while the provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.run_ai")
     batched = _mitre_map_batches(
         db,
         ctx.llm,
@@ -3348,6 +3363,7 @@ def _attack_run_work(session: Session, ctx: RunContext, *, assessment_id: uuid.U
         reasked_count=reask.asked,
         reask_batches_total=reask.batches_total,
         reask_batches_failed=reask.batches_failed,
+        techniques_asked=len(req.preview.inputs.get("technique_codes") or []),
     )
     return RunOutcome(
         result=result_payload.model_dump(mode="json"),

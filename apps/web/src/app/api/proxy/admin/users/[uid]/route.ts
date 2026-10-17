@@ -49,6 +49,6 @@ export async function PATCH(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream admin/users call");
+    return upstreamOutcomeUnknown(err, "Upstream admin/users call", "PATCH");
   }
 }

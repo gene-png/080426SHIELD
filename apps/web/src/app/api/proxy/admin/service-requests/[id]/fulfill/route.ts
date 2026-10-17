@@ -29,6 +29,6 @@ export async function POST(
         status: err.status,
       });
     }
-    return upstreamOutcomeUnknown(err, "Upstream publish");
+    return upstreamOutcomeUnknown(err, "Upstream publish", "POST");
   }
 }

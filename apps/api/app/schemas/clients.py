@@ -377,7 +377,9 @@ class _AttackDraftHead(BaseModel):
     #: batches that failed, techniques a successful batch left out and the
     #: re-ask did not recover, and techniques asked again (#1047).
     batches_failed: int
-    omitted_count: int
+    #: None when the stored result has no `omitted_count` (a run stored before
+    #: #853): "not measured", never zero (#1337).
+    omitted_count: int | None
     reasked_count: int
 
 
@@ -595,6 +597,12 @@ class ZtDashboardResponse(BaseModel):
     # Empty on an ordinary engagement. Codes rather than a count, so the UI can
     # name the rows and the count stays derivable.
     unusable_target_codes: list[str] = []
+    # #1343: capabilities whose APPLIED per-capability target has no recorded
+    # origin (stored before migration 0076; some set by earlier AI runs), from
+    # the one predicate the deliverable uses (`zt/target_origin.py`). The web
+    # renders the approved sentence beside each code. Empty when every applied
+    # target's origin is recorded.
+    unrecorded_target_codes: list[str] = []
     # #839: the approved C1/C2 sentences for the DoD target caps, the API's own
     # (`zt/target_caps.py`), rendered as given.
     target_cap_notes: list[str] = []
