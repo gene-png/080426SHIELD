@@ -9,7 +9,7 @@ import time
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ai.run_limits import RUN_DEADLINE
@@ -275,6 +275,55 @@ class Settings(BaseSettings):
     # bearer credential).
     email_verify_token_ttl_seconds: int = Field(default=86400, ge=300)
     password_reset_token_ttl_seconds: int = Field(default=3600, ge=300)
+
+    # Document text extraction (app/documents/text.py, N2 for #1071): the ONE
+    # set of limits EV-1's evidence-link job and EV-2's summary both read. Each
+    # is bounded both ways, and `_document_limits_agree` checks them together.
+    # A file over `max_bytes`, or a DOCX/XLSX whose parts inflate past
+    # `max_unzipped_bytes`, is "not read: too_large" before any parser runs.
+    # `max_bytes` equals routes/artifacts.py's MAX_UPLOAD_BYTES, pinned by
+    # test_the_file_limit_is_the_upload_limit rather than by this comment.
+    shield_document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1, le=1024**3)
+    shield_document_max_unzipped_bytes: int = Field(default=200 * 1024 * 1024, ge=1, le=4 * 1024**3)
+    # Characters extracted from one file. Extraction stops after the piece
+    # (page, row, paragraph or line) that passes it, and cuts a piece that
+    # would itself take more than this (separator included) at whitespace, so
+    # the text is at most 2 * this, separators included, and `chunk_text`
+    # refuses more (`TextOverCeiling`). `chunk_text` redacts the whole text in
+    # one `redact_for_ai` call before chunking, so 2 * this, not the chunk
+    # size, is what must fit #552's per-payload redaction budget.
+    # That budget is TIME (`shield_redaction_budget_seconds`, #1042) and
+    # redaction cost grows with the name hints as well as the text, so no
+    # character count is derivable from it. 200,000 (so at most 400,000
+    # characters reach one redaction call) is a CONSERVATIVE INTERIM default
+    # set by the advisor's ruling on #736 (6128447366); it is NOT measured
+    # against that budget. The measured value is a follow-up after #1042.
+    shield_document_max_chars: int = Field(default=200_000, ge=1, le=100_000_000)
+    # Characters per AI payload, cut from already-redacted text. 12,000 is a
+    # placeholder, measured with `max_chars` when the first caller is wired.
+    shield_document_chunk_chars: int = Field(default=12_000, ge=1, le=1_000_000)
+    # Chunks sent per file; the rest are counted as skipped and disclosed.
+    shield_document_max_chunks: int = Field(default=20, ge=1, le=1_000)
+    # PDF pages read per file; past it the result says `truncated`.
+    shield_document_max_pages: int = Field(default=2_000, ge=1, le=10_000)
+    # Seconds one file's extraction may take; past it the read stops and says
+    # `truncated`. Checked between pages and pieces, so it does not interrupt
+    # a single parse that hangs (that needs a killable child process).
+    shield_document_max_seconds: float = Field(default=60.0, gt=0, le=600, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _document_limits_agree(self) -> Settings:
+        if self.shield_document_max_unzipped_bytes < self.shield_document_max_bytes:
+            raise ValueError(
+                f"shield_document_max_unzipped_bytes ({self.shield_document_max_unzipped_bytes})"
+                f" must be at least shield_document_max_bytes ({self.shield_document_max_bytes})"
+            )
+        if self.shield_document_chunk_chars > self.shield_document_max_chars:
+            raise ValueError(
+                f"shield_document_chunk_chars ({self.shield_document_chunk_chars}) must be at"
+                f" most shield_document_max_chars ({self.shield_document_max_chars})"
+            )
+        return self
 
     def is_development(self) -> bool:
         """True only on a developer's machine.
