@@ -44,6 +44,27 @@ dependencies = [
     # Used by apps/api/scripts/extract_csf_questionnaires.py to parse the
     # Kentro Step 1.x interview .docx files into packages/csf-data/source/*.json.
     "python-docx>=1.1",
+    # PDF text extraction (app/documents/text.py, N2 for #1071), shared by
+    # EV-1's evidence linking and EV-2's summary. Moved here from the dev extra
+    # (approved on #736, 6115903398); the export-content tests read rendered
+    # PDFs back with it too. Rebuild the api image after changing this; a plain
+    # restart does not install it (the Sprint 7 google-auth lesson).
+    # The floor is a SECURITY floor: client uploads are untrusted PDFs.
+    # CVE-2025-55197 (FlateDecode output size) is fixed by "SEC: Limit
+    # decompressed size for FlateDecode filter (#3430)", py-pdf/pypdf commit
+    # bb3a6903, first released in tag 6.0.0 (pypdf CHANGELOG, "Version 6.0.0").
+    # The floor sits above 6.0.0 on purpose: pypdf's CHANGELOG carries a
+    # Security section in 32 releases from 6.1.3 to 6.19.0 (decoder, parser and
+    # font limits). 6.19.0 is the newest release older than two weeks on
+    # 2026-10-12; the tests pass on it and on 6.20.0.
+    "pypdf>=6.19.0",
+    # XML hardening for client workbooks and documents (app/documents/text.py).
+    # openpyxl (3.1, openpyxl/xml/functions.py) streams worksheets through
+    # `iterparse`, which is defusedxml's whenever defusedxml is importable; its
+    # `fromstring` (workbook, shared strings, styles) is lxml's with
+    # `resolve_entities=False` when lxml is installed, else defusedxml's. The
+    # DOCX reader parses every part with defusedxml directly.
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -82,12 +103,6 @@ dev = [
     "black==26.10.1",
     "mypy>=1.11",
     "bandit[toml]>=1.7",
-    # Test-only: parse rendered PDF bytes back to text so the export-content
-    # tests assert real content (client name / title / a known row value), not
-    # just the %PDF- magic. Imported ONLY in tests/unit/*, never in app/.
-    # Rebuild the api image after adding this — a plain restart does not install
-    # it (the Sprint 7 google-auth lesson).
-    "pypdf>=5",
 ]
 
 [build-system]
