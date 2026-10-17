@@ -15,6 +15,7 @@ and skipped where there is no git (the api container has none).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +24,7 @@ import pytest
 
 # The DOTTED form, deliberately: see test_leave_row_oracle_anchors.py.
 import scripts.check_literal_test_edits as lit
+import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -88,15 +90,22 @@ def test_expected_numbers_and_strings_changed_on_existing_lines_is_clean(tmp_pat
     assert f"{TEST_PATH}:8: 50.0 -> 33.3" in out, out  # the audit trail names each edit
 
 
-def test_a_docstring_is_a_literal_and_may_change(tmp_path, capsys) -> None:
+def test_a_docstring_is_not_an_expected_value_and_is_refused(tmp_path, capsys) -> None:
+    # Item 1 is "expected literals on existing assertion lines". A docstring is neither.
     old = 'def test_a():\n    """50 percent."""\n    assert f() == 1\n'
-    code, out = _check(
-        tmp_path,
-        {TEST_PATH: old},
-        {TEST_PATH: _edit(old, "50 percent", "a third")},
-        capsys,
-    )
+    new = old.replace("50 percent", "a third")
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: new}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out, out
+
+
+def test_an_f_string_text_is_an_expected_value_but_its_expression_is_not(tmp_path, capsys) -> None:
+    old = 'def test_a(t):\n    assert label(t) == f"tier {t}" and label(2) == f"tier {2}"\n'
+    new = old.replace("tier {t}", "level {t}")
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: new}, capsys)
     assert code == 0, out
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: old.replace("{2}", "{3}")}, capsys)
+    assert code == 1, out
 
 
 def test_a_reflowed_bracket_is_not_a_change_outside_literals(tmp_path, capsys) -> None:
@@ -117,7 +126,31 @@ def test_a_file_that_is_not_a_test_is_the_behaviour_change_and_is_not_judged(
         capsys,
     )
     assert code == 0, out
-    assert "apps/api/app/dash.py" not in out, out
+    # Named, so the advisor audit sees what was NOT judged.
+    assert "not judged (not a test file): apps/api/app/dash.py" in out, out
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/api/pyproject.toml",
+        "apps/api/pytest.ini",
+        "apps/web/vitest.config.ts",
+        "apps/web/playwright.config.ts",
+        ".github/workflows/ci.yml",
+        "apps/api/scripts/check_plan_totals.py",
+        "apps/api/scripts/shard_deselect.py",
+    ],
+)
+def test_a_file_that_decides_what_tests_run_is_refused(tmp_path, capsys, path) -> None:
+    # A literal-only test edit plus an `addopts = --deselect ...` would pass a checker
+    # that judged test files only. These are not "the behavior change".
+    new = _edit(OLD, "== 50.0", "== 33.3")
+    code, out = _check(
+        tmp_path, {TEST_PATH: OLD, path: "a = 1\n"}, {TEST_PATH: new, path: "a = 2\n"}, capsys
+    )
+    assert code == 1, out
+    assert f"{path}: a file that decides what tests run" in out, out
 
 
 # --- refused: each of the advisor's list --------------------------------------------
@@ -200,7 +233,87 @@ def test_a_literal_that_renames_a_test_or_its_parameter_is_refused(
 ) -> None:
     code, out = _check(tmp_path, {TEST_PATH: OLD}, {TEST_PATH: _edit(OLD, old, new)}, capsys)
     assert code == 1, out
-    assert "renames a parametrized test" in out, out
+    assert "is not an expected value in an `assert`" in out, out
+
+
+@pytest.mark.parametrize(
+    ("body", "old", "new"),
+    [
+        # Each is a literal-only edit that neuters a test; the review of #1469 built them.
+        (
+            "import pytest\n\n\ndef test_x():\n    pytest.importorskip('xdist', reason='r')\n",
+            "'xdist'",
+            "'xdistx'",
+        ),
+        (
+            "@pytest.mark.skipif(sys.version_info < (3, 0), reason='r')\ndef test_x():\n    assert f() == 1\n",
+            "(3, 0)",
+            "(3, 99)",
+        ),
+        (
+            "def test_x():\n    for i in range(10):\n        assert f(i) == 1\n",
+            "range(10)",
+            "range(0)",
+        ),
+        ("def test_x():\n    assert rows[:5] == [1]\n", "[:5]", "[:0]"),
+        ("def test_x():\n    assert 'passed' not in out\n", "'passed'", "'never-printed'"),
+        ("def test_x():\n    assert code != 0\n", "!= 0", "!= 7"),
+        ("def test_x():\n    assert elapsed < 10\n", "< 10", "< 1e999"),
+        ("def test_x():\n    assert v == pytest.approx(1, abs=1e-9)\n", "1e-9", "1e9"),
+        (
+            "def test_x():\n    with pytest.raises(ValueError, match='cannot read'):\n        f()\n",
+            "'cannot read'",
+            "'.'",
+        ),
+        ("def test_x():\n    assert 'of 3 gaps' in blob\n", "'of 3 gaps'", "' '"),
+        ("def test_x():\n    assert f(2) == 4\n", "f(2)", "f(3)"),
+    ],
+    ids=[
+        "importorskip",
+        "skipif",
+        "range",
+        "slice",
+        "not-in",
+        "not-equal",
+        "bound",
+        "tolerance",
+        "match",
+        "blank-needle",
+        "call-argument",
+    ],
+)
+def test_a_literal_edit_that_is_not_an_expected_value_is_refused(
+    tmp_path, capsys, body, old, new
+) -> None:
+    assert body.count(old) == 1, old
+    code, out = _check(tmp_path, {TEST_PATH: body}, {TEST_PATH: body.replace(old, new)}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out or "made empty or blank" in out, out
+
+
+def test_a_value_inside_a_parametrize_list_is_refused_even_on_another_line(
+    tmp_path, capsys
+) -> None:
+    # Dropping a case by editing a value, with the ids line untouched.
+    old = (
+        "@pytest.mark.parametrize(\n"
+        '    ("index", "of"),\n'
+        '    [(None, "2"), ("0", "2"), ("", "2")],\n'
+        '    ids=["a", "b", "c"],\n'
+        ")\ndef test_x(index, of):\n    assert index != of\n"
+    )
+    new = old.replace('("", "2")', '("0", "2")')
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: new}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out, out
+
+
+def test_a_triple_quoted_source_string_cannot_be_edited(tmp_path, capsys) -> None:
+    old = 'SRC = """\ndef test_two(): pass\n"""\n\n\ndef test_x():\n    assert SRC\n'
+    new = old.replace("test_two(): pass", "test_two(): 1/0")
+    code, out = _check(tmp_path, {TEST_PATH: old}, {TEST_PATH: new}, capsys)
+    assert code == 1, out
+    assert "is not an expected value in an `assert`" in out, out
 
 
 def test_a_string_made_empty_is_refused_because_an_empty_needle_always_matches(
@@ -208,7 +321,7 @@ def test_a_string_made_empty_is_refused_because_an_empty_needle_always_matches(
 ) -> None:
     code, out = _check(tmp_path, {TEST_PATH: OLD}, {TEST_PATH: _edit(OLD, '"50%"', '""')}, capsys)
     assert code == 1, out
-    assert "made empty" in out, out
+    assert "made empty or blank" in out, out
 
 
 @pytest.mark.parametrize(
@@ -422,3 +535,81 @@ def test_git_mode_with_an_unknown_ref_is_could_not_look(repo: Path, tmp_path: Pa
     )
     assert code == 2
     assert "could not look" in capsys.readouterr().out
+
+
+# --- the CI job: a near-miss declaration must not turn into a green that checked nothing ---
+
+
+def _job_step() -> str:
+    from tests._paths import find_workflows_dir
+
+    wf = find_workflows_dir(Path(__file__).resolve())
+    if wf is None:
+        pytest.skip("no .github/workflows above this file (the api container mounts apps/api)")
+    job = yaml.safe_load((wf / "audit-gate.yml").read_text(encoding="utf-8"))["jobs"]
+    (step,) = [s for s in job["literal-only-test-edits"]["steps"] if "run" in s]
+    run = step["run"]
+    line = [
+        ln
+        for ln in run.splitlines()
+        if ln.lstrip().startswith("python apps/api/scripts/check_literal")
+    ]
+    assert len(line) == 1, line
+    return run.replace(line[0], "echo CHECKER-RAN")
+
+
+def _run_step(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash here")
+    env = {**os.environ, "PR_BODY": body, "RUNNER_TEMP": str(tmp_path)}
+    return subprocess.run(  # noqa: S603 - the workflow's own step, fixture inputs
+        [bash, "--noprofile", "--norc", "-e", "-c", _job_step()],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
+def test_the_job_runs_the_checker_for_the_exact_declaration(tmp_path) -> None:
+    proc = _run_step(tmp_path, "Summary\nsomething\nLiteral-only-test-edits: yes\nmore\n")
+    assert proc.returncode == 0 and "CHECKER-RAN" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_the_job_says_not_run_when_the_body_never_mentions_it(tmp_path) -> None:
+    proc = _run_step(tmp_path, "A PR body.\nIt has no declaration.\n")
+    assert proc.returncode == 0 and "NOT RUN" in proc.stdout, proc.stdout
+    assert "CHECKER-RAN" not in proc.stdout
+
+
+def test_a_prose_mention_in_the_middle_of_a_line_is_not_a_declaration(tmp_path) -> None:
+    body = "The job runs for a body with `Literal-only-test-edits: yes` on its own line.\n"
+    proc = _run_step(tmp_path, body)
+    assert proc.returncode == 0 and "NOT RUN" in proc.stdout, proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- Literal-only-test-edits: yes",
+        "Literal-only-test-edits: Yes",
+        "**Literal-only-test-edits:** yes",
+        "Literal-only-test-edits: yes.",
+        "literal-only-test-edits: yes",
+        "> Literal-only-test-edits: yes",
+        "Literal-only-test-edits : yes",
+        "Literal-only-test-edit: yes",
+    ],
+)
+def test_a_near_miss_declaration_fails_the_job_and_never_greens_silently(tmp_path, line) -> None:
+    # The first version exited 0 "NOT RUN" for all of these: a green check named for the
+    # checker that never ran, over a PR whose author believed they had declared.
+    proc = _run_step(tmp_path, f"Body\n{line}\n")
+    if line.startswith("Literal-only-test-edit:"):
+        # A misspelt name is not recognised as a mention at all; it is honestly NOT RUN.
+        assert proc.returncode == 0 and "NOT RUN" in proc.stdout, proc.stdout
+        return
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "CHECKER-RAN" not in proc.stdout and "NOT RUN" not in proc.stdout

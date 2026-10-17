@@ -22,20 +22,25 @@ argument and an edited comment, because each changes a non-literal token. Line
 breaks inside brackets are not tokens that matter, so a reflow is not a change.
 Only if the streams match are the changed literals judged one by one:
 
+    * a literal must be an EXPECTED VALUE: a direct operand of `==` or `in` in
+      an `assert` statement (through tuples, lists, sets, dicts, a unary minus
+      and the text of an f-string, under `and`). A literal anywhere else is
+      refused, because token-for-token it still looks like "a literal edit":
+      a call argument, a bound or ordering (`<`, `!=`, `not in`), a `range` or
+      slice, a skip or `importorskip` condition, a regex or `match=`, a
+      tolerance, a `parametrize` value or id, a docstring, or a triple-quoted
+      string that holds source. Each of those can disable a test with CI green;
+    * a string made EMPTY or BLANK is refused: `"x" in text` with an empty or
+      whitespace needle always passes, which weakens the test while changing
+      "only a literal";
     * a number must stay a number and a string a string (None, True, a name or
-      another kind in a literal's place changes the token kind, so it is refused
-      above);
-    * a string made EMPTY is refused: `"x" in text` with an empty needle always
-      passes, which weakens the test while changing "only a literal";
-    * a literal on the same lines as `ids=`, `id=`, `argnames=` or a
-      `parametrize` call's names renames the parametrized test, which is a
-      renamed test, so it is refused.
+      another kind in a literal's place changes the token kind, refused above).
 
 SCOPE, stated plainly. Only Python test files are machine-checkable here. A
 changed test file that is not Python (a vitest or Playwright spec, a fixture's
 JSON) is REFUSED as "not machine-checkable": it still goes to the advisor. A
 file under a test path that is added or deleted is refused. A changed file that
-is not a test file (the behavior change itself) is not judged. The citation is
+is not a test file (the behavior change itself) is listed as not judged, EXCEPT a file that decides what runs or how a gate judges (pytest or vitest config, a conftest, a workflow, a gate or shard script), which is refused. The citation is
 checked for FORM only (`Approved-behavior-comment: <comment id>` on a line of
 its own in the PR body); that the comment exists and is the advisor's is the
 advisor's audit, and this cannot see it.
@@ -61,12 +66,19 @@ from pathlib import Path
 _TEST_PATH = re.compile(
     r"^(apps/api/tests/|e2e/|apps/web/.+\.(test|spec)\.tsx?$)",
 )
+#: A non-test file that decides WHAT RUNS or HOW A GATE JUDGES: changing one beside a
+#: literal-only test edit can switch tests off without touching a test file, so the
+#: pre-approval does not cover it.
+_DECIDES_TESTS = re.compile(
+    r"(^|/)(pyproject\.toml|pytest\.ini|setup\.cfg|tox\.ini|conftest\.py|"
+    r"(vitest|playwright)(\.setup|\.config)[^/]*)$"
+    r"|^\.github/workflows/|^apps/api/scripts/(check_|shard_|preflight|mutation|leave_row)"
+)
 #: A line of its own in the PR body. Digits only, long enough to be a comment id.
 _CITATION = re.compile(r"^Approved-behavior-comment:[ \t]*(\d{7,})[ \t]*$", re.MULTILINE)
 _LITERAL_KINDS = {tokenize.NUMBER, tokenize.STRING}
 _FSTRING_TEXT = getattr(tokenize, "FSTRING_MIDDLE", -1)
 _IGNORED = {tokenize.NL, tokenize.ENCODING, tokenize.ENDMARKER}
-_PARAM_KEYWORDS = {"ids", "id", "argnames"}
 
 
 class _CouldNotLook(Exception):
@@ -78,6 +90,7 @@ class Result:
     findings: list[str] = field(default_factory=list)
     edits: list[str] = field(default_factory=list)
     files: int = 0
+    unjudged: list[str] = field(default_factory=list)
 
 
 def is_test_path(path: str) -> bool:
@@ -111,28 +124,85 @@ def _shape(tok: tokenize.TokenInfo) -> tuple[int, str]:
     return (tok.type, tok.string)
 
 
-def _protected_lines(source: str, path: str) -> set[int]:
-    """Lines whose literals name a parametrized test or its parameters."""
+_SAFE_OPS = (ast.Eq, ast.In)
+_NUMBER_NODES = (int, float, complex)
+
+
+def _pos(node: ast.AST) -> tuple[tuple[int, int], tuple[int, int]]:
+    return (node.lineno, node.col_offset), (
+        node.end_lineno or node.lineno,
+        node.end_col_offset or 0,
+    )
+
+
+def _expected_value_spans(
+    source: str, path: str
+) -> tuple[
+    list[tuple[tuple[int, int], tuple[int, int]]], list[tuple[tuple[int, int], tuple[int, int]]]
+]:
+    """(safe, unsafe) source spans, as ((line, byte col), (line, byte col)).
+
+    A literal is an EXPECTED VALUE only when it is a direct operand of `==` or
+    `in` in an `assert` (through tuples, lists, sets, dicts, a unary minus and the
+    text of an f-string), under `and` and nothing else. Everything else is not
+    judged here and is refused: a literal inside a call, an index, a slice, a
+    `range`, a decorator, a skip or `importorskip`, a regex, a `match=`, a
+    tolerance, an ordering or `!=` / `not in` / `is` comparison, a
+    `parametrize` value, a docstring, or a string that holds code.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
         raise _CouldNotLook(f"{path} does not parse: {exc}") from exc
-    lines: set[int] = set()
+    safe: list = []
+    unsafe: list = []
 
-    def span(node: ast.AST) -> None:
-        lines.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    def operand(node: ast.AST) -> None:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (str, bytes, *_NUMBER_NODES)) and not isinstance(
+                node.value, bool
+            ):
+                safe.append(_pos(node))
+        elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            for elt in node.elts:
+                operand(elt)
+        elif isinstance(node, ast.Dict):
+            for part in (*node.keys, *node.values):
+                if part is not None:
+                    operand(part)
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            operand(node.operand)
+        elif isinstance(node, ast.JoinedStr):
+            safe.append(_pos(node))
+            for part in node.values:
+                if isinstance(part, ast.FormattedValue):
+                    unsafe.append(_pos(part))
+
+    def test(node: ast.AST) -> None:
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
+            for value in node.values:
+                test(value)
+        elif isinstance(node, ast.Compare) and all(isinstance(op, _SAFE_OPS) for op in node.ops):
+            for part in (node.left, *node.comparators):
+                operand(part)
 
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        for kw in node.keywords:
-            if kw.arg in _PARAM_KEYWORDS:
-                span(kw.value)
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name == "parametrize" and node.args:
-            span(node.args[0])
-    return lines
+        if isinstance(node, ast.Assert):
+            test(node.test)
+    return safe, unsafe
+
+
+def _inside(inner: tuple[int, int], span: tuple[tuple[int, int], tuple[int, int]]) -> bool:
+    return span[0] <= inner < span[1]
+
+
+def _is_expected_value(tok: tokenize.TokenInfo, source: str, spans) -> bool:
+    """Is this literal token inside an expected-value span and outside any f-string expression?"""
+    safe, unsafe = spans
+    row, col = tok.start
+    line = source.splitlines()[row - 1]
+    point = (row, len(line[:col].encode("utf-8")))
+    return any(_inside(point, sp) for sp in safe) and not any(_inside(point, sp) for sp in unsafe)
 
 
 def compare_python(path: str, old: str, new: str) -> tuple[list[str], list[str]]:
@@ -154,7 +224,7 @@ def compare_python(path: str, old: str, new: str) -> tuple[list[str], list[str]]
             ],
             [],
         )
-    protected = _protected_lines(new, path) | _protected_lines(old, path)
+    old_spans, new_spans = _expected_value_spans(old, path), _expected_value_spans(new, path)
     findings: list[str] = []
     edits: list[str] = []
     for a, b in zip(old_toks, new_toks, strict=True):
@@ -162,19 +232,23 @@ def compare_python(path: str, old: str, new: str) -> tuple[list[str], list[str]]
             continue
         row = b.start[0]
         edits.append(f"{path}:{row}: {a.string} -> {b.string}")
-        if row in protected or a.start[0] in protected:
+        if not (_is_expected_value(a, old, old_spans) and _is_expected_value(b, new, new_spans)):
             findings.append(
-                f"{path}:{row}: {a.string} -> {b.string} renames a parametrized test or its parameters"
+                f"{path}:{row}: {a.string} -> {b.string} is not an expected value in an `assert` "
+                "(only a direct operand of == or in, in an assert statement, is a literal-only edit; "
+                "a call argument, bound, skip condition, regex, parametrize value or embedded source is not)"
             )
         if a.type == tokenize.STRING and b.type == tokenize.STRING:
             try:
-                emptied = ast.literal_eval(a.string) and not ast.literal_eval(b.string)
-            except (ValueError, SyntaxError):
+                emptied = bool(ast.literal_eval(a.string).strip()) and not (
+                    ast.literal_eval(b.string).strip()
+                )
+            except (ValueError, SyntaxError, AttributeError):
                 emptied = False
             if emptied:
                 findings.append(
-                    f"{path}:{row}: {a.string} -> {b.string}: a string made empty "
-                    "(an empty needle always matches), which weakens the assertion"
+                    f"{path}:{row}: {a.string} -> {b.string}: a string made empty or blank "
+                    "(an empty or whitespace needle always matches), which weakens the assertion"
                 )
     return findings, edits
 
@@ -183,10 +257,23 @@ def compare_python(path: str, old: str, new: str) -> tuple[list[str], list[str]]
 
 
 def judge(
-    changes: dict[str, tuple[str | None, str | None]], body: str, *, source: str = ""
+    changes: dict[str, tuple[str | None, str | None]],
+    body: str,
+    *,
+    others: list[str] | None = None,
+    source: str = "",
 ) -> Result:
-    """`changes`: path -> (old text or None if absent, new text or None if absent)."""
+    """`changes`: test path -> (old text or None if absent, new text or None if absent);
+    `others`: every other changed path (the behavior change, which is not judged)."""
     result = Result()
+    for path in sorted(others or []):
+        if _DECIDES_TESTS.search(path):
+            result.findings.append(
+                f"{path}: a file that decides what tests run or how a gate judges changed; "
+                "the pre-approval covers test literals only, so this goes to the advisor"
+            )
+        else:
+            result.unjudged.append(path)
     if not _CITATION.search(body):
         result.findings.append(
             "no approved behavior change is cited: the PR body needs a line "
@@ -212,25 +299,34 @@ def judge(
     return result
 
 
-def _read_tree(root: Path) -> dict[str, str]:
+def _read_tree(root: Path) -> tuple[dict[str, str], dict[str, bytes]]:
+    """(test files as text, every other file as bytes)."""
     if not root.is_dir():
         raise _CouldNotLook(f"{root} is not a directory")
-    out = {}
+    tests: dict[str, str] = {}
+    others: dict[str, bytes] = {}
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         rel = path.relative_to(root).as_posix()
-        if is_test_path(rel):
-            try:
-                out[rel] = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                raise _CouldNotLook(f"cannot read {path}: {exc}") from exc
-    return out
+        try:
+            if is_test_path(rel):
+                tests[rel] = path.read_text(encoding="utf-8")
+            else:
+                others[rel] = path.read_bytes()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _CouldNotLook(f"cannot read {path}: {exc}") from exc
+    return tests, others
 
 
-def changes_from_trees(old_root: Path, new_root: Path) -> dict[str, tuple[str | None, str | None]]:
-    old, new = _read_tree(old_root), _read_tree(new_root)
-    return {
+def changes_from_trees(
+    old_root: Path, new_root: Path
+) -> tuple[dict[str, tuple[str | None, str | None]], list[str]]:
+    """(changed test files, every other changed path)."""
+    (old, old_o), (new, new_o) = _read_tree(old_root), _read_tree(new_root)
+    tests = {
         p: (old.get(p), new.get(p)) for p in sorted(set(old) | set(new)) if old.get(p) != new.get(p)
     }
+    others = [p for p in sorted(set(old_o) | set(new_o)) if old_o.get(p) != new_o.get(p)]
+    return tests, others
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -251,23 +347,27 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout
 
 
-def changes_from_git(repo: Path, base: str, head: str) -> dict[str, tuple[str | None, str | None]]:
-    """Test files changed between the MERGE BASE of base and head, and head."""
+def changes_from_git(
+    repo: Path, base: str, head: str
+) -> tuple[dict[str, tuple[str | None, str | None]], list[str]]:
+    """(changed test files, every other changed path) between the MERGE BASE and head."""
     mb = _git(repo, "merge-base", base, head).strip()
     names = _git(repo, "diff", "--name-status", "--no-renames", "-z", mb, head).split("\0")
     changes: dict[str, tuple[str | None, str | None]] = {}
+    others: list[str] = []
     items = [n for n in names if n]
     if len(items) % 2:
         raise _CouldNotLook("git diff --name-status -z gave an odd number of fields")
     for status, path in zip(items[0::2], items[1::2], strict=True):
-        if not is_test_path(path):
-            continue
         if status[0] not in "MAD":
             raise _CouldNotLook(f"{path}: git status {status!r} is not modified, added or deleted")
+        if not is_test_path(path):
+            others.append(path)
+            continue
         old = None if status[0] == "A" else _git(repo, "show", f"{mb}:{path}")
         new = None if status[0] == "D" else _git(repo, "show", f"{head}:{path}")
         changes[path] = (old, new)
-    return changes
+    return changes, sorted(others)
 
 
 # --- the command ----------------------------------------------------------------------
@@ -306,14 +406,14 @@ def main(argv: list[str]) -> int:
         except (OSError, UnicodeDecodeError) as exc:
             raise _CouldNotLook(f"cannot read the PR body {opts['--body']}: {exc}") from exc
         if "--base" in opts:
-            changes = changes_from_git(
+            changes, others = changes_from_git(
                 Path(opts.get("--repo", ".")), opts["--base"], opts["--head"]
             )
             source = f" between {opts['--base']} and {opts['--head']}"
         else:
-            changes = changes_from_trees(Path(opts["--old-tree"]), Path(opts["--new-tree"]))
+            changes, others = changes_from_trees(Path(opts["--old-tree"]), Path(opts["--new-tree"]))
             source = ""
-        result = judge(changes, body, source=source)
+        result = judge(changes, body, others=others, source=source)
     except _CouldNotLook as exc:
         print(f"check-literal-test-edits: could not look -- {exc}")
         return 2
@@ -328,6 +428,8 @@ def main(argv: list[str]) -> int:
         if len(result.findings) > 50:
             print(f"  ... and {len(result.findings) - 50} more")
         return 1
+    for path in result.unjudged:
+        print(f"check-literal-test-edits: not judged (not a test file): {path}")
     print(
         f"check-literal-test-edits: clean -- {len(result.edits)} literal edit(s) in "
         f"{result.files} test file(s), and a behavior change is cited. The citation's "
