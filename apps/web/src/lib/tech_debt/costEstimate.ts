@@ -7,7 +7,7 @@
  */
 
 import type { CapabilityItem } from "./types";
-import { noCostItems, sourceItems } from "./components";
+import { isComponent, noCostItems, sourceItems } from "./components";
 
 /** The run's `purpose`, as `routes/tech_debt.py` starts it. */
 export const COST_ESTIMATE_PURPOSE = "tech_debt.cost_estimate";
@@ -41,11 +41,21 @@ export function aiEstimateItems<
     "parent_item_id" | "annual_cost_usd" | "cost_source"
   >,
 >(items: readonly T[]): T[] {
-  return sourceItems(items).filter(
-    (it) =>
-      it.cost_source === "ai_estimate" &&
-      it.annual_cost_usd !== null &&
-      it.annual_cost_usd !== undefined,
+  return sourceItems(items).filter(isAiEstimate);
+}
+
+/** One row's answer to the rule above, for a cell that labels its own cost. */
+export function isAiEstimate(
+  it: Pick<
+    CapabilityItem,
+    "parent_item_id" | "annual_cost_usd" | "cost_source"
+  >,
+): boolean {
+  return (
+    !isComponent(it) &&
+    it.cost_source === "ai_estimate" &&
+    it.annual_cost_usd !== null &&
+    it.annual_cost_usd !== undefined
   );
 }
 

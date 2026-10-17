@@ -328,6 +328,9 @@ class TopCostItemResponse(BaseModel):
     vendor: str | None
     category: str | None
     annual_cost_usd: float
+    # TD-5 (for #1060): the cost is an AI estimate (`cost_estimate.is_ai_estimate`),
+    # labelled "AI estimate" wherever it appears (copy E5). REQUIRED.
+    ai_estimate: bool
 
 
 class OverlapAnalysisResponse(BaseModel):

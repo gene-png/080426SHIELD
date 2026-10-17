@@ -115,6 +115,7 @@ from app.tech_debt.cost_estimate import (
     CHANGED_MEANWHILE,
     build_payload,
     estimate_targets,
+    is_ai_estimate,
     parse_estimates,
 )
 from app.tech_debt.cost_estimate import JOB_NAME as COST_ESTIMATE_JOB
@@ -2472,6 +2473,7 @@ def overlap_analysis(
         .all()
     )
     analysis = analyze_overlap(list(items))
+    by_id = {str(it.id): it for it in items}
 
     def _bucket(b) -> OverlapBucketResponse:
         return OverlapBucketResponse(
@@ -2495,6 +2497,8 @@ def overlap_analysis(
                 vendor=i.vendor,
                 category=i.category,
                 annual_cost_usd=i.annual_cost_usd,
+                # TD-5: the same one rule as every other surface.
+                ai_estimate=is_ai_estimate(by_id[i.id]),
             )
             for i in analysis.top_cost_items
         ],
@@ -2543,9 +2547,9 @@ def savings_preview(
 
     #1299 (TD-5), left alone on purpose: this consultant-only figure carries no
     AI-estimate sentence. Every client and deliverable savings figure does
-    (`cost_estimate.savings_estimate_count`); here the consultant sees each
-    estimated row's "AI estimate" badge in the table beside it. Tracked in
-    #1354 for a sentence here too."""
+    (`cost_estimate.savings_estimate_count`); here the what-if's own table
+    (`SavingsWhatIf.tsx`) labels each estimated row's cost "(AI estimate)".
+    Tracked in #1354 for a sentence here too."""
     cap_list = db.get(CapabilityList, list_id)
     svc = db.get(Service, cap_list.service_id) if cap_list is not None else None
     if cap_list is None or svc is None or svc.client_id != client.id:
@@ -2654,8 +2658,10 @@ def consolidation_plan_summary(
             cut += 1
     # #804: the deliverable's own derivation, not a copy of it.
     # #1299 (TD-5), left alone on purpose: this consultant-only card carries no
-    # AI-estimate sentence (each estimated row is badged in the table beside
-    # it); every client and deliverable savings figure does. Tracked in #1354.
+    # AI-estimate sentence; every client and deliverable savings figure does.
+    # The card has no rows of its own: the same workspace page's capability
+    # table (`EditableCapabilityTable.tsx`) badges each estimated row, and the
+    # savings what-if labels each estimated cost. Tracked in #1354.
     savings = estimated_savings((it.disposition, savings_cost(it)) for it in items)
 
     return ConsolidationPlanSummary(

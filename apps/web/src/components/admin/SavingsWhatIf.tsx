@@ -14,6 +14,7 @@ import {
   previewSavings,
   proxyMessage,
 } from "@/lib/tech_debt/client";
+import { AI_ESTIMATE_LABEL, isAiEstimate } from "@/lib/tech_debt/costEstimate";
 import { DISPOSITION_LABEL } from "@/lib/tech_debt/dispositionLabels";
 import type {
   CapabilityDisposition,
@@ -259,6 +260,8 @@ export function SavingsWhatIf({
                       it.annual_cost_usd === undefined
                         ? "—"
                         : usd(Number(it.annual_cost_usd), true)}
+                      {/* TD-5 (for #1060), copy E5. */}
+                      {isAiEstimate(it) ? ` (${AI_ESTIMATE_LABEL})` : ""}
                     </td>
                     <td className="py-1">
                       <select
