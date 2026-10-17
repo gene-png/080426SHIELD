@@ -12,6 +12,8 @@ real renderer wrote, never from the format string the code holds.
 from __future__ import annotations
 
 import io
+import zipfile
+from xml.etree import ElementTree
 
 import pytest
 from openpyxl import load_workbook
@@ -86,3 +88,57 @@ def test_a_released_floor_deliverable_marks_the_cell_the_client_downloads(
     assert (
         _xlsx_rows(raw)["Estimated annual savings"][5] == "≥ (one or more cut rows missing a cost)"
     )
+
+
+# --- what the workbook FILE holds, read from its own XML ----------------------
+#
+# The tests above read the format back through openpyxl, the library that wrote
+# it. These unzip the .xlsx and read the parts Excel and LibreOffice read: the
+# sheet's cell (its type and value) and the styles part (the number format the
+# cell's style points to). They pin what is actually written, with no spreadsheet
+# program needed. They do NOT prove how Excel or LibreOffice draw it.
+
+_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+
+def _cell_in_the_file(raw: bytes) -> tuple[ElementTree.Element, str, bytes]:
+    """The savings cell's XML element, its number format code, and the styles part."""
+    ref = _savings_cell(raw).coordinate
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        styles_bytes = z.read("xl/styles.xml")
+        # The capability sheet is the workbook's first sheet.
+        sheet_bytes = z.read("xl/worksheets/sheet1.xml")
+    sheet = ElementTree.fromstring(sheet_bytes)  # noqa: S314 (our own output)
+    styles = ElementTree.fromstring(styles_bytes)  # noqa: S314 (our own output)
+    cell = sheet.find(f".//m:c[@r='{ref}']", _NS)
+    assert cell is not None, f"no cell {ref} in sheet1.xml"
+    codes = {
+        int(n.get("numFmtId")): n.get("formatCode")
+        for n in styles.findall("m:numFmts/m:numFmt", _NS)
+    }
+    xf = styles.findall("m:cellXfs/m:xf", _NS)[int(cell.get("s", "0"))]
+    fmt_id = int(xf.get("numFmtId"))
+    assert fmt_id in codes, f"the cell's format id {fmt_id} is a built-in, not a custom code"
+    return cell, codes[fmt_id], styles_bytes
+
+
+def test_a_floor_cell_in_the_file_is_numeric_and_its_format_code_is_the_marker() -> None:
+    cell, code, styles_bytes = _cell_in_the_file(_render(savings=12345.0, known=False))
+    # (a) a NUMBER: no shared-string or inline-string type, and a numeric <v>.
+    assert cell.get("t") in (None, "n"), cell.attrib
+    assert float(cell.find("m:v", _NS).text) == 12345.0
+    # (b) the format code is the ruled literal, the quotes around "≥ " intact...
+    assert code == FLOOR_FORMAT, code
+    # ...and the file holds it as UTF-8 text with the quotes escaped as XML, not a
+    # character reference or a lost glyph: this is the attribute Excel reads.
+    assert 'formatCode="&quot;≥ &quot;$#,##0"'.encode() in styles_bytes
+    assert code.startswith('"≥ "'), code
+
+
+def test_an_exact_cell_in_the_file_keeps_the_plain_code_and_no_marker() -> None:
+    cell, code, _ = _cell_in_the_file(_render(savings=12345.0, known=True))
+    assert cell.get("t") in (None, "n"), cell.attrib
+    assert float(cell.find("m:v", _NS).text) == 12345.0
+    # (c) the plain code, and no marker anywhere in what the cell is formatted by.
+    assert code == EXACT_FORMAT, code
+    assert "≥" not in code
