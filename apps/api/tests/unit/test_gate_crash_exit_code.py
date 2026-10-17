@@ -96,6 +96,9 @@ GATES = [
     # red in CI on both heads of the PR -- the fourth time a new gate has
     # arrived without its entry. `sys.argv`: each `main(argv)` takes the list.
     ("check_ci_selection", "sys.argv"),
+    # The literal-only test-edit checker (#736 6234238148). Shipped WITH the handler
+    # and WITH this entry; `sys.argv` because `main(argv)` takes the argument list.
+    ("check_literal_test_edits", "sys.argv"),
     ("check_e2e_env_gates", "sys.argv"),
     ("check_e2e_spec_listing", "sys.argv"),
     # The required Python check's aggregate. Shipped WITH the handler and WITH this
