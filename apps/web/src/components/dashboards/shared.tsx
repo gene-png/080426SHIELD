@@ -210,6 +210,43 @@ export function Section({
   );
 }
 
+/**
+ * #1384: a long list the reader can collapse and expand. A native
+ * <details>/<summary>, so a keyboard (Enter or Space on the summary) and a
+ * screen reader (expanded or collapsed) operate it with no script of ours.
+ *
+ * It hides ROWS only. A caller keeps every heading, count and disclosure
+ * OUTSIDE it, so collapsing never hides a number, and `label` should name the
+ * count too, since it is what a collapsed list shows in place of the rows.
+ */
+export function CollapsibleList({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: (open: boolean) => string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}): JSX.Element {
+  const [open, setOpen] = React.useState(defaultOpen);
+  return (
+    <details open={defaultOpen} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary
+        style={{
+          cursor: "pointer",
+          fontSize: 13,
+          fontWeight: 600,
+          color: C.accent2,
+          margin: "0 0 10px",
+        }}
+      >
+        {label(open)}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 /** One KPI card with an optional accent glow. */
 export function KpiCard({
   label,
