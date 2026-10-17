@@ -80,4 +80,23 @@ describe("ZtDashboard prints the API's one-decimal percentages (#1183)", () => {
     render(<ZtDashboard data={dashboard()} />);
     expect(screen.getByText("Largest: Identity Â· +44.5 points")).toBeVisible();
   });
+
+  it("draws no bar fill for a pillar with nothing scored, which is not a pillar at stage 1", () => {
+    const data = dashboard();
+    data.pillars = [
+      {
+        ...data.pillars[0],
+        answered_count: 0,
+        current_pct: null,
+        current_label: "Unscored",
+        gap_pct: 0,
+      },
+    ];
+    const { container } = render(<ZtDashboard data={data} />);
+    expect(screen.getByText("Unscored · —")).toBeVisible();
+    // A pillar scored at stage 1 is 0.0% and fills `width: 0%`; one with no
+    // score has no fill at all.
+    expect(container.querySelector('div[style*="width: 0%"]')).toBeNull();
+    expect(container.querySelector('div[style*="width: 55.5%"]')).toBeNull();
+  });
 });
