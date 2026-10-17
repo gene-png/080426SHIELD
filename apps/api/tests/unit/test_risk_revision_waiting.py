@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.risk.inputs import Blocker
+from app.risk.inputs import REGENERATE, RELEASE_NEWER, Blocker
 from app.routes.risk import _inputs_not_final_message
 from tests._risk_inputs import seed_released
 from tests.unit.test_risk_publish_inputs import _blockers, _gen, _publish
@@ -64,7 +64,7 @@ def test_an_approved_newer_version_names_the_input_and_says_release_it(
 # which this harness does not drive; the sentence is pinned at the function,
 # and the route test above pins that the function is what publish uses.
 def test_a_submitted_newer_version_reads_the_same_with_its_state() -> None:
-    message = _inputs_not_final_message([Blocker("csf", "changed", "submitted")])
+    message = _inputs_not_final_message([Blocker("csf", "changed", "submitted", RELEASE_NEWER)])
     assert message == (
         "This register can't be published while a newer version of an assessment it "
         "draws on is waiting to be released: NIST CSF (submitted, not yet released). "
@@ -74,7 +74,10 @@ def test_a_submitted_newer_version_reads_the_same_with_its_state() -> None:
 
 def test_two_waiting_versions_are_both_named() -> None:
     message = _inputs_not_final_message(
-        [Blocker("csf", "changed", "submitted"), Blocker("zt", "changed", "approved")]
+        [
+            Blocker("csf", "changed", "submitted", RELEASE_NEWER),
+            Blocker("zt", "changed", "approved", RELEASE_NEWER),
+        ]
     )
     assert message == (
         "This register can't be published while newer versions of assessments it "
@@ -86,7 +89,7 @@ def test_two_waiting_versions_are_both_named() -> None:
 
 def test_a_released_or_archived_change_keeps_the_generate_sentence() -> None:
     message = _inputs_not_final_message(
-        [Blocker("attack", "changed", "released"), Blocker("zt", "changed", None)]
+        [Blocker("attack", "changed", "released", REGENERATE), Blocker("zt", "changed", None)]
     )
     assert message == (
         "An assessment this register draws on has changed since it was generated: "

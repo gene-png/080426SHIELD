@@ -232,6 +232,57 @@ class Blocker:
     kind: str
     reason: str  # "not_started" | "not_released" | "changed" | "not_recorded"
     status: str | None
+    #: For a `changed` blocker only: which remedy a person can follow to a
+    #: publishable register (`changed_remedy`). None reads as REGENERATE.
+    remedy: str | None = None
+
+
+DISCARD_DRAFT = "discard_draft"
+RELEASE_NEWER = "release_newer"
+REGENERATE = "regenerate"
+
+
+def changed_remedy(
+    *, was_status: str | None, newest_status: str | None, drafted_over_was: bool
+) -> str:
+    """What can make a register publishable again, when the input it drew on is
+    no longer the newest record (#1156). THE TABLE, written before the logic
+    (`tests/unit/test_risk_changed_remedy_table.py`), after three review rounds
+    each patching one state of it:
+
+    * the register drew on RELEASED work, and the newest record is a DRAFT
+      sitting directly on that record: discarding the draft makes the recorded
+      record the latest again, so DISCARD_DRAFT (publish as is) works;
+    * the newest record is unreleased in any other case (a draft on top of some
+      other unreleased record, a submitted or approved version, or any unreleased
+      newest when the register drew on unreleased work): a new version would
+      draw on it and be refused, so RELEASE_NEWER (release it, then generate);
+    * the newest record is released (or there is none): a new version draws on
+      it and can publish, so REGENERATE.
+
+    A register that drew on UNRELEASED work is never publishable as it stands
+    (publish needs the recorded input released at generate), so DISCARD_DRAFT
+    is never offered for it."""
+    if newest_status not in ("draft", "submitted", "approved"):
+        return REGENERATE
+    if was_status == RELEASED and newest_status == "draft" and drafted_over_was:
+        return DISCARD_DRAFT
+    return RELEASE_NEWER
+
+
+def _record_below(db: Session, kind: str, service_id: str, version: int):
+    """The newest non-discarded record under `version` of one service."""
+    model = CapabilityList if kind == "tech_debt" else _ASSESSMENTS[kind]
+    return db.execute(
+        select(model)
+        .where(
+            model.service_id == uuid.UUID(service_id),
+            model.status != "discarded",
+            model.version < version,
+        )
+        .order_by(model.version.desc(), model.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 def publish_blockers(
@@ -324,13 +375,19 @@ def publish_blockers(
         # refused as "(draft)", naming a record it never read, and releasing
         # that draft then met `changed` anyway. Regenerating is the remedy.
         if was is not None and was.get("record_id") != r.record_id:
-            # The newer record's state is carried only when the register drew on
-            # RELEASED work: the newer-draft remedies (discard it, or release it
-            # and regenerate) need that. A register drawn from unreleased work
-            # is never publishable, whatever becomes of the newer record, so
-            # its only remedy is a new version (review round 3 F1): no state.
-            drew_on_released = was.get("status") == RELEASED
-            blockers.append(Blocker(kind, "changed", r.status if drew_on_released else None))
+            # Which remedy works is a function of three states, never of the
+            # newest record's status alone (`changed_remedy`, the table).
+            below = (
+                _record_below(db, kind, r.service_id, r.version)
+                if r.status == "draft" and was.get("status") == RELEASED
+                else None
+            )
+            remedy = changed_remedy(
+                was_status=was.get("status"),
+                newest_status=r.status,
+                drafted_over_was=below is not None and str(below.id) == was.get("record_id"),
+            )
+            blockers.append(Blocker(kind, "changed", r.status, remedy))
             continue
         if r.status != RELEASED:
             blockers.append(Blocker(kind, "not_released", r.status))

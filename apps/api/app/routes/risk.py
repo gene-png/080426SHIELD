@@ -85,7 +85,9 @@ from app.risk.engine import (
     tier_for,
 )
 from app.risk.inputs import (
+    DISCARD_DRAFT,
     INPUT_KINDS,
+    RELEASE_NEWER,
     SYNTHESIS_KINDS,
     Blocker,
     InputRecord,
@@ -2947,14 +2949,11 @@ NEWER_DRAFT_OPEN = (
     "draft, then publish again. Or release the draft, then generate a new version "
     "before publishing."
 )
-
-
-#: #1156 review round 2 F1: a `changed` input whose newer record is SUBMITTED
-#: or APPROVED. "Generate a new version" alone cannot publish (the new register
-#: would draw on that unreleased version), and it cannot be discarded, so the
-#: sentence names it and says to release it first. Approved verbatim (advisor,
-#: #736 6228351462 item 4).
-_WAITING_STATES = ("submitted", "approved")
+#: #1156 review round 2 F1: a `changed` input whose newer record is unreleased
+#: and cannot be discarded to publish (`RELEASE_NEWER`). "Generate a new version"
+#: alone cannot publish (the new register would draw on that unreleased
+#: version), so the sentence names it and says to release it first. Approved
+#: verbatim (advisor, #736 6228351462 item 4).
 
 
 def _newer_version_waiting(waiting: list[str]) -> str:
@@ -2995,24 +2994,23 @@ def _inputs_not_final_message(blockers: list[Blocker]) -> str:
             "This register cannot be published until every assessment it draws on is "
             "released: " + "; ".join(waiting) + "."
         )
-    # #1156: a `changed` input whose current record is a DRAFT is a newer
-    # version opened after generate (a revision). "Generate a new version"
-    # alone names a remedy that cannot publish: that register would draw on
-    # the draft. Approved verbatim (advisor, #736 6225640724 item 5); the
-    # "Discard draft" control is on that service's workspace.
-    if any(b.reason == "changed" and b.status == "draft" for b in blockers):
+    # #1156: which sentence a `changed` input gets is its `remedy`, decided in
+    # `risk.inputs.changed_remedy` (the table): the newer-draft sentence is
+    # approved verbatim (advisor, #736 6225640724 item 5) and offers "discard",
+    # so it is used only where discarding makes the register publishable.
+    if any(b.reason == "changed" and b.remedy == DISCARD_DRAFT for b in blockers):
         parts.append(NEWER_DRAFT_OPEN)
     newer_waiting = [
-        f"{_INPUT_LABELS.get(b.kind, b.kind)} ({_STATE_WORDS[b.status]})"
+        f"{_INPUT_LABELS.get(b.kind, b.kind)} ({_STATE_WORDS[b.status or '']})"
         for b in blockers
-        if b.reason == "changed" and b.status in _WAITING_STATES
+        if b.reason == "changed" and b.remedy == RELEASE_NEWER
     ]
     if newer_waiting:
         parts.append(_newer_version_waiting(newer_waiting))
     changed = [
         _INPUT_LABELS.get(b.kind, b.kind)
         for b in blockers
-        if b.reason == "changed" and b.status not in ("draft", *_WAITING_STATES)
+        if b.reason == "changed" and b.remedy not in (DISCARD_DRAFT, RELEASE_NEWER)
     ]
     if changed:
         parts.append(
