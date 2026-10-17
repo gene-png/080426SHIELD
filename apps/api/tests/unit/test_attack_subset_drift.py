@@ -356,7 +356,18 @@ def test_an_old_rules_parents_own_tools_are_still_disclosed(app_parts) -> None: 
 def test_the_what_if_base_carries_the_same_count(app_parts) -> None:  # noqa: F811
     w = _world(app_parts)
     code = _codes(w)[0]
-    w.patch(code, {"detection_tools": [LEGACY, EDR]})
+    # #1277: a status, so the row is one C1 counts (an unscored row is not);
+    # all three lists, so the status survives #554 R3's computation.
+    tools = [LEGACY, EDR]
+    w.patch(
+        code,
+        {
+            "status": "covered",
+            "detection_tools": tools,
+            "prevention_tools": tools,
+            "response_tools": tools,
+        },
+    )
     assert w.approve().status_code == 200
     w.confirm_not_security(LEGACY)
     r = w.c.get(f"/attack/services/{w.svc_id}/scenarios", headers=w.h)

@@ -312,7 +312,11 @@ export function IntakeWizard(): JSX.Element {
   }
 
   const userEmail = session.data?.user?.email ?? null;
-  const userName = session.data?.user?.name ?? null;
+  // The session's name is `display_name ?? email` (lib/auth/options.ts), so
+  // it equals the email for an account with no display_name. That is not a
+  // name, and a blur would save it as one (#1321).
+  const sessionName = session.data?.user?.name ?? null;
+  const userName = sessionName === userEmail ? null : sessionName;
 
   return (
     <div className="flex flex-col gap-6">
