@@ -172,6 +172,8 @@ const FIND: Record<string, () => HTMLElement | null> = {
   documents: () => screen.queryByTestId("blk-documents"),
   reconciliation: () =>
     screen.queryByRole("status", { name: "Extraction reconciliation" }),
+  totalsNote: () =>
+    screen.queryByRole("status", { name: "Totals cover included rows only" }),
   runStatus: () => screen.queryByTestId("blk-run-status"),
   aiSource: () => screen.queryByTestId("blk-ai-source"),
   resultCard: () => screen.queryByTestId("ai-result-card"),
@@ -194,11 +196,12 @@ const FIND: Record<string, () => HTMLElement | null> = {
 
 /** The spec: what each section shows, from the #1376 map. */
 const EXPECTED: Record<SectionKey, readonly string[]> = {
-  overview: ["status", "stages", "figures"],
+  overview: ["status", "stages", "figures", "totalsNote"],
   inputs: ["status", "upload", "documents", "reconciliation", "runStatus"],
   "ai-draft": ["status", "runStatus", "aiSource", "resultCard"],
   review: [
     "status",
+    "totalsNote",
     "discard",
     "securityQueue",
     "flags",
@@ -348,12 +351,10 @@ describe("the AI draft result card, counted in uploaded rows (#1376)", () => {
   it("an exact count: asked 5, applied 4, not applied 1, unscored 0", async () => {
     await renderSettled("ai-draft");
     const card = screen.getByTestId("ai-result-card");
-    expect(card).toHaveTextContent(
-      "The extraction made capabilities from 4 of 5 uploaded rows.",
-    );
+    expect(card).toHaveTextContent("4 of 5 uploaded rows are in the list.");
     const figures = within(card).getByTestId("ai-result-figures");
     expect(figures).toHaveTextContent(
-      "Asked5Applied4Not applied1Left out by the extraction 1Unscored0",
+      "Asked5Applied4Not applied1Not in the list 1Unscored0",
     );
   });
 
@@ -363,7 +364,7 @@ describe("the AI draft result card, counted in uploaded rows (#1376)", () => {
     );
     await renderSettled("ai-draft");
     expect(screen.getByTestId("ai-result-card")).toHaveTextContent(
-      "The extraction made a capability from each of the 4 uploaded rows.",
+      "All 4 uploaded rows are in the list.",
     );
   });
 
@@ -389,6 +390,95 @@ describe("the AI draft result card, counted in uploaded rows (#1376)", () => {
         "This list has no record of how many rows were uploaded, so the result can't be counted.",
       ),
     ).toBeVisible();
+  });
+});
+
+describe("the exclusion disclosure reaches every place the totals are read (#1376)", () => {
+  it.each(["overview", "review"] as SectionKey[])(
+    "%s says the totals cover the included rows only, with the count of excluded rows",
+    async (section) => {
+      await renderSettled(section);
+      const note = screen.getByRole("status", {
+        name: "Totals cover included rows only",
+      });
+      expect(note).toHaveTextContent(
+        "5 rows received · 4 included · 1 excluded",
+      );
+    },
+  );
+
+  it("an unknown excluded count is called unknown in Overview, not left as bare totals", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({ exclusion_count_state: "unknown", excluded_rows: [] }),
+    );
+    await renderSettled("overview");
+    expect(
+      screen.getByRole("status", { name: "Totals cover included rows only" }),
+    ).toHaveTextContent("excluded count unknown (at least 1)");
+  });
+
+  it("no note when every uploaded row is in the list", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({ source_rows_total: 4, excluded_rows: [] }),
+    );
+    await renderSettled("overview");
+    expect(
+      screen.queryByRole("status", { name: "Totals cover included rows only" }),
+    ).toBeNull();
+  });
+});
+
+describe("a refused Include or Correctly excluded shows in Inputs, where the buttons are (#1376)", () => {
+  it("shows the refusal as an alert in Inputs", async () => {
+    vi.spyOn(window, "prompt").mockReturnValue("Named by hand");
+    vi.mocked(techDebtClient.includeExcludedRow).mockRejectedValue(
+      new Error("That row cannot be included."),
+    );
+    await renderSettled("inputs");
+    await act(async () => {
+      screen.getByText(/Show the 1 excluded row/).click();
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: /Include/ }).click();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That row cannot be included.",
+    );
+  });
+
+  it("shows a refused confirmation as an alert in Inputs", async () => {
+    vi.mocked(techDebtClient.confirmExcludedRow).mockRejectedValue(
+      new Error("That row cannot be confirmed."),
+    );
+    await renderSettled("inputs");
+    await act(async () => {
+      screen.getByText(/Show the 1 excluded row/).click();
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: /Correctly excluded/ }).click();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That row cannot be confirmed.",
+    );
+  });
+});
+
+describe("the result card does not credit a consultant's row to the extraction (#1376)", () => {
+  it("says the row is in the list, whoever put it there", async () => {
+    // The state after Include on the last left-out row: five rows received,
+    // five items, the last with no AI confidence and no source artifact.
+    fetchLatestList.mockResolvedValue(
+      list({
+        excluded_rows: [],
+        items: [1, 2, 3, 4, 5].map((n) =>
+          n === 5 ? { ...item(n), confidence_pct: null } : item(n),
+        ),
+      } as never),
+    );
+    await renderSettled("ai-draft");
+    const card = screen.getByTestId("ai-result-card");
+    expect(card).toHaveTextContent("All 5 uploaded rows are in the list.");
+    expect(card).not.toHaveTextContent(/extraction made/i);
   });
 });
 

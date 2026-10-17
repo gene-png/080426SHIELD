@@ -133,6 +133,17 @@ function reconciliationHeading(list: CapabilityList): string {
   return `${head}${floor} excluded`;
 }
 
+/**
+ * What an extraction left behind, per service, for the life of the browser
+ * tab. A section is a URL segment, so moving between sections remounts the
+ * workspace; component state alone would drop the #550 lock and an extract
+ * error the reader has not seen yet. A reload clears it, as the copy says.
+ */
+const extractFlags = new Map<
+  string,
+  { outcomeUnknown: boolean; error: string | null }
+>();
+
 export function TechDebtWorkspace({
   serviceId,
   serviceTitle,
@@ -201,14 +212,32 @@ export function TechDebtWorkspace({
     };
   }, []);
   const [splitError, setSplitError] = React.useState<string | null>(null);
-  const [extractError, setExtractError] = React.useState<string | null>(null);
+  // Only a sectioned workspace remounts on navigation, so only it reads and
+  // writes `extractFlags`; the whole page keeps its own state, as before.
+  const remembered = inSection ? extractFlags.get(serviceId) : undefined;
+  const [extractError, setExtractErrorState] = React.useState<string | null>(
+    () => remembered?.error ?? null,
+  );
+  const setExtractError = React.useCallback(
+    (message: string | null): void => {
+      if (inSection) {
+        extractFlags.set(serviceId, {
+          outcomeUnknown: extractFlags.get(serviceId)?.outcomeUnknown ?? false,
+          error: message,
+        });
+      }
+      setExtractErrorState(message);
+    },
+    [inSection, serviceId],
+  );
   // #550: set once an extraction's outcome is unknown and never cleared; a
   // reload clears it, which the copy says. The ref is what `runExtraction`
   // reads, because the upload's automatic extraction calls it from a closure
   // created before the state changed.
-  const [extractOutcomeUnknown, setExtractOutcomeUnknown] =
-    React.useState(false);
-  const extractLocked = React.useRef(false);
+  const [extractOutcomeUnknown, setExtractOutcomeUnknown] = React.useState(
+    () => remembered?.outcomeUnknown ?? false,
+  );
+  const extractLocked = React.useRef(remembered?.outcomeUnknown ?? false);
   const [approveError, setApproveError] = React.useState<string | null>(null);
   const [approving, setApproving] = React.useState(false);
   const [discarding, setDiscarding] = React.useState(false);
@@ -433,7 +462,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
           ),
         );
     },
-    [serviceId, refreshOverlap],
+    [serviceId, refreshOverlap, setExtractError],
   );
   const aiRun = useAiRun({
     serviceId,
@@ -492,6 +521,12 @@ Components carry no cost of their own — this licence keeps its full value.`,
     } catch (err) {
       if (isUpstreamOutcomeUnknown(err)) {
         extractLocked.current = true;
+        if (inSection) {
+          extractFlags.set(serviceId, {
+            outcomeUnknown: true,
+            error: extractFlags.get(serviceId)?.error ?? null,
+          });
+        }
         setExtractOutcomeUnknown(true);
         // #645: a run may have started. Look once, and follow it if so; the
         // lock and the copy above stand either way.
@@ -972,6 +1007,19 @@ Components carry no cost of their own — this licence keeps its full value.`,
   // items`, which is exact only when attribution was complete; otherwise it
   // is a floor and the box says the count is unknown (#193,
   // `exclusionUnknown`). The exporter decides it the same way.
+  const reconciliationNote =
+    typeof list.source_rows_total === "number" &&
+    (exclusionUnknown(list) ||
+      list.source_rows_total - sourceItems(list.items).length > 0) ? (
+      <p
+        className="text-sm text-status-warning-fg"
+        role="status"
+        aria-label="Totals cover included rows only"
+      >
+        {reconciliationHeading(list)}. {TD_SECTION_COPY.reconciliationTotals}
+      </p>
+    ) : null;
+
   const reconciliation =
     typeof list.source_rows_total === "number" &&
     (exclusionUnknown(list) ||
@@ -1159,6 +1207,7 @@ Components carry no cost of their own — this licence keeps its full value.`,
     listHeading,
     securityQueue,
     reconciliation,
+    reconciliationNote,
     extractionFindings,
     reviewTable,
     approveControl,
@@ -1329,6 +1378,12 @@ Components carry no cost of their own — this licence keeps its full value.`,
         ) : null}
         {shows("documents") ? documentsPanel : null}
         {shows("reconciliation") && b ? b.reconciliation : null}
+        {shows("reconciliation") && splitError ? (
+          <p className="text-sm text-status-danger-fg" role="alert">
+            {splitError}
+          </p>
+        ) : null}
+        {shows("reconciliationNote") && b ? b.reconciliationNote : null}
         {shows("runProgress") && !shows("upload") ? (
           <>
             {runStatus}
@@ -1411,6 +1466,7 @@ interface ListBlocks {
   listHeading: JSX.Element;
   securityQueue: JSX.Element;
   reconciliation: JSX.Element | null;
+  reconciliationNote: JSX.Element | null;
   extractionFindings: JSX.Element;
   reviewTable: JSX.Element;
   approveControl: JSX.Element;

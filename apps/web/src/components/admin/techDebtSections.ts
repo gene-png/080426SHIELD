@@ -24,6 +24,10 @@ export type TdBlock =
   | "upload"
   | "documents"
   | "reconciliation"
+  /** One line under the totals, saying they cover the included rows only:
+   *  the box that explains it is in Inputs, but the totals are read in
+   *  Overview and Review. */
+  | "reconciliationNote"
   /** Run status, "Extracting…", the extract error and the outcome-unknown
    *  alert. Extraction is STARTED from Inputs (the upload, or "Extract from
    *  this"), and the errors are this page's state, so they show there as well
@@ -71,6 +75,7 @@ export const TD_BLOCK_SECTIONS: Record<TdBlock, readonly SectionKey[]> = {
   upload: ["inputs"],
   documents: ["inputs"],
   reconciliation: ["inputs"],
+  reconciliationNote: ["overview", "review"],
   runProgress: ["inputs", "ai-draft"],
   aiSource: ["ai-draft"],
   resultCard: ["ai-draft"],
@@ -215,10 +220,10 @@ export const TD_SECTION_COPY = {
   /** The result card (plan v2, rule 8), counted in uploaded rows. */
   result: {
     allIncluded: (asked: number) =>
-      `The extraction made a capability from each of the ${asked} uploaded rows.`,
+      `All ${asked} uploaded rows are in the list.`,
     someLeftOut: (applied: number, asked: number) =>
-      `The extraction made capabilities from ${applied} of ${asked} uploaded rows.`,
-    leftOutReason: "Left out by the extraction",
+      `${applied} of ${asked} uploaded rows are in the list.`,
+    leftOutReason: "Not in the list",
     next: "Check the list in Review. The rows left out are listed in Inputs.",
     uncounted:
       "This result can't be counted: the AI could not match every capability to one uploaded row. Inputs shows what is known.",
