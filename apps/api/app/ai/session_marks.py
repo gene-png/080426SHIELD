@@ -13,10 +13,14 @@ Both need to know what the transaction did, which SQLAlchemy does not record,
 so the listeners below mark it in `session.info` and clear the marks when the
 outermost transaction ends (commit, rollback or close):
 
-* `_WROTE`: a flush, or an ORM-enabled INSERT / UPDATE / DELETE statement;
+* `_WROTE`: a flush with a net change to write (#1362), or an ORM-enabled
+  INSERT / UPDATE / DELETE statement;
 * `_FOR_UPDATE`: an ORM SELECT carrying `with_for_update()`.
 
-RESIDUAL: a raw `text("... FOR UPDATE")` or a Core statement run on the
+RESIDUAL: the flush mark is taken in `before_flush`, so an object that a
+`before_flush` listener registered AFTER this one adds or changes is not seen
+(#1362 review); today the only other one, `_block_audit_mutations`, only
+raises. And a raw `text("... FOR UPDATE")` or a Core statement run on the
 connection is not seen. No AI caller does either today (the #1025 lock sweep,
 #736 6210729795); the marks are a floor, not a census.
 """
@@ -34,9 +38,13 @@ _WROTE = "shield_ai_txn_wrote"
 _FOR_UPDATE = "shield_ai_txn_for_update"
 
 
-@event.listens_for(Session, "after_flush")
-def _mark_flush(session: Session, _flush_context) -> None:
-    session.info[_WROTE] = True
+@event.listens_for(Session, "before_flush")
+def _mark_flush(session: Session, _flush_context, _instances) -> None:
+    # #1362: only a flush with something to write. An attribute set to the
+    # value it already holds leaves its object in `dirty` and runs a flush
+    # that emits nothing; `is_modified` compares against the loaded value.
+    if session.new or session.deleted or any(session.is_modified(o) for o in session.dirty):
+        session.info[_WROTE] = True
 
 
 @event.listens_for(Session, "do_orm_execute")
@@ -64,7 +72,7 @@ def end_read_transaction(db: Session, *, where: str) -> None:
     pooled connection while the provider answers.
 
     Refuses, loudly and naming `where`, a transaction that has written --
-    pending objects, a flush, or a DML statement -- because committing it here
+    pending objects, a flush with a net change, or a DML statement -- because committing it here
     would make a run's partial writes durable before the run knows it
     succeeded, and rolling it back would lose them. A caller that must write
     first has to be reshaped, not passed through.
