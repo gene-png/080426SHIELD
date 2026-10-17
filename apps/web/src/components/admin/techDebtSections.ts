@@ -136,10 +136,10 @@ export const TD_SECTION_COPY = {
   header: {
     overview: {
       purpose: "Where this Technical Debt Review stands and what to do next.",
-      canDo: [
-        "See the stage and the key figures for the current list",
-        "Go to the section the next step names",
-      ],
+      // "Go to the section the next step names" came out: nothing on Overview
+      // links to a section (the progress stages are text), so it named a
+      // control that does not exist (advisor, #736 6229125629).
+      canDo: ["See the stage and the key figures for the current list"],
     },
     inputs: {
       purpose:
@@ -219,10 +219,14 @@ export const TD_SECTION_COPY = {
     "The totals in Overview and Review cover the included rows only, not the whole upload.",
   /** The result card (plan v2, rule 8), counted in uploaded rows. */
   result: {
+    // Approved on #736 (6229125629) with one change: one row is singular, and
+    // "is" follows a count of one.
     allIncluded: (asked: number) =>
-      `All ${asked} uploaded rows are in the list.`,
+      asked === 1
+        ? "The 1 uploaded row is in the list."
+        : `All ${asked} uploaded rows are in the list.`,
     someLeftOut: (applied: number, asked: number) =>
-      `${applied} of ${asked} uploaded rows are in the list.`,
+      `${applied} of ${asked} uploaded ${asked === 1 ? "row" : "rows"} ${applied === 1 ? "is" : "are"} in the list.`,
     leftOutReason: "Not in the list",
     next: "Check the list in Review. The rows left out are listed in Inputs.",
     uncounted:

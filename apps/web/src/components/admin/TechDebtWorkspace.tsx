@@ -166,6 +166,22 @@ function subscribeExtractFlags(listener: () => void): () => void {
   return () => extractFlagListeners.delete(listener);
 }
 
+/**
+ * Why the post-edit re-read failed, for `approvalRecheckFailed` (#1376): the
+ * API's own typed `{error: {message}}` when it sent one, otherwise one fixed
+ * phrase. Never `Error.message` (a browser's "Failed to fetch") and never a
+ * bare `detail` string, which `proxyMessage` would pass through. The whole
+ * page keeps its own wording (`proxyMessage`), as before.
+ */
+function recheckReason(err: unknown): string {
+  if (err instanceof TechDebtProxyError) {
+    const typed = (err.payload as { error?: { message?: unknown } } | undefined)
+      ?.error?.message;
+    if (typeof typed === "string" && typed !== "") return typed;
+  }
+  return "the list could not be reloaded";
+}
+
 export function TechDebtWorkspace({
   serviceId,
   serviceTitle,
@@ -639,7 +655,9 @@ Components carry no cost of their own — this licence keeps its full value.`,
       // Not swallowed: the page still shows the pre-edit approval state, so
       // say it could not be confirmed. Non-blocking (the edit itself saved),
       // and finalize refuses a stale approval on the server either way.
-      const why = proxyMessage(err, "the list could not be reloaded");
+      const why = inSection
+        ? recheckReason(err)
+        : proxyMessage(err, "the list could not be reloaded");
       attempt.note(
         inSection
           ? TD_SECTION_COPY.approvalRecheckFailed(why)

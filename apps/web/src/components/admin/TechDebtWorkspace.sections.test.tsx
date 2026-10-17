@@ -368,6 +368,20 @@ describe("the AI draft result card, counted in uploaded rows (#1376)", () => {
     );
   });
 
+  it("one uploaded row, in the list: the line is singular", async () => {
+    fetchLatestList.mockResolvedValue(
+      list({
+        source_rows_total: 1,
+        excluded_rows: [],
+        items: [item(1)] as never,
+      }),
+    );
+    await renderSettled("ai-draft");
+    expect(screen.getByTestId("ai-result-card")).toHaveTextContent(
+      "The 1 uploaded row is in the list.",
+    );
+  });
+
   it("an unknown count shows no card, and says why", async () => {
     fetchLatestList.mockResolvedValue(
       list({ exclusion_count_state: "unknown", excluded_rows: [] }),

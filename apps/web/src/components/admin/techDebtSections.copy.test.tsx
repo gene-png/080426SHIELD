@@ -7,6 +7,7 @@ import { listArtifacts } from "@/lib/intake/artifacts";
 import type { ConsolidationPlanSummary } from "@/lib/tech_debt/types";
 
 import { ConsolidationPlanCard } from "./ConsolidationPlanCard";
+import { TD_SECTION_COPY } from "./techDebtSections";
 import { IntakeDocumentsPanel } from "./IntakeDocumentsPanel";
 
 vi.mock("@/lib/intake/artifacts", () => ({ listArtifacts: vi.fn() }));
@@ -73,5 +74,31 @@ describe("Tech Debt copy that names a place, in a section (#1376)", () => {
     expect(
       screen.getByText(/^Each row in the table above carries a disposition/),
     ).toBeVisible();
+  });
+});
+
+/**
+ * The advisor's one change to the result card's outcome lines (#736
+ * 6229125629): with ONE uploaded row the line is singular, and "is" follows a
+ * count of one.
+ */
+describe("the result card's outcome lines, in the singular (#1376)", () => {
+  const { allIncluded, someLeftOut } = TD_SECTION_COPY.result;
+
+  it("one uploaded row, all included: 'The 1 uploaded row is in the list.'", () => {
+    expect(allIncluded(1)).toBe("The 1 uploaded row is in the list.");
+  });
+
+  it("several uploaded rows, all included, keep the plural", () => {
+    expect(allIncluded(4)).toBe("All 4 uploaded rows are in the list.");
+  });
+
+  it("applied 1 says 'is', asked 1 says 'row'", () => {
+    expect(someLeftOut(1, 1)).toBe("1 of 1 uploaded row is in the list.");
+    expect(someLeftOut(1, 5)).toBe("1 of 5 uploaded rows is in the list.");
+  });
+
+  it("applied 4 of 5 keeps 'are'", () => {
+    expect(someLeftOut(4, 5)).toBe("4 of 5 uploaded rows are in the list.");
   });
 });
