@@ -118,8 +118,11 @@ export function isCatalogWithheld(err: unknown): boolean {
  * #550: the proxy never saw the api's answer (its `fetch` rejected), so the
  * write may have landed. ONE predicate for every surface that must not call
  * this a failure, keyed on the code's VALUE (never on whether a reason
- * arrived). The status is not checked: the reason is the contract, and the
- * builder in `upstream-outcome-unknown.ts` is its only writer.
+ * arrived). The status is not checked: the reason is the contract. It has
+ * TWO writers, so a change to the envelope must reach both: the proxy builder
+ * in `upstream-outcome-unknown.ts`, and `unreadableWrite` in
+ * `lib/intake/client.ts`, which gives an intake write answered by a 2xx it
+ * cannot read the same reason (#1213).
  */
 export function isUpstreamOutcomeUnknown(err: unknown): boolean {
   return serverReasonCode(err) === UPSTREAM_OUTCOME_UNKNOWN;
