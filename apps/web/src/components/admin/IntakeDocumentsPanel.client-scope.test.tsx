@@ -64,7 +64,8 @@ describe("IntakeDocumentsPanel asks for its workspace's client (#1129)", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { rerender } = render(panel(0));
     expect(await screen.findByText("No client documents")).toBeVisible();
-    // Another tab rewrites the cookie here; nothing the panel sends reads it.
+    // The cookie is not modelled here: `fetch` is stubbed and only the provider
+    // names a client, so a panel that read the cookie instead sends no client_id.
     await act(async () => {
       rerender(panel(1));
     });
