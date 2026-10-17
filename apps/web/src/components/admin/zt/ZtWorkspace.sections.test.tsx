@@ -240,6 +240,12 @@ describe("ZtWorkspace renders only the section's blocks (#1379)", () => {
       "whole",
     );
     expect(screen.queryByTestId("section-visibility")).toBeNull();
+    // Section-only content stays out of the whole page.
+    expect(
+      screen.queryByText(
+        "Recommendations are not built for Zero Trust assessments yet.",
+      ),
+    ).toBeNull();
   });
 
   it("Overview offers Start assessment when there is none; Review points there instead", async () => {

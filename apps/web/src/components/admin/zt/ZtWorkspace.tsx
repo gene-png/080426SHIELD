@@ -1083,7 +1083,7 @@ export function ZtWorkspace({
         </Card>
       ) : null}
 
-      {shows("recommendationsEmpty") ? (
+      {inSection && shows("recommendationsEmpty") ? (
         <p className="text-sm text-ink-secondary">
           {ZT_SECTION_COPY.recommendationsEmpty}
         </p>
