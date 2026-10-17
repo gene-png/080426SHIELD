@@ -1178,7 +1178,9 @@ export function ZtWorkspace({
                 </RunAiGuard>
                 {runOutcomeUnknown ? (
                   <p className="text-sm text-status-warning-fg" role="alert">
-                    {RUN_OUTCOME_UNKNOWN}
+                    {inSection
+                      ? ZT_SECTION_COPY.runOutcomeUnknown
+                      : RUN_OUTCOME_UNKNOWN}
                   </p>
                 ) : null}
                 <AiPreviewButton

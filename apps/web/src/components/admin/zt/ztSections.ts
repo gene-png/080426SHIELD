@@ -171,6 +171,13 @@ export const ZT_SECTION_COPY = {
   noAssessmentDescription: "Start the assessment in Overview to begin scoring.",
   recommendationsEmpty:
     "Recommendations are not built for Zero Trust assessments yet.",
+  /**
+   * The unknown-outcome Run AI alert, naming Review instead of "step 2,
+   * Review every capability and adjust" (a section has no numbered steps).
+   * PENDING advisor approval, verbatim; the whole page keeps its own wording.
+   */
+  runOutcomeUnknown:
+    "We couldn't confirm whether the AI run finished. It may still complete and fill in capability rows. Reload the page later and check Review before running it again. Run AI stays off on this page until you reload.",
   /** The old step 3 description, naming Review instead of "step 3". */
   approveNote:
     "Locks the scoring so the deliverable is generated from a fixed set of answers. Approving does not send anything to the client.",
