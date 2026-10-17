@@ -2946,7 +2946,8 @@ NEWER_DRAFT_OPEN = (
 #: #1156 review round 2 F1: a `changed` input whose newer record is SUBMITTED
 #: or APPROVED. "Generate a new version" alone cannot publish (the new register
 #: would draw on that unreleased version), and it cannot be discarded, so the
-#: sentence names it and says to release it first. PENDING advisor copy.
+#: sentence names it and says to release it first. Approved verbatim (advisor,
+#: #736 6228351462 item 4).
 _WAITING_STATES = ("submitted", "approved")
 
 
