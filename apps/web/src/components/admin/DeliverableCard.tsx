@@ -22,11 +22,22 @@ import type { CapabilityListStatus, Deliverable } from "@/lib/tech_debt/types";
 import type { JSX } from "react";
 import { formatInstantUtc } from "@/lib/dates";
 
+import { TD_SECTION_COPY } from "./techDebtSections";
+
+/**
+ * #1376: which section's controls to show. "generate" is the status, the
+ * downloads and Finalize; "preview" is the client dashboard link; "release"
+ * is the status and Release with its confirm. Absent, the whole card, as
+ * before. The handlers are the same in every part.
+ */
+export type DeliverablePart = "generate" | "preview" | "release";
+
 export interface DeliverableCardProps {
   serviceId: string;
   capabilityListStatus: CapabilityListStatus | null;
   deliverable: Deliverable | null;
   onChange: (next: Deliverable) => void;
+  part?: DeliverablePart;
 }
 
 // UTC, naming the zone -- the same instant the admin deliverables table shows.
@@ -50,6 +61,7 @@ export function DeliverableCard({
   capabilityListStatus,
   deliverable,
   onChange,
+  part,
 }: DeliverableCardProps): JSX.Element {
   const [busy, setBusy] = React.useState<"finalize" | "release" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -103,15 +115,34 @@ export function DeliverableCard({
     }
   }
 
+  const showGenerate = part === undefined || part === "generate";
+  const showPreview = part === undefined || part === "preview";
+  const showRelease = part === undefined || part === "release";
+  const copy = TD_SECTION_COPY.deliverable;
+
+  if (part === "preview" && !deliverable) {
+    return <p className="text-sm text-ink-secondary">{copy.previewNone}</p>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Deliverable</CardTitle>
-        <CardDescription>
-          Render the PDF + XLSX from the approved capability list. Deliverables
-          are admin-only — download and share them outside the app. Re-finalize
-          on the same day appends <code>_v2</code> to the filename.
-        </CardDescription>
+        {part === "release" ? (
+          <>
+            <CardTitle>{copy.releaseTitle}</CardTitle>
+            <CardDescription>{copy.releaseDescription}</CardDescription>
+          </>
+        ) : (
+          <>
+            <CardTitle>Deliverable</CardTitle>
+            <CardDescription>
+              Render the PDF + XLSX from the approved capability list.
+              Deliverables are admin-only — download and share them outside the
+              app. Re-finalize on the same day appends <code>_v2</code> to the
+              filename.
+            </CardDescription>
+          </>
+        )}
       </CardHeader>
       <CardBody className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -139,7 +170,7 @@ export function DeliverableCard({
             the deliverable is finalized — before release. Previously finalize
             produced a PDF and an XLSX and nothing else, so an analyst released
             to the client without ever seeing what the client would see. */}
-        {deliverable ? (
+        {showPreview && deliverable ? (
           <Link
             href={`/dashboards/tech-debt/${serviceId}`}
             className="w-fit rounded-md border border-border bg-surface-card px-4 py-2 text-sm font-semibold text-ink-primary hover:bg-surface-sunken"
@@ -148,7 +179,7 @@ export function DeliverableCard({
           </Link>
         ) : null}
 
-        {deliverable ? (
+        {showGenerate && deliverable ? (
           <ul className="space-y-1 text-sm">
             {deliverable.pdf_artifact_id ? (
               <li>
@@ -174,19 +205,21 @@ export function DeliverableCard({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void onFinalize()}
-            disabled={!canFinalize || busy !== null}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy === "finalize"
-              ? "Finalizing…"
-              : deliverable
-                ? "Re-finalize"
-                : "Finalize"}
-          </button>
-          {!canFinalize && !deliverable ? (
+          {showGenerate ? (
+            <button
+              type="button"
+              onClick={() => void onFinalize()}
+              disabled={!canFinalize || busy !== null}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-semibold text-ink-on-accent hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "finalize"
+                ? "Finalizing…"
+                : deliverable
+                  ? "Re-finalize"
+                  : "Finalize"}
+            </button>
+          ) : null}
+          {showGenerate && !canFinalize && !deliverable ? (
             <span className="text-xs text-ink-tertiary">
               Approve the capability list to enable finalize.
             </span>
@@ -194,7 +227,12 @@ export function DeliverableCard({
 
           {/* Issue 4: release to the client. Behind an explicit confirm — it is
               the moment the client can first see this work. */}
-          {deliverable && !released ? (
+          {showRelease && part === "release" && !deliverable ? (
+            <span className="text-sm text-ink-secondary">
+              {copy.releaseNone}
+            </span>
+          ) : null}
+          {showRelease && deliverable && !released ? (
             confirmingRelease ? (
               <span className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-ink-secondary">

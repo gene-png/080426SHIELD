@@ -55,6 +55,19 @@ def _authority(value: str) -> str:
     return re.split(r"[/?#]", value, maxsplit=1)[0]
 
 
+# #1230: a leading scheme ("https:"), then any run of slashes or backslashes.
+_LEADING_SCHEME_AND_SLASHES = re.compile(r"^[a-z][a-z0-9+.-]*:[/\\]*|^[/\\]+", re.IGNORECASE)
+
+
+def _typed_authority(value: str) -> str:
+    """The host-and-port part of what the client TYPED: any scheme and
+    leading slashes removed, then cut at the first path, query or fragment
+    separator, a backslash included (`HttpUrl` treats it as "/"). Lowercase,
+    for comparison with a parsed host (#1230)."""
+    rest = _LEADING_SCHEME_AND_SLASHES.sub("", value.strip(), count=1)
+    return re.split(r"[/?#\\]", rest, maxsplit=1)[0].lower()
+
+
 class ClientProfilePatch(BaseModel):
     """Partial update for the singleton client row.
 
@@ -115,15 +128,17 @@ class ClientProfilePatch(BaseModel):
         host 0.0.31.144. ("https:8080" itself is refused earlier, in
         `_website_scheme`, because the prefix made its host "https".) A
         website typed as a dotted quad ("https://1.2.3.4") names that host
-        itself and is kept. Defined after `_website_scheme`, so pydantic runs
-        this one OUTERMOST and `value` is the raw input, before the prefix."""
+        itself and is kept. The quad must be in the typed AUTHORITY (#1230):
+        "8080/0.0.31.144" carries it only in its path, and is refused.
+        Defined after `_website_scheme`, so pydantic runs this one OUTERMOST
+        and `value` is the raw input, before the prefix."""
         url = handler(value)
         host = getattr(url, "host", None)
         if (
             isinstance(value, str)
             and host is not None
             and _DOTTED_QUAD.fullmatch(host)
-            and host not in value.lower()
+            and host not in _typed_authority(value)
         ):
             raise ValueError("A website address needs a real host name.")
         return url

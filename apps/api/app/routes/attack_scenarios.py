@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import functools
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -68,6 +68,7 @@ from app.models.user import User, UserRole
 # base assessment was offered when it ran: a tool added to or dropped from
 # the capability list since then is offered, or not, accordingly.
 from app.routes.attack import (
+    CapabilityMembership,
     _capability_payload,
     _client_capability_membership,
     _llm_dep,
@@ -1020,11 +1021,31 @@ def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | No
     after the what-if was created; every credit to either would then be
     dropped as outside the change, so the run must not happen (#818 review,
     F4). Decided by the same validation creation ran, against today's tools."""
+    if not _added_tools(s):
+        return None
+    return _collision_in(
+        s,
+        client,
+        base_rows=_base_rows(db, s.base_assessment_id),
+        membership=_client_capability_membership(db, client.id),
+        name_hints=name_hints_for_tenant(db, client.id),
+    )
+
+
+def _collision_in(
+    s: AttackScenario,
+    client: Client,
+    *,
+    base_rows: Sequence[AttackCoverage],
+    membership: CapabilityMembership,
+    name_hints: Sequence[str],
+) -> str | None:
+    """`_added_collision`'s decision from rows already read, so the run can
+    read first, end its read transaction, and only then make this check: with
+    hints it asks the redaction child (#1380)."""
     added = _added_tools(s)
     if not added:
         return None
-    base_rows = _base_rows(db, s.base_assessment_id)
-    membership = _client_capability_membership(db, client.id)
     current = [
         *(p.capability.name for p in membership.sent),
         *(w.name for w in membership.withheld),
@@ -1038,7 +1059,7 @@ def _added_collision(db: Session, s: AttackScenario, client: Client) -> str | No
             redaction_mode=get_settings().shield_redaction_mode,
             # Today's dictionary, as the run will use it (#865): a user who
             # joined since can make two added tools one placeholder.
-            name_hints=name_hints_for_tenant(db, client.id),
+            name_hints=name_hints,
             # A stored row's characters are not a collision: a draft stored
             # before #826 may hold a line feed (only NUL failed to insert),
             # and calling it one gave a false message (#831 review, F1).
@@ -1193,10 +1214,6 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
         raise RunFailed("scenario_discarded", "This what-if was set aside before the run finished.")
     base = db.get(AttackAssessment, s.base_assessment_id)
     client = db.get(Client, ctx.client_id)
-    # F4 again, in the job: the list can change between the POST and now.
-    collides = _added_collision(db, s, client)
-    if collides is not None:
-        raise RunFailed("scenario_added_tool_collides", _collision_message(collides))
     base_rows = _base_rows(db, base.id)
     removed = list(s.change_list.get("removed") or [])
     affected = list(s.affected_codes)
@@ -1212,6 +1229,18 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # from what the model is offered AND from what the resolver may confirm,
     # so a removed tool the AI names anyway is counted, never credited.
     membership = _client_capability_membership(db, ctx.client_id)
+    history = _list_history(db, membership.lists)
+    # #1025 holder 2 (advisor, #736 6216024281, 3e), moved up by #1380: every
+    # read is done, so the read transaction ends here and no connection is
+    # held while the redaction child runs the hinted builds below or while the
+    # provider answers. Refuses loudly if anything was written.
+    end_read_transaction(db, where="attack.scenario.run")
+    # F4 again, in the job: the list can change between the POST and now.
+    collides = _collision_in(
+        s, client, base_rows=base_rows, membership=membership, name_hints=hints
+    )
+    if collides is not None:
+        raise RunFailed("scenario_added_tool_collides", _collision_message(collides))
     # #1080: every name `covers` is asked about below -- the base rows' tools
     # and the client's offered tools -- redacted in the same one call as the
     # removals (through the redaction child: this build carries hints).
@@ -1235,7 +1264,7 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # Row creation time alone read every tool of a re-extracted list as new.
     added = added_since_base.tools_added(
         kept_offers,
-        _list_history(db, membership.lists),
+        history,
         scenario.cited_tools(base_rows),
         base.approved_at,
     )
@@ -1249,10 +1278,6 @@ def _scenario_run_work(session: Session, ctx: RunContext, *, scenario_id: uuid.U
     # may be credited, but they are NOT the client's list: the drift check
     # above judges only `membership`, so they never read as drift.
     tools_you_added = _added_tools(s)
-    # #1025 holder 2 (advisor, #736 6216024281, 3e): the reads above are
-    # done, so the read transaction ends here and no connection is held
-    # while the provider answers. Refuses loudly if anything was written.
-    end_read_transaction(db, where="attack.scenario.run")
     inputs = scenario.batch_inputs(
         base_rows,
         affected,

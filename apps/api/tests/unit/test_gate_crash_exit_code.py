@@ -98,6 +98,10 @@ GATES = [
     ("check_ci_selection", "sys.argv"),
     ("check_e2e_env_gates", "sys.argv"),
     ("check_e2e_spec_listing", "sys.argv"),
+    # The required Python check's aggregate. Shipped WITH the handler and WITH this
+    # entry, because the two enumerations diverging is what
+    # `test_universe_equals_the_other_gate_enumeration` exists to catch.
+    ("check_python_shards", "sys.argv"),
     # D-095's compose exception. Added WITH its entry here. `sys.argv` because
     # `main(argv)` takes the argument list.
     ("compose_unchanged", "sys.argv"),

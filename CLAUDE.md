@@ -183,6 +183,10 @@ Every merge is pinned to the head that was checked:
    `No accidental issue closes`. The E2E name is an aggregate job that fails
    unless every shard and the session job succeeded and the shard lists
    partition the suite; the jobs it waits on are not themselves required.
+   The Python name is an aggregate the same way: it fails unless both
+   `Python (unit shard k/2)` legs succeeded (leg 1 also carries the lint and
+   the gates) and the legs certified one selection and ran it once; the legs
+   are not themselves required.
    `mutation-sweep.yml` is schedule-only and excluded. **Re-derive this list
    when a required check is added**, from branch protection
    (`gh api repos/gene-png/080426SHIELD/branches/main/protection/required_status_checks`),

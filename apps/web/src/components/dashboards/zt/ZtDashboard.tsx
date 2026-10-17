@@ -27,8 +27,10 @@ const MaturityRadar = dynamic(
   { ssr: false, loading: () => <div style={{ height: 380 }} aria-hidden /> },
 );
 
+/** #1183: the API floors each percentage to one decimal; print it as given.
+ *  Rounding it again here printed 66.6 as "67", a figure nothing else states. */
 function pctText(n: number | null): string {
-  return n === null ? "—" : `${Math.round(n)}`;
+  return n === null ? "—" : n.toFixed(1);
 }
 
 function MaturityBar({
@@ -38,8 +40,9 @@ function MaturityBar({
   pillar: ZtPillar;
   framework: string;
 }): JSX.Element {
-  const cur = pillar.current_pct ?? 0;
-  const tgt = pillar.target_pct ?? 0;
+  // Null when nothing is scored (stage 1 is 0%, #1183): draw nothing, not 0.
+  const cur = pillar.current_pct;
+  const tgt = pillar.target_pct;
   const axis = stageAxis(framework);
   return (
     <div>
@@ -56,7 +59,9 @@ function MaturityBar({
         <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11.5 }}>
           {/* #700: the pillar's own scored count beside its percentage, as the
               CSF dashboard does per function. */}
-          {`+${Math.round(pillar.gap_pct)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
+          {pillar.gap_pct === null
+            ? `Not assessed · 0 of ${pillar.capability_count} scored`
+            : `+${pillar.gap_pct.toFixed(1)} pt move · ${pillar.answered_count}/${pillar.capability_count} scored`}
         </span>
       </div>
       <div
@@ -69,17 +74,19 @@ function MaturityBar({
           marginTop: 8,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            height: "100%",
-            width: `${cur}%`,
-            borderRadius: 999,
-            background: "linear-gradient(90deg, #22d3ee, #6366f1)",
-          }}
-        />
+        {cur !== null && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              height: "100%",
+              width: `${cur}%`,
+              borderRadius: 999,
+              background: "linear-gradient(90deg, #22d3ee, #6366f1)",
+            }}
+          />
+        )}
       </div>
       <div
         style={{
@@ -87,17 +94,19 @@ function MaturityBar({
           height: 0,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: -13,
-            left: `calc(${tgt}% - 1px)`,
-            height: 16,
-            width: 3,
-            background: C.green,
-            borderRadius: 2,
-          }}
-        />
+        {tgt !== null && (
+          <div
+            style={{
+              position: "absolute",
+              top: -13,
+              left: `calc(${tgt}% - 1px)`,
+              height: 16,
+              width: 3,
+              background: C.green,
+              borderRadius: 2,
+            }}
+          />
+        )}
       </div>
       <div
         style={{
@@ -180,9 +189,7 @@ export function ZtDashboard({ data }: { data: ZtDashboardData }): JSX.Element {
           value={String(data.total_gap_count)}
           sub={
             data.largest_gap_pillar
-              ? `Largest: ${data.largest_gap_pillar} · +${Math.round(
-                  data.largest_gap_pct,
-                )} points`
+              ? `Largest: ${data.largest_gap_pillar} · +${data.largest_gap_pct.toFixed(1)} points`
               : "Across all pillars"
           }
           accent={C.amber}

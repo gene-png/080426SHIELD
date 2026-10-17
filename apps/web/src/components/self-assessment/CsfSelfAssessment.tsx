@@ -138,6 +138,18 @@ export function CsfSelfAssessment({
     null,
   );
   const questionnaireRef = React.useRef<HTMLDivElement>(null);
+  // Set by the warning's "Go to" only: the function whose tab takes focus once
+  // it has rendered as the selected one (#1191). A counter, so a second press
+  // on the same function focuses again.
+  const [focusRequest, setFocusRequest] = React.useState<{
+    code: string;
+    n: number;
+  } | null>(null);
+  React.useEffect(() => {
+    if (focusRequest) {
+      document.getElementById(`csf-tab-${focusRequest.code}`)?.focus();
+    }
+  }, [focusRequest]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -377,6 +389,13 @@ export function CsfSelfAssessment({
     });
   }
 
+  // #1191: scrolling alone leaves focus on the button just pressed, so the
+  // next Tab lands on "Submit anyway". Focus the function's tab instead.
+  function goToBlankFunction(code: string): void {
+    goToFunction(code);
+    setFocusRequest((prev) => ({ code, n: (prev?.n ?? 0) + 1 }));
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -528,7 +547,10 @@ export function CsfSelfAssessment({
           total={total}
           noun="outcomes"
           disabled={submitting || !everyFunctionStarted || savesInFlight > 0}
-          onGoTo={goToFunction}
+          disabledReason={
+            everyFunctionStarted ? undefined : SUBMIT_LOCKED_TITLE
+          }
+          onGoTo={goToBlankFunction}
           onSubmitAnyway={() => void onSubmit()}
         />
       ) : null}

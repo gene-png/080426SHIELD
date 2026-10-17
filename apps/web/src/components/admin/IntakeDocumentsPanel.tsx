@@ -13,11 +13,14 @@ import {
 
 import { type ArtifactSummary, listArtifacts } from "@/lib/intake/artifacts";
 import { useWorkspaceClientId } from "@/components/admin/workspaceClient";
+import { typedReadFailure } from "@/components/intake/readFailureCopy";
 
 import { RunAiGuard } from "@/components/admin/RunAiGuard";
 import type { AiServes } from "@/lib/aiRuns/types";
 
 import type { JSX } from "react";
+
+import { TD_SECTION_COPY } from "./techDebtSections";
 
 const SPREADSHEET_MIME = new Set([
   "text/csv",
@@ -52,6 +55,8 @@ export interface IntakeDocumentsPanelProps {
    * from this page until it is reloaded. The workspace says why.
    */
   extractBlocked?: boolean;
+  /** #1376: shown in the Inputs section, where "Discard draft" is in Review. */
+  inSection?: boolean;
 }
 
 /**
@@ -69,6 +74,7 @@ export function IntakeDocumentsPanel({
   reloadKey = 0,
   draftSourceId = null,
   extractBlocked = false,
+  inSection = false,
 }: IntakeDocumentsPanelProps): JSX.Element {
   const [docs, setDocs] = React.useState<ArtifactSummary[] | null>(null);
   // #1129: this workspace's own client, never the shared cookie, which
@@ -83,14 +89,24 @@ export function IntakeDocumentsPanel({
     listArtifacts(workspaceClientId ?? undefined)
       .then((res) => {
         if (cancelled) return;
+        // A 200 with no item list is a failed load, never an empty one (as on
+        // Steps 5 and 6): `res.items.filter` would throw into the handler
+        // below only by accident.
+        if (!Array.isArray(res.items)) {
+          setError("Couldn't load documents.");
+          return;
+        }
         setDocs(res.items.filter((a) => a.origin === "client_upload"));
         setError(null);
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Couldn't load documents.",
-          );
+          // #1223: never the error's own message, which for this READ was
+          // `ArtifactUploadError`'s "Upload failed: <status>". #1225: nor a
+          // plain-string api detail ("X-Client-Id header is required for
+          // this role."), which arrives with no `reason` and is internal
+          // text. Only a TYPED sentence (D-016 {reason, message}) is copy.
+          setError(typedReadFailure(err) ?? "Couldn't load documents.");
         }
       });
     return () => {
@@ -131,8 +147,11 @@ export function IntakeDocumentsPanel({
                 data-testid="draft-source-hint"
               >
                 The open draft was extracted from {draftSource.title}. To
-                extract from another document, use &quot;Discard draft&quot; in
-                step 2 first.
+                extract from another document, use &quot;Discard draft&quot;{" "}
+                {inSection
+                  ? TD_SECTION_COPY.draftSourceDiscardWhere
+                  : "in step 2"}{" "}
+                first.
               </p>
             ) : null}
             <ul className="flex flex-col gap-1.5">

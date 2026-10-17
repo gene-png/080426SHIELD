@@ -18,7 +18,9 @@ import type { JSX } from "react";
  * calls scoped by the active-client cookie, and it aligns that cookie to the
  * service's client on mount. That is the #1129 multi-tab gap, NARROWED here
  * (the frame's own reads use the URL's client) and NOT closed; each service
- * track closes it for its own calls when it moves its components.
+ * track closes it for its own calls when it moves its components. Tech Debt's
+ * split (#1376) moved where its blocks render and not which client its calls
+ * name, so its calls still rely on this, and #1129 stays open for them.
  */
 export const WORKSPACE_TITLES: Record<FrameKind, string> = {
   tech_debt: "Technical Debt Review",
@@ -31,15 +33,22 @@ export const WORKSPACE_TITLES: Record<FrameKind, string> = {
 function Workspace({
   kind,
   serviceId,
+  section,
 }: {
   kind: FrameKind;
   serviceId: string;
+  section: SectionKey;
 }): JSX.Element {
   const serviceTitle = WORKSPACE_TITLES[kind];
   switch (kind) {
     case "tech_debt":
+      // #1376: Tech Debt is split; each section shows only its own blocks.
       return (
-        <TechDebtWorkspace serviceId={serviceId} serviceTitle={serviceTitle} />
+        <TechDebtWorkspace
+          serviceId={serviceId}
+          serviceTitle={serviceTitle}
+          section={section}
+        />
       );
     case "attack_coverage":
       return (
@@ -70,9 +79,10 @@ function Workspace({
  * The section's slot: the one place that decides what a section RENDERS. It
  * receives the URL's `section` (already checked against the kind by the
  * page). Which sections a kind has (`omittedSections` in `frameRoutes.ts`),
- * the header's `next` and the page title are still the frame's. Until a track
- * moves its components, every section shows the whole existing workspace,
- * once, and `section` only names the slot.
+ * the header's `next` and the page title are still the frame's. Tech Debt
+ * is split (#1376): its workspace renders only the section's blocks. Until a
+ * track moves the other services' components, each of their sections shows
+ * the whole existing workspace, once, and `section` only names the slot.
  */
 export function ExistingWorkspace({
   kind,
@@ -86,7 +96,7 @@ export function ExistingWorkspace({
   return (
     <div data-testid="section-view" data-section={section}>
       <EnsureActiveClient serviceId={serviceId}>
-        <Workspace kind={kind} serviceId={serviceId} />
+        <Workspace kind={kind} serviceId={serviceId} section={section} />
       </EnsureActiveClient>
     </div>
   );

@@ -151,6 +151,9 @@ class RiskExportContext:
     #: #915 (S3): the approved sentence for the DoD target cap, from
     #: `risk/zt_capped.py`, or None when nothing was lowered or recorded.
     zt_capped_target_note: str | None = None
+    #: #1343: `risk/zt_target_origin.py`'s lines, one per code; empty when
+    #: none or nothing was recorded.
+    zt_unrecorded_target_notes: tuple[str, ...] = ()
     csf_source_note: str | None = None
     #: R10 (#736 6102665946): the approved count sentence from
     #: `risk/csf_source.py`, printed after the CSF Playbook line, or None.
@@ -186,6 +189,7 @@ def build_context(
     review_pending: frozenset[str] = frozenset(),
     targets: Sequence[tuple[str, str | None, int | None, str, str]] | None = None,
     zt_capped_target_note: str | None = None,
+    zt_unrecorded_target_notes: list[str] | tuple[str, ...] = (),
     csf_source_note: str | None = None,
     csf_unscored_targets_note: str | None = None,
     csf_no_shared_row: bool = False,
@@ -204,6 +208,7 @@ def build_context(
         review_pending=review_pending,
         targets=tuple(targets) if targets is not None else None,
         zt_capped_target_note=zt_capped_target_note,
+        zt_unrecorded_target_notes=tuple(zt_unrecorded_target_notes),
         csf_source_note=csf_source_note,
         csf_unscored_targets_note=csf_unscored_targets_note,
         csf_no_shared_row=csf_no_shared_row,
@@ -683,6 +688,8 @@ def _summary_lines(ctx: RiskExportContext) -> list[str]:
         # `risk/baseline.py` sorts by kind, then framework. So the cap and the
         # target it lowers read as one baseline, not two.
         *([ctx.zt_capped_target_note] if ctx.zt_capped_target_note else []),
+        # #1343: beside the cap note, the other fact about a ZT target.
+        *ctx.zt_unrecorded_target_notes,
         *([ctx.csf_source_note] if ctx.csf_source_note else []),
         *_link_scope_lines(ctx),
         *_pending_review_lines(ctx),

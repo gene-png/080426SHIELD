@@ -400,7 +400,10 @@ class ZtPillarDashboard(BaseModel):
     current_label: str
     target_pct: float | None
     target_label: str
-    gap_pct: float  # max(0, target_pct - current_pct)
+    # max(0, target_pct - current_pct); None for a pillar with nothing scored,
+    # whose gap is unknown (stage 1 is 0%, #1183, so 0 or the whole target
+    # would read as a scored pillar's).
+    gap_pct: float | None
     weakest: list[str]  # lowest-scored capability NAMES (focus areas)
 
 
@@ -840,6 +843,10 @@ class RiskDashboardResponse(BaseModel):
     #: consultant's register and the three files use. None when nothing was
     #: lowered or the register predates the record.
     zt_capped_target_note: str | None = None
+    #: #1343: `{code}: <approved sentence>` for each ZT capability whose applied target
+    #: has no recorded origin, through `risk/zt_target_origin.py`, the reader
+    #: the consultant's register and the three files use. Empty when none.
+    zt_unrecorded_target_notes: list[str] = []
     csf_source_note: str | None = None
     #: Ruling #736 6104067136 (see #1033): which not-measured line the screen
     #: prints for a `playbook_no_scores` CSF target, read by the files' reader

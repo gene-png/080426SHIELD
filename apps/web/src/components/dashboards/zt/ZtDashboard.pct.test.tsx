@@ -1,0 +1,105 @@
+import "@testing-library/jest-dom/vitest";
+
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import type { ZtDashboardData } from "@/lib/dashboards/zt";
+
+import { ZtDashboard } from "./ZtDashboard";
+
+/**
+ * #1183: the API floors each maturity percentage to one decimal, so 5/9 of the
+ * way up the scale is 55.5 (55.55...). The dashboard prints that figure as given, to one
+ * decimal: rounding it again here printed "56", a number the API never sent and
+ * the deliverable does not show. The fixture is shaped like
+ * `ZtDashboardResponse`.
+ */
+
+function dashboard(): ZtDashboardData {
+  return {
+    ai_source: {
+      state: "live",
+      sentence: "AI suggestions in this assessment came from a live AI model.",
+      live_runs: 1,
+      fixture_runs: 0,
+    },
+    service_id: "11111111-1111-4111-8111-111111111111",
+    unusable_target_codes: [],
+    target_cap_notes: [],
+    service_title: "Zero Trust Assessment",
+    released_at: "2026-09-09T00:00:00Z",
+    deliverable_version: 1,
+    framework: "cisa_ztmm_2_0",
+    framework_label: "CISA ZTMM 2.0",
+    current_label: "Initial",
+    current_pct: 55.5,
+    target_label: "Optimal",
+    target_pct: 100,
+    target_stage: 4,
+    target_stage_source: "client",
+    target_frozen_at: "2026-09-09T00:00:00Z",
+    engagement_target_capability_count: 7,
+    total_gap_count: 7,
+    largest_gap_pillar: "Identity",
+    largest_gap_pct: 44.5,
+    pillars: [
+      {
+        code: "ID",
+        name: "Identity",
+        capability_count: 7,
+        answered_count: 7,
+        current_pct: 55.5,
+        current_label: "Initial",
+        target_pct: 100,
+        target_label: "Optimal",
+        gap_pct: 44.5,
+        weakest: [],
+      },
+    ],
+  } as ZtDashboardData;
+}
+
+describe("ZtDashboard prints the API's one-decimal percentages (#1183)", () => {
+  it("prints the overall and target figures to one decimal", () => {
+    render(<ZtDashboard data={dashboard()} />);
+    // The overall card and the sole pillar's bar both print it.
+    expect(screen.getAllByText("Initial · 55.5")).toHaveLength(2);
+    // The overall target card and the pillar bar both print it.
+    expect(screen.getAllByText("Optimal · 100.0")).toHaveLength(2);
+    expect(screen.queryByText("Initial · 56")).toBeNull();
+  });
+
+  it("prints each pillar's figures and gap to one decimal", () => {
+    render(<ZtDashboard data={dashboard()} />);
+    expect(screen.getAllByText("Initial · 55.5").length).toBeGreaterThan(0);
+    expect(screen.getByText("+44.5 pt move · 7/7 scored")).toBeVisible();
+    expect(screen.queryByText("Initial · 56")).toBeNull();
+  });
+
+  it("prints the largest gap to one decimal", () => {
+    render(<ZtDashboard data={dashboard()} />);
+    expect(screen.getByText("Largest: Identity · +44.5 points")).toBeVisible();
+  });
+
+  it("draws no bar fill for a pillar with nothing scored, which is not a pillar at stage 1", () => {
+    const data = dashboard();
+    data.pillars = [
+      {
+        ...data.pillars[0],
+        answered_count: 0,
+        current_pct: null,
+        current_label: "Unscored",
+        gap_pct: null,
+      },
+    ];
+    const { container } = render(<ZtDashboard data={data} />);
+    expect(screen.getByText("Unscored · —")).toBeVisible();
+    // A pillar scored at stage 1 is 0.0% and fills `width: 0%`; one with no
+    // score has no fill at all.
+    expect(container.querySelector('div[style*="width: 0%"]')).toBeNull();
+    // No "+N pt move" for a pillar whose gap is unknown (the API sends null).
+    expect(screen.getByText("Not assessed · 0 of 7 scored")).toBeVisible();
+    expect(screen.queryByText(/pt move/)).toBeNull();
+    expect(container.querySelector('div[style*="width: 55.5%"]')).toBeNull();
+  });
+});

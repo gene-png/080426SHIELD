@@ -1,0 +1,12 @@
+{
+ "incident": "Control: the shape the required Python aggregate must accept -- two legs that certified one selection, were dealt a partition of it, and each ran exactly what it was dealt.",
+ "expect": 0,
+ "adversarial": false,
+ "argv": [
+  "--dir",
+  "{dir}",
+  "--of",
+  "2"
+ ],
+ "stdout_contains": "clean -- 2 legs"
+}

@@ -112,7 +112,7 @@ describe("ZtDashboard states how many capabilities its percentages cover (#700)"
         ])}
       />,
     );
-    expect(screen.getByText("+30 pt move · 7/10 scored")).toBeVisible();
-    expect(screen.getByText("+10 pt move · 8/8 scored")).toBeVisible();
+    expect(screen.getByText("+30.0 pt move · 7/10 scored")).toBeVisible();
+    expect(screen.getByText("+10.0 pt move · 8/8 scored")).toBeVisible();
   });
 });
