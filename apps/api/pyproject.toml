@@ -64,7 +64,7 @@ dev = [
     # call over sharding it across four). Pinned exactly: 3.6.1 is the version
     # the 2026-10-15 bench measured (run 38802579958). Local and pre-push runs
     # do not pass `-n`, so they stay serial.
-    "pytest-xdist==3.6.1",
+    "pytest-xdist==3.8.0",
     # Lint/format pinned to known-good ranges: CI installs fresh, and a new
     # tool release can re-flag a previously clean repo with rules the diff
     # never touched. Bump deliberately, with a format pass if needed.
@@ -78,7 +78,7 @@ dev = [
     # separately by known-first-party=["app"] in the ROOT pyproject's
     # [tool.ruff.lint.isort]. The exact pins are belt-and-suspenders.)
     # Bump deliberately with a format pass, never float.
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     "black==26.10.1",
     "mypy>=1.11",
     "bandit[toml]>=1.7",
