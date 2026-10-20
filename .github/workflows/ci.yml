@@ -706,7 +706,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: python-shard-*
           path: ${{ runner.temp }}/legs
@@ -1115,7 +1115,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: e2e-list-*
           path: ${{ runner.temp }}/e2e
